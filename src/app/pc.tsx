@@ -1,0 +1,628 @@
+import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
+import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
+import { SymbolView } from 'expo-symbols';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
+
+import { ThemedText } from '@/components/themed-text';
+import { ThemedView } from '@/components/themed-view';
+import { BottomTabInset, Colors, Radius, Spacing } from '@/constants/theme';
+import { API_URL, getToken } from '@/lib/api';
+
+const c = Colors.dark;
+const WS_URL = API_URL.replace(/^http/, 'ws') + '/client';
+
+type Device = { id: string; name: string; online: boolean };
+type Entry = { name: string; dir: boolean; size: number; path: string };
+
+let reqN = 0;
+const newReq = () => 'p' + ++reqN;
+
+// HTML с xterm (грузится с CDN — телефон онлайн). Двусторонний мост с RN.
+const TERM_HTML = `<!doctype html><html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>html,body{height:100%;margin:0;background:#0a0b0d;overflow:hidden}#t{height:100%;padding:6px}</style>
+</head><body><div id="t"></div>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script>
+(function(){
+  function send(o){ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
+  function boot(){
+    if(!window.Terminal){ setTimeout(boot,200); return; }
+    var term=new Terminal({fontSize:12,lineHeight:1.0,letterSpacing:0,cursorBlink:true,convertEol:false,scrollback:8000,
+      fontFamily:'Menlo, Courier, monospace',
+      theme:{background:'#0a0b0d',foreground:'#cfd3da',cursor:'#6E79E6'}});
+    var fit=new FitAddon.FitAddon(); term.loadAddon(fit); var host=document.getElementById('t'); term.open(host);
+    function doFit(){ try{ fit.fit(); send({t:'resize',cols:term.cols,rows:term.rows}); }catch(e){} }
+    window.__recv=function(d){ term.write(d); };
+    window.__fit=doFit;
+    window.__focus=function(){ term.focus(); };
+    window.__blur=function(){ try{ if(term.textarea) term.textarea.blur(); term.blur(); }catch(e){} };
+    window.__scroll=function(n){ try{ term.scrollLines(n); }catch(e){} };
+    term.onData(function(d){ send({t:'data',d:d}); });
+    window.addEventListener('resize',doFit);
+    // Скролл пальцем. В обычном буфере — прокрутка истории xterm.
+    // Внутри claude/vim (альтернативный экран) истории нет — шлём «колесо мыши»,
+    // чтобы приложение само листало (иначе свайп замирал).
+    // Полный контроль скролла пальцем (без конфликта с нативным — иначе «то листает, то нет»).
+    var ty=null, acc=0;
+    function rowH(){ try{ var h=term._core&&term._core._renderService&&term._core._renderService.dimensions.css.cell.height; return (h&&h>4)?h:16; }catch(e){ return 16; } }
+    host.addEventListener('touchstart',function(e){ if(e.touches.length===1){ ty=e.touches[0].clientY; acc=0; } },{passive:false});
+    host.addEventListener('touchmove',function(e){
+      if(ty===null||e.touches.length!==1) return;
+      var y=e.touches[0].clientY; acc+=(y-ty); ty=y; var h=rowH(); var n=0;
+      while(Math.abs(acc)>=h){ var up=acc>0; acc+= up?-h:h; n += up?1:-1; }
+      if(n!==0){
+        e.preventDefault();
+        if(term.buffer.active.type==='alternate'){
+          var one = n>0 ? '\\x1b[<64;1;1M' : '\\x1b[<65;1;1M', seq='';
+          for(var i=0;i<Math.abs(n);i++) seq+=one;
+          send({t:'data',d:seq});
+        } else {
+          term.scrollLines(n>0 ? -Math.abs(n) : Math.abs(n));
+        }
+      }
+    },{passive:false});
+    host.addEventListener('touchend',function(){ ty=null; },{passive:false});
+    setTimeout(function(){ doFit(); term.focus(); send({t:'ready',cols:term.cols,rows:term.rows}); },300);
+  }
+  boot();
+})();
+</script></body></html>`;
+
+const KEYS: { label: string; seq: string }[] = [
+  { label: 'esc', seq: '\x1b' },
+  { label: 'tab', seq: '\t' },
+  { label: 'ctrl c', seq: '\x03' },
+  { label: '↑', seq: '\x1b[A' },
+  { label: '↓', seq: '\x1b[B' },
+  { label: '←', seq: '\x1b[D' },
+  { label: '→', seq: '\x1b[C' },
+];
+
+export default function PcScreen() {
+  const insets = useSafeAreaInsets();
+  const wsRef = useRef<WebSocket | null>(null);
+  const [connected, setConnected] = useState(false);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [sub, setSub] = useState<'term' | 'explorer'>('term');
+
+  // терминалы (несколько вкладок, как в VS Code). У каждого свой termId, своя папка и сессия на ПК.
+  const [terms, setTerms] = useState<{ id: string; cwd: string }[]>([{ id: '1', cwd: '' }]);
+  const [activeTerm, setActiveTerm] = useState('1');
+  const nextTermId = useRef(2);
+  const webRefs = useRef<Record<string, WebView | null>>({});
+  const termReady = useRef<Record<string, boolean>>({});
+  const termCwds = useRef<Record<string, string>>({ '1': '' }); // termId -> папка (для pty_start)
+  const activeWeb = () => webRefs.current[activeTerm];
+  // refs для доступа из замыкания WS-обработчика (иначе видит устаревшее состояние)
+  const termsRef = useRef(terms); termsRef.current = terms;
+  const activeTermRef = useRef(activeTerm); activeTermRef.current = activeTerm;
+  const pendingAttach = useRef(false);
+
+  // всплывающий выбор папки при открытии нового терминала
+  const [picker, setPicker] = useState(false);
+  const [pickerTree, setPickerTree] = useState<{ path: string; parent: string | null; drives: boolean; entries: Entry[] }>({ path: '', parent: null, drives: true, entries: [] });
+  const pickReq = () => 'pk' + ++reqN;
+  const pickerOpenDir = (path: string) => send({ type: 'fs_list', reqId: pickReq(), path });
+
+  // проводник
+  const [tree, setTree] = useState<{ path: string; parent: string | null; drives: boolean; entries: Entry[] }>({ path: '', parent: null, drives: true, entries: [] });
+  const [file, setFile] = useState<{ path: string; content: string; editable: boolean } | null>(null);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [busyMsg, setBusyMsg] = useState('');
+
+  const deviceIdRef = useRef<string | null>(null);
+  deviceIdRef.current = deviceId;
+
+  const send = useCallback((obj: any) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ to: 'pc', deviceId: deviceIdRef.current, ...obj }));
+  }, []);
+
+  // ---- WebSocket ----
+  useEffect(() => {
+    let alive = true;
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+
+    async function connect() {
+      const token = await getToken();
+      if (!token || !alive) return;
+      const ws = new WebSocket(`${WS_URL}?token=${token}`);
+      wsRef.current = ws;
+      ws.onopen = () => { if (alive) { setConnected(true); ws.send(JSON.stringify({ type: 'list_devices' })); } };
+      ws.onclose = () => { if (!alive) return; setConnected(false); reconnectTimer = setTimeout(connect, 2500); };
+      ws.onerror = () => { try { ws.close(); } catch {} };
+      ws.onmessage = (ev) => { let m: any; try { m = JSON.parse(ev.data as string); } catch { return; } handle(m); };
+    }
+
+    function handle(m: any) {
+      switch (m.type) {
+        case 'devices':
+          setDevices(m.devices || []);
+          setDeviceId((cur) => {
+            if (cur && (m.devices || []).some((d: Device) => d.id === cur && d.online)) return cur;
+            const online = (m.devices || []).find((d: Device) => d.online);
+            return online ? online.id : cur || (m.devices?.[0]?.id ?? null);
+          });
+          break;
+        case 'pty_out': {
+          const ref = webRefs.current[m.termId || '1'];
+          ref?.injectJavaScript(`window.__recv && window.__recv(${JSON.stringify(m.data)});true;`);
+          break;
+        }
+        case 'pty_exit':
+          // сессия на ПК завершилась — перезапустим терминал в той же вкладке
+          termReady.current[m.termId || '1'] = false;
+          break;
+        case 'claude_done': {
+          const idx = termsRef.current.findIndex((t) => t.id === (m.termId || '1'));
+          setBusyMsg(`✅ Claude закончил${idx >= 0 ? ` в терминале ${idx + 1}` : ''}`);
+          setTimeout(() => setBusyMsg(''), 5000);
+          break;
+        }
+        case 'file_saved':
+          // файл с телефона сохранён на ПК — если ждём прикрепление, вставляем путь в терминал
+          if (pendingAttach.current && m.path) {
+            pendingAttach.current = false;
+            send({ type: 'pty_input', termId: activeTermRef.current, data: `"${m.path}" ` });
+            webRefs.current[activeTermRef.current]?.injectJavaScript('window.__focus&&window.__focus();true;');
+            setBusyMsg('Файл прикреплён в терминал ✓');
+            setTimeout(() => setBusyMsg(''), 2500);
+          }
+          break;
+        case 'fs_list': {
+          const t = { path: m.path || '', parent: m.parent ?? null, drives: !!m.drives, entries: m.entries || [] };
+          if ((m.reqId || '').startsWith('pk')) setPickerTree(t);
+          else setTree(t);
+          break;
+        }
+        case 'fs_read': setFile({ path: m.path, content: m.content, editable: m.editable }); setDraft(m.content); break;
+        case 'fs_write': setSaving(false); break;
+        case 'fs_download': setBusyMsg('Файл отправлен в приложение ✓'); setTimeout(() => setBusyMsg(''), 2500); break;
+        case 'pc_offline': setBusyMsg('Компьютер не в сети'); setTimeout(() => setBusyMsg(''), 2500); break;
+        case 'err': setBusyMsg(m.message || 'Ошибка'); setSaving(false); setTimeout(() => setBusyMsg(''), 3000); break;
+        default: break;
+      }
+    }
+
+    connect();
+    return () => { alive = false; clearTimeout(reconnectTimer); try { wsRef.current?.close(); } catch {} };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (connected && deviceId) { send({ type: 'hello' }); if (tree.entries.length === 0) send({ type: 'fs_list', reqId: newReq(), path: '' }); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, deviceId]);
+
+  useEffect(() => {
+    if (!connected) return;
+    const t = setInterval(() => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'list_devices' })); }, 5000);
+    return () => clearInterval(t);
+  }, [connected]);
+
+  const [kb, setKb] = useState(false);
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKb(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKb(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
+
+  // ---- терминал: сообщения из WebView (каждая вкладка шлёт со своим termId) ----
+  const onWebMessage = (termId: string) => (e: any) => {
+    let m: any; try { m = JSON.parse(e.nativeEvent.data); } catch { return; }
+    if (m.t === 'data') send({ type: 'pty_input', termId, data: m.d });
+    else if (m.t === 'resize') send({ type: 'pty_resize', termId, cols: m.cols, rows: m.rows });
+    else if (m.t === 'ready') { termReady.current[termId] = true; send({ type: 'pty_start', termId, cols: m.cols, rows: m.rows, cwd: termCwds.current[termId] || undefined }); }
+  };
+  const sendKey = (seq: string) => { send({ type: 'pty_input', termId: activeTerm, data: seq }); activeWeb()?.injectJavaScript('window.__focus&&window.__focus();true;'); };
+  const hideKeyboard = () => { activeWeb()?.injectJavaScript('window.__blur&&window.__blur();if(document.activeElement)document.activeElement.blur();true;'); Keyboard.dismiss(); };
+  const scrollTerm = (n: number) => activeWeb()?.injectJavaScript(`window.__scroll&&window.__scroll(${n});true;`);
+  const pickMode = useRef(false);
+  const pickFileForTerminal = () => { pickMode.current = true; setSub('explorer'); setBusyMsg('Выбери файл — его путь вставится в терминал'); setTimeout(() => setBusyMsg(''), 3500); };
+
+  // вставить то, что скопировано на телефоне
+  const pasteFromClipboard = async () => {
+    try {
+      const Clipboard = await import('expo-clipboard');
+      const txt = await Clipboard.getStringAsync();
+      if (txt) sendKey(txt);
+      else { setBusyMsg('Буфер пуст'); setTimeout(() => setBusyMsg(''), 1500); }
+    } catch { setBusyMsg('Не удалось вставить'); setTimeout(() => setBusyMsg(''), 2000); }
+  };
+
+  // прикрепить фото/файл с телефона прямо в терминал: загрузить на ПК → вставить путь
+  async function uploadToPc(uri: string) {
+    setBusyMsg('Отправляю файл на ПК…');
+    pendingAttach.current = true;
+    try {
+      const token = await getToken();
+      const res = await uploadAsync(`${API_URL}/files`, uri, {
+        httpMethod: 'POST', uploadType: FileSystemUploadType.MULTIPART, fieldName: 'file',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (res.status >= 400) throw new Error('Ошибка ' + res.status);
+      // путь вставится, когда ПК сохранит файл и пришлёт file_saved
+      setTimeout(() => { if (pendingAttach.current) { pendingAttach.current = false; setBusyMsg('ПК не в сети — файл не дошёл'); setTimeout(() => setBusyMsg(''), 2500); } }, 15000);
+    } catch (e: any) {
+      pendingAttach.current = false;
+      setBusyMsg('Не удалось отправить'); setTimeout(() => setBusyMsg(''), 2500);
+    }
+  }
+  const attachToTerminal = () => {
+    Alert.alert('Прикрепить в терминал', 'Откуда взять?', [
+      { text: 'Фото из галереи', onPress: async () => {
+        const ImagePicker = await import('expo-image-picker');
+        const r = await ImagePicker.launchImageLibraryAsync({ quality: 0.9, mediaTypes: ['images', 'videos'] });
+        if (!r.canceled && r.assets?.[0]) uploadToPc(r.assets[0].uri);
+      } },
+      { text: 'Снять фото', onPress: async () => {
+        const ImagePicker = await import('expo-image-picker');
+        const p = await ImagePicker.requestCameraPermissionsAsync();
+        if (!p.granted) { setBusyMsg('Нужен доступ к камере'); setTimeout(() => setBusyMsg(''), 2000); return; }
+        const r = await ImagePicker.launchCameraAsync({ quality: 0.9 });
+        if (!r.canceled && r.assets?.[0]) uploadToPc(r.assets[0].uri);
+      } },
+      { text: 'Файл', onPress: async () => {
+        const DocumentPicker = await import('expo-document-picker');
+        const r = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+        if (!r.canceled && r.assets?.[0]) uploadToPc(r.assets[0].uri);
+      } },
+      { text: 'С компьютера', onPress: pickFileForTerminal },
+      { text: 'Отмена', style: 'cancel' },
+    ]);
+  };
+
+  // открыть/закрыть/переключить вкладки терминала
+  const addTerm = () => {
+    if (terms.length >= 4) { setBusyMsg('Максимум 4 терминала'); setTimeout(() => setBusyMsg(''), 2000); return; }
+    // показываем выбор папки — терминал откроется именно в ней
+    setPicker(true);
+    pickerOpenDir(termCwds.current[activeTerm] || '');
+  };
+  const createTermIn = (cwd: string) => {
+    const id = String(nextTermId.current++);
+    termCwds.current[id] = cwd || '';
+    setTerms((p) => [...p, { id, cwd: cwd || '' }]);
+    setActiveTerm(id);
+    setPicker(false);
+  };
+  const doCloseTerm = (id: string) => {
+    send({ type: 'pty_kill', termId: id });
+    termReady.current[id] = false;
+    delete webRefs.current[id];
+    delete termCwds.current[id];
+    setTerms((p) => {
+      const left = p.filter((t) => t.id !== id);
+      const safe = left.length ? left : [{ id: '1', cwd: '' }];
+      if (id === activeTerm) setActiveTerm(safe[safe.length - 1].id);
+      return safe;
+    });
+  };
+  const closeTerm = (id: string) => {
+    const idx = terms.findIndex((t) => t.id === id);
+    Alert.alert('Закрыть терминал?', `Сессия ${idx >= 0 ? idx + 1 : ''} и её процессы будут завершены.`, [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Закрыть', style: 'destructive', onPress: () => doCloseTerm(id) },
+    ]);
+  };
+  const switchTerm = (id: string) => {
+    setActiveTerm(id);
+    setTimeout(() => webRefs.current[id]?.injectJavaScript('window.__fit&&window.__fit();window.__focus&&window.__focus();true;'), 60);
+  };
+
+  // голосовой ввод в терминал
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const [recording, setRecording] = useState(false);
+  async function startVoice() {
+    if (recording) return;
+    const perm = await requestRecordingPermissionsAsync();
+    if (!perm.granted) { setBusyMsg('Нужен доступ к микрофону'); setTimeout(() => setBusyMsg(''), 2500); return; }
+    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: true });
+    await recorder.prepareToRecordAsync();
+    recorder.record();
+    setRecording(true);
+  }
+  async function stopVoice() {
+    if (!recording) return;
+    setRecording(false);
+    try { await recorder.stop(); } catch {}
+    const uri = recorder.uri;
+    if (!uri) return;
+    setBusyMsg('Распознаю…');
+    try {
+      const token = await getToken();
+      const res = await uploadAsync(`${API_URL}/ai/transcribe`, uri, {
+        httpMethod: 'POST', uploadType: FileSystemUploadType.MULTIPART, fieldName: 'file',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      const data = JSON.parse(res.body || '{}');
+      setBusyMsg('');
+      if (data.text) { send({ type: 'pty_input', termId: activeTerm, data: data.text }); activeWeb()?.injectJavaScript('window.__focus&&window.__focus();true;'); }
+    } catch {
+      setBusyMsg('Не распознал'); setTimeout(() => setBusyMsg(''), 2500);
+    }
+  }
+
+  // ---- проводник ----
+  const openDir = (path: string) => send({ type: 'fs_list', reqId: newReq(), path });
+  const goUp = () => {
+    if (tree.drives) return;
+    if (/^[A-Za-z]:\\?$/.test(tree.path)) { openDir(''); return; }
+    openDir(tree.parent != null ? tree.parent : '');
+  };
+  const openTerminalHere = () => {
+    // открыть новый терминал в выбранной папке проводника
+    createTermIn(tree.path || '');
+    setSub('term');
+  };
+  const downloadFile = (path: string) => { setBusyMsg('Скачиваю в приложение → смотри во вкладке «Файлы»'); send({ type: 'fs_download', reqId: newReq(), path }); };
+  const TEXT_EXT = /\.(txt|md|js|jsx|ts|tsx|json|css|scss|html|xml|ya?ml|py|java|c|cpp|h|cs|go|rs|rb|php|sh|bat|ps1|env|gitignore|sql|toml|ini|conf|log|mjs|cjs|vue|svelte)$/i;
+  const openEntry = (e: Entry) => {
+    if (e.dir) { openDir(e.path); return; }
+    if (pickMode.current) { pickMode.current = false; send({ type: 'pty_input', termId: activeTerm, data: `"${e.path}" ` }); setSub('term'); return; }
+    if (TEXT_EXT.test(e.name)) send({ type: 'fs_read', reqId: newReq(), path: e.path });
+    else downloadFile(e.path); // картинки/бинарь — скачиваем в приложение
+  };
+  const saveFile = () => { if (!file) return; setSaving(true); send({ type: 'fs_write', reqId: newReq(), path: file.path, content: draft }); };
+
+  const selDevice = devices.find((d) => d.id === deviceId);
+  const online = connected && selDevice?.online;
+
+  return (
+    <ThemedView style={styles.container}>
+      <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
+        <ThemedText type="title" style={styles.h1}>Компьютер</ThemedText>
+        <View style={styles.statusRow}>
+          <View style={[styles.dot, { backgroundColor: online ? c.success : c.textSecondary }]} />
+          <ThemedText type="small" themeColor="textSecondary">
+            {!connected ? 'подключаюсь…' : online ? (selDevice?.name || 'ПК на связи') : 'ПК не в сети'}
+          </ThemedText>
+        </View>
+      </View>
+
+      <View style={styles.seg}>
+        <SegBtn label="Терминал" active={sub === 'term'} onPress={() => setSub('term')} />
+        <SegBtn label="Проводник" active={sub === 'explorer'} onPress={() => setSub('explorer')} />
+      </View>
+
+      {!!busyMsg && <ThemedText type="small" style={styles.toast}>{busyMsg}</ThemedText>}
+
+      {sub === 'term' ? (
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+          <View style={styles.termTabs}>
+            {terms.map((t, i) => (
+              <Pressable key={t.id} onPress={() => switchTerm(t.id)} style={[styles.termTab, t.id === activeTerm && styles.termTabOn]}>
+                <SymbolView name="terminal.fill" tintColor={t.id === activeTerm ? '#fff' : c.textSecondary} size={12} />
+                <ThemedText type="smallBold" style={{ color: t.id === activeTerm ? '#fff' : c.textSecondary }}>{i + 1}</ThemedText>
+                {terms.length > 1 && (
+                  <TouchableOpacity hitSlop={8} onPress={() => closeTerm(t.id)} style={{ marginLeft: 2 }}>
+                    <SymbolView name="xmark" tintColor={t.id === activeTerm ? '#fff' : c.textSecondary} size={11} />
+                  </TouchableOpacity>
+                )}
+              </Pressable>
+            ))}
+            <TouchableOpacity onPress={addTerm} style={styles.termAdd}>
+              <SymbolView name="plus" tintColor={c.accent} size={16} />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.termWrap}>
+            {terms.map((t) => (
+              <View
+                key={t.id}
+                style={[StyleSheet.absoluteFill, { opacity: t.id === activeTerm ? 1 : 0, zIndex: t.id === activeTerm ? 1 : 0 }]}
+                pointerEvents={t.id === activeTerm ? 'auto' : 'none'}>
+                <WebView
+                  ref={(r) => { webRefs.current[t.id] = r; }}
+                  originWhitelist={['*']}
+                  source={{ html: TERM_HTML }}
+                  onMessage={onWebMessage(t.id)}
+                  keyboardDisplayRequiresUserAction={false}
+                  hideKeyboardAccessoryView
+                  style={{ backgroundColor: '#0a0b0d' }}
+                  scrollEnabled={false}
+                />
+              </View>
+            ))}
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.keybar} contentContainerStyle={{ gap: 6, paddingHorizontal: Spacing.three, alignItems: 'center' }}>
+            <TouchableOpacity style={[styles.key, { backgroundColor: recording ? c.danger : c.backgroundElement }]} onPress={recording ? stopVoice : startVoice}>
+              <SymbolView name={recording ? 'stop.fill' : 'mic.fill'} tintColor="#fff" size={18} />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.key, { backgroundColor: c.backgroundElement }]} onPress={hideKeyboard}>
+              <SymbolView name="keyboard.chevron.compact.down" tintColor={c.text} size={18} />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.key, { backgroundColor: c.backgroundElement }]} onPress={attachToTerminal}>
+              <SymbolView name="paperclip" tintColor={c.text} size={18} />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.key, { backgroundColor: c.backgroundElement }]} onPress={pasteFromClipboard}>
+              <SymbolView name="doc.on.clipboard" tintColor={c.text} size={17} />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.key, { backgroundColor: c.accent, minWidth: 56 }]} onPress={() => sendKey('\r')}>
+              <ThemedText type="smallBold" style={{ color: '#fff' }}>↵ Enter</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.key, { backgroundColor: c.backgroundElement }]} onPress={() => scrollTerm(-6)}>
+              <SymbolView name="chevron.up" tintColor={c.text} size={16} />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.key, { backgroundColor: c.backgroundElement }]} onPress={() => scrollTerm(6)}>
+              <SymbolView name="chevron.down" tintColor={c.text} size={16} />
+            </TouchableOpacity>
+            {KEYS.map((k) => (
+              <TouchableOpacity key={k.label} style={styles.key} onPress={() => sendKey(k.seq)}>
+                <ThemedText type="smallBold" style={{ color: c.text }}>{k.label}</ThemedText>
+              </TouchableOpacity>
+            ))}
+            <View style={{ width: Spacing.three + BottomTabInset }} />
+          </ScrollView>
+          <View style={{ height: kb ? 0 : insets.bottom + BottomTabInset - 8 }} />
+        </KeyboardAvoidingView>
+      ) : (
+        <View style={{ flex: 1 }}>
+          <View style={styles.pathBar}>
+            {!tree.drives && (
+              <TouchableOpacity onPress={goUp} hitSlop={10} style={styles.backBtn}>
+                <SymbolView name="chevron.left" tintColor={c.accent} size={18} />
+                <ThemedText type="small" style={{ color: c.accent }}>Назад</ThemedText>
+              </TouchableOpacity>
+            )}
+            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={{ flex: 1, textAlign: tree.drives ? 'left' : 'center' }}>
+              {tree.drives ? 'Этот компьютер' : (tree.path || '').split(/[\\/]/).filter(Boolean).pop() || tree.path}
+            </ThemedText>
+            <TouchableOpacity onPress={() => openDir('')}><ThemedText type="small" style={{ color: c.accent }}>Диски</ThemedText></TouchableOpacity>
+          </View>
+          {!tree.drives && (
+            <TouchableOpacity style={styles.termHereBtn} onPress={openTerminalHere}>
+              <SymbolView name="terminal.fill" tintColor={c.accent} size={16} />
+              <ThemedText type="smallBold" style={{ color: c.accent }}>Открыть терминал здесь</ThemedText>
+            </TouchableOpacity>
+          )}
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: BottomTabInset + Spacing.four }}>
+            {tree.entries.length === 0 ? (
+              <ThemedText themeColor="textSecondary" style={{ textAlign: 'center', padding: Spacing.four }}>
+                {online ? 'Пусто' : 'Нет связи с ПК'}
+              </ThemedText>
+            ) : (
+              tree.entries.map((e) => (
+                <View key={e.path} style={styles.treeRow}>
+                  <TouchableOpacity style={styles.treeMain} onPress={() => openEntry(e)}>
+                    <SymbolView name={e.dir ? 'folder.fill' : 'doc.text'} tintColor={e.dir ? c.accent : c.textSecondary} size={18} />
+                    <ThemedText style={{ flex: 1 }} numberOfLines={1}>{e.name}</ThemedText>
+                  </TouchableOpacity>
+                  {!e.dir && (
+                    <TouchableOpacity hitSlop={8} onPress={() => downloadFile(e.path)} style={styles.dlBtn}>
+                      <SymbolView name="square.and.arrow.down" tintColor={c.accent} size={18} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))
+            )}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Выбор папки для нового терминала */}
+      <Modal visible={picker} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setPicker(false)}>
+        <ThemedView style={{ flex: 1 }}>
+          <View style={[styles.editHead, { paddingTop: Spacing.three }]}>
+            <TouchableOpacity onPress={() => setPicker(false)}><ThemedText style={{ color: c.accent }}>Отмена</ThemedText></TouchableOpacity>
+            <ThemedText type="smallBold" style={{ flex: 1, textAlign: 'center' }}>Где открыть терминал</ThemedText>
+            <TouchableOpacity onPress={() => pickerOpenDir('')}><ThemedText style={{ color: c.accent }}>Диски</ThemedText></TouchableOpacity>
+          </View>
+          <View style={styles.pathBar}>
+            {!pickerTree.drives && (
+              <TouchableOpacity hitSlop={10} style={styles.backBtn} onPress={() => {
+                if (/^[A-Za-z]:\\?$/.test(pickerTree.path)) pickerOpenDir('');
+                else pickerOpenDir(pickerTree.parent != null ? pickerTree.parent : '');
+              }}>
+                <SymbolView name="chevron.left" tintColor={c.accent} size={18} />
+                <ThemedText type="small" style={{ color: c.accent }}>Назад</ThemedText>
+              </TouchableOpacity>
+            )}
+            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1} style={{ flex: 1 }}>
+              {pickerTree.drives ? 'Этот компьютер' : pickerTree.path}
+            </ThemedText>
+          </View>
+          {!pickerTree.drives && (
+            <TouchableOpacity style={[styles.termHereBtn, { backgroundColor: c.accent }]} onPress={() => createTermIn(pickerTree.path)}>
+              <SymbolView name="terminal.fill" tintColor="#fff" size={16} />
+              <ThemedText type="smallBold" style={{ color: '#fff' }}>Открыть терминал здесь</ThemedText>
+            </TouchableOpacity>
+          )}
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: Spacing.four }}>
+            {pickerTree.entries.filter((e) => e.dir).length === 0 ? (
+              <ThemedText themeColor="textSecondary" style={{ textAlign: 'center', padding: Spacing.four }}>Нет вложенных папок</ThemedText>
+            ) : (
+              pickerTree.entries.filter((e) => e.dir).map((e) => (
+                <TouchableOpacity key={e.path} style={styles.treeRow} onPress={() => pickerOpenDir(e.path)}>
+                  <View style={styles.treeMain}>
+                    <SymbolView name="folder.fill" tintColor={c.accent} size={18} />
+                    <ThemedText style={{ flex: 1 }} numberOfLines={1}>{e.name}</ThemedText>
+                  </View>
+                  <SymbolView name="chevron.right" tintColor={c.textSecondary} size={14} />
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
+        </ThemedView>
+      </Modal>
+
+      {/* Редактор файла */}
+      <Modal visible={!!file} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setFile(null)}>
+        <ThemedView style={{ flex: 1 }}>
+          <View style={[styles.editHead, { paddingTop: Spacing.three }]}>
+            <TouchableOpacity onPress={() => setFile(null)}><ThemedText style={{ color: c.accent }}>Закрыть</ThemedText></TouchableOpacity>
+            <ThemedText type="smallBold" numberOfLines={1} style={{ flex: 1, textAlign: 'center', marginHorizontal: Spacing.two }}>
+              {file ? file.path.split(/[\\/]/).pop() : ''}
+            </ThemedText>
+            {file?.editable ? (
+              <TouchableOpacity onPress={saveFile} disabled={saving}>
+                {saving ? <ActivityIndicator color={c.accent} /> : <ThemedText style={{ color: c.accent, fontWeight: '700' }}>Сохранить</ThemedText>}
+              </TouchableOpacity>
+            ) : <ThemedText type="small" themeColor="textSecondary">просмотр</ThemedText>}
+          </View>
+          <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <TextInput style={styles.editArea} value={draft} onChangeText={setDraft} editable={!!file?.editable} multiline autoCapitalize="none" autoCorrect={false} spellCheck={false} />
+          </KeyboardAvoidingView>
+        </ThemedView>
+      </Modal>
+    </ThemedView>
+  );
+}
+
+function SegBtn({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={[styles.segBtn, active && styles.segBtnOn]}>
+      <ThemedText type="smallBold" style={{ color: active ? '#fff' : c.textSecondary }}>{label}</ThemedText>
+    </Pressable>
+  );
+}
+
+const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
+
+const styles = StyleSheet.create({
+  container: { flex: 1 },
+  header: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.two },
+  h1: { fontSize: 30, lineHeight: 36 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginTop: 2 },
+  dot: { width: 9, height: 9, borderRadius: 5 },
+  seg: { flexDirection: 'row', gap: 4, marginHorizontal: Spacing.three, padding: 4, borderRadius: Radius.md, backgroundColor: c.backgroundElement, marginBottom: Spacing.two },
+  segBtn: { flex: 1, paddingVertical: Spacing.two, borderRadius: Radius.sm, alignItems: 'center' },
+  segBtnOn: { backgroundColor: c.accent },
+  toast: { textAlign: 'center', color: c.text, paddingVertical: 4 },
+  termTabs: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: Spacing.three, marginBottom: Spacing.two },
+  termTab: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.sm, backgroundColor: c.backgroundElement },
+  termTabOn: { backgroundColor: c.accent },
+  termAdd: { width: 34, height: 30, borderRadius: Radius.sm, backgroundColor: c.backgroundElement, alignItems: 'center', justifyContent: 'center' },
+  termWrap: { flex: 1, marginHorizontal: Spacing.three, borderRadius: Radius.md, overflow: 'hidden', backgroundColor: '#0a0b0d', borderWidth: 1, borderColor: c.glassBorder },
+  keybar: { flexGrow: 0, paddingVertical: Spacing.two },
+  key: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: Radius.sm, backgroundColor: c.backgroundSelected, minWidth: 40, alignItems: 'center' },
+  pathBar: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
+  backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  termHereBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.two, marginHorizontal: Spacing.three, marginBottom: Spacing.two, paddingVertical: Spacing.two, borderRadius: Radius.md, backgroundColor: c.backgroundElement },
+  treeRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingRight: Spacing.three, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.separator },
+  treeMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.three, paddingVertical: Spacing.three, paddingLeft: Spacing.three },
+  dlBtn: { padding: Spacing.two },
+  editHead: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.three, paddingBottom: Spacing.two },
+  editArea: { flex: 1, fontFamily: mono, fontSize: 13, lineHeight: 19, color: c.text, padding: Spacing.three, textAlignVertical: 'top' },
+});

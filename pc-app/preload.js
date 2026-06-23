@@ -1,0 +1,32 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+contextBridge.exposeInMainWorld('arra', {
+  getStatus: () => ipcRenderer.invoke('get-status'),
+  login: (d) => ipcRenderer.invoke('login', d),
+  chooseFolder: () => ipcRenderer.invoke('choose-folder'),
+  setMode: (m) => ipcRenderer.invoke('set-mode', m),
+  getHistory: () => ipcRenderer.invoke('get-history'),
+  api: (method, path, body) => ipcRenderer.invoke('api', { method, path, body }),
+  openFolder: () => ipcRenderer.invoke('open-folder'),
+  openPath: (p) => ipcRenderer.invoke('open-path', p),
+  copyPath: (p) => ipcRenderer.invoke('copy-path', p),
+  recopy: (f) => ipcRenderer.invoke('recopy', f),
+  logout: () => ipcRenderer.invoke('logout'),
+  winMin: () => ipcRenderer.send('win-min'),
+  winClose: () => ipcRenderer.send('win-close'),
+  onStatus: (cb) => ipcRenderer.on('status', (_e, s) => cb(s)),
+  onFile: (cb) => ipcRenderer.on('file-received', (_e, f) => cb(f)),
+  onFileError: (cb) => ipcRenderer.on('file-error', (_e, e) => cb(e)),
+  // Файлы кода / проводник
+  term: (msg) => ipcRenderer.send('term', msg),
+  onTerm: (cb) => ipcRenderer.on('term-event', (_e, o) => cb(o)),
+  getCodeRoot: () => ipcRenderer.invoke('get-code-root'),
+  chooseCodeRoot: () => ipcRenderer.invoke('choose-code-root'),
+  // Настоящий терминал (PTY) — termId для нескольких вкладок
+  ptyStart: (opts) => ipcRenderer.invoke('pty-start', opts),
+  ptyInput: (d, termId) => ipcRenderer.send('pty-input', { d, termId }),
+  ptyResize: (size, termId) => ipcRenderer.send('pty-resize', { ...size, termId }),
+  ptyRestart: (size, termId) => ipcRenderer.send('pty-restart', { ...size, termId }),
+  ptyKill: (termId) => ipcRenderer.send('pty-kill', { termId }),
+  onPtyData: (cb) => ipcRenderer.on('pty-data', (_e, payload) => cb(payload)),
+});
