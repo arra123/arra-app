@@ -342,8 +342,9 @@ function restartPty(termId, cols, rows, cwd, local) {
 // Единый диспетчер релей-команд (msg от телефона ИЛИ от локального терминала ПК)
 // ---- Удалённый экран (трансляция + управление мышью) ----
 let screenTimer = null;
-let screenCfg = { displayId: null, quality: 45, fps: 6, width: 1100 };
+let screenCfg = { displayId: null, quality: 55, fps: 15, width: 1280 };
 let screenBusy = false;
+let lastCaptureMs = 0;
 
 function listScreens() {
   const prim = screen.getPrimaryDisplay().id;
@@ -359,7 +360,8 @@ function curDisplay() {
   return screen.getAllDisplays().find((d) => String(d.id) === String(screenCfg.displayId)) || screen.getPrimaryDisplay();
 }
 async function captureFrame() {
-  if (screenBusy) return;
+  // Не копим очередь: если предыдущий кадр ещё захватывается или сокет занят — пропускаем тик.
+  if (screenBusy || !ws || ws.readyState !== 1 || ws.bufferedAmount > 600000) return;
   screenBusy = true;
   try {
     const disp = curDisplay();
@@ -369,19 +371,31 @@ async function captureFrame() {
     let src = sources.find((s) => String(s.display_id) === String(disp.id)) || sources[0];
     if (src && src.thumbnail && ws && ws.readyState === 1) {
       const b64 = src.thumbnail.toJPEG(screenCfg.quality).toString('base64');
-      ws.send(JSON.stringify({ to: 'client', type: 'screen_frame', data: b64 }));
+      ws.send(JSON.stringify({ to: 'client', type: 'screen_frame', data: b64, w, h }));
+      lastCaptureMs = Date.now();
     }
   } catch {} finally { screenBusy = false; }
+}
+function scheduleCapture() {
+  // Адаптивный цикл: запускаем следующий захват сразу после предыдущего, но не чаще fps.
+  if (!screenTimer) return;
+  const ms = Math.max(40, Math.round(1000 / (screenCfg.fps || 12)));
+  captureFrame().finally(() => {
+    if (screenTimer) screenTimer = setTimeout(scheduleCapture, ms);
+  });
 }
 function startScreen(cfg) {
   stopScreen();
   screenCfg = { ...screenCfg, ...(cfg || {}) };
   if (!screenCfg.displayId) screenCfg.displayId = String(screen.getPrimaryDisplay().id);
-  const ms = Math.max(150, Math.round(1000 / (screenCfg.fps || 4)));
-  screenTimer = setInterval(captureFrame, ms);
-  captureFrame();
+  screenTimer = setTimeout(scheduleCapture, 0);
 }
-function stopScreen() { if (screenTimer) { clearInterval(screenTimer); screenTimer = null; } }
+// Мгновенная смена монитора без перезапуска потока — следующий кадр уже с нового экрана.
+function switchScreen(displayId) {
+  if (displayId) screenCfg.displayId = String(displayId);
+  if (!screenTimer) startScreen({});
+}
+function stopScreen() { if (screenTimer) { clearTimeout(screenTimer); screenTimer = null; } }
 
 // Инъекция мыши/клавиатуры через постоянный PowerShell (быстро, без сторонних модулей)
 let mousePs = null;
@@ -445,6 +459,15 @@ function handleRelay(msg, send) {
     case 'screen_start':
       startScreen({ displayId: msg.displayId, fps: msg.fps, quality: msg.quality, width: msg.width });
       send({ type: 'screens', screens: listScreens() });
+      break;
+    case 'screen_switch':
+      switchScreen(msg.displayId);
+      break;
+    case 'screen_cfg':
+      // Подстройка качества/частоты на лету (напр. при зуме — резче, в обзоре — быстрее)
+      if (msg.fps) screenCfg.fps = Math.max(4, Math.min(20, msg.fps));
+      if (msg.quality) screenCfg.quality = Math.max(20, Math.min(80, msg.quality));
+      if (msg.width) screenCfg.width = Math.max(640, Math.min(1920, msg.width));
       break;
     case 'screen_stop':
       stopScreen();
