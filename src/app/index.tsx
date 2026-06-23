@@ -278,7 +278,7 @@ export default function FinanceScreen() {
         )}
       </ScrollView>
 
-      <TransactionEdit tx={editTx} onClose={() => setEditTx(null)} onSave={saveTx} onDelete={deleteTx} />
+      <TransactionEdit tx={editTx} onClose={() => setEditTx(null)} onSave={saveTx} onDelete={deleteTx} onChanged={load} />
 
       {/* Долги — группировка по должнику, детализация, срок, статус «вернули» */}
       <DebtsModal visible={showDebts} onClose={() => setShowDebts(false)} onChanged={load} />

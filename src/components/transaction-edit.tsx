@@ -14,6 +14,7 @@ import {
 import { CategoryIcon } from '@/components/category-icon';
 import { MerchantLogo } from '@/components/merchant-logo';
 import { ThemedText } from '@/components/themed-text';
+import { TransactionItemsEditor } from '@/components/transaction-items';
 import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { Tx } from '@/components/transaction-row';
@@ -32,11 +33,13 @@ export function TransactionEdit({
   onClose,
   onSave,
   onDelete,
+  onChanged,
 }: {
   tx: Tx | null;
   onClose: () => void;
   onSave: (id: string, patch: { type: 'expense' | 'income'; amount: number; category: string; title: string | null; merchant: string | null; occurred_at: string }) => void;
   onDelete: (id: string) => void;
+  onChanged?: () => void;
 }) {
   const theme = useTheme();
   const [type, setType] = useState<'expense' | 'income'>('expense');
@@ -45,6 +48,7 @@ export function TransactionEdit({
   const [title, setTitle] = useState('');
   const [merchant, setMerchant] = useState('');
   const [date, setDate] = useState(new Date());
+  const [showItems, setShowItems] = useState(false);
 
   const savedRef = useRef(false);
 
@@ -164,10 +168,27 @@ export function TransactionEdit({
             </View>
           </ScrollView>
 
+          {!isNew && type === 'expense' && (
+            <TouchableOpacity activeOpacity={0.7} onPress={() => setShowItems(true)} style={[styles.splitBtn, { borderColor: theme.separator }]}>
+              <CategoryIcon category="Прочее" size={20} />
+              <ThemedText type="smallBold" style={{ color: theme.text }}>Разбить на позиции</ThemedText>
+            </TouchableOpacity>
+          )}
+
           {!isNew && (
             <TouchableOpacity activeOpacity={0.7} onPress={() => onDelete(tx.id)} style={{ paddingVertical: Spacing.two }}>
               <ThemedText style={{ color: theme.danger, textAlign: 'center', fontWeight: '600', fontSize: 15 }}>Удалить операцию</ThemedText>
             </TouchableOpacity>
+          )}
+
+          {showItems && (
+            <TransactionItemsEditor
+              txId={tx.id}
+              txAmount={Number(amount.replace(',', '.')) || Number(tx.amount) || 0}
+              txTitle={title.trim() || merchant.trim() || tx.category}
+              onClose={() => setShowItems(false)}
+              onSaved={onChanged}
+            />
           )}
           <TouchableOpacity activeOpacity={0.85} onPress={save} style={[styles.saveBtn, { backgroundColor: theme.tint }]}>
             <ThemedText style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Сохранить</ThemedText>
@@ -195,4 +216,5 @@ const styles = StyleSheet.create({
   catChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 7, paddingHorizontal: 10, paddingLeft: 7, paddingRight: 12, borderRadius: Radius.pill, borderWidth: StyleSheet.hairlineWidth },
   merchChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 5, paddingLeft: 5, paddingRight: 11, borderRadius: Radius.pill, borderWidth: StyleSheet.hairlineWidth },
   saveBtn: { height: 52, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.one },
+  splitBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.two, paddingVertical: Spacing.three, borderWidth: StyleSheet.hairlineWidth, borderRadius: Radius.md },
 });

@@ -18,6 +18,7 @@ export type Tx = {
   occurred_at: string;
   raw_input?: string | null;
   source?: string | null;
+  item_count?: number;
 };
 
 const fmt = (n: number) => n.toLocaleString('ru-RU');
@@ -65,6 +66,7 @@ export function TransactionRow({
           </ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
             {tx.merchant ? `${tx.merchant} · ` : ''}{tx.category} · {fmtTime(tx.occurred_at)}
+            {tx.item_count ? `  ·  ${tx.item_count} поз.` : ''}
           </ThemedText>
         </View>
         <ThemedText type="smallBold" style={{ color: tx.type === 'income' ? theme.success : theme.text }}>

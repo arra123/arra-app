@@ -13,9 +13,11 @@ export default async function transactionRoutes(app) {
     }
     params.push(limit);
     const { rows } = await query(
-      `SELECT id, type, amount, currency, category, merchant, title, note, occurred_at, source, raw_input
-       FROM transactions WHERE ${where}
-       ORDER BY occurred_at DESC LIMIT $${params.length}`,
+      `SELECT t.id, t.type, t.amount, t.currency, t.category, t.merchant, t.title, t.note,
+              t.occurred_at, t.source, t.raw_input,
+              (SELECT COUNT(*) FROM transaction_items i WHERE i.transaction_id = t.id)::int AS item_count
+       FROM transactions t WHERE ${where.replace(/user_id/g, 't.user_id').replace(/occurred_at/g, 't.occurred_at')}
+       ORDER BY t.occurred_at DESC LIMIT $${params.length}`,
       params,
     );
     return { transactions: rows };
@@ -83,6 +85,46 @@ export default async function transactionRoutes(app) {
     return { ok: true };
   });
 
+  // Позиции внутри операции (разбивка заказа на товары со своими категориями)
+  app.get('/transactions/:id/items', { preHandler: app.auth }, async (request, reply) => {
+    const tx = await one('SELECT id FROM transactions WHERE id = $1 AND user_id = $2', [
+      request.params.id,
+      request.user.id,
+    ]);
+    if (!tx) return reply.code(404).send({ error: 'Операция не найдена' });
+    const { rows } = await query(
+      `SELECT id, title, amount::float8 AS amount, category
+       FROM transaction_items WHERE transaction_id = $1 ORDER BY created_at`,
+      [request.params.id],
+    );
+    return { items: rows };
+  });
+
+  // Заменить позиции операции целиком. body: { items: [{title, amount, category}] }
+  app.put('/transactions/:id/items', { preHandler: app.auth }, async (request, reply) => {
+    const tx = await one('SELECT id FROM transactions WHERE id = $1 AND user_id = $2', [
+      request.params.id,
+      request.user.id,
+    ]);
+    if (!tx) return reply.code(404).send({ error: 'Операция не найдена' });
+    const items = Array.isArray(request.body?.items) ? request.body.items : [];
+    await query('DELETE FROM transaction_items WHERE transaction_id = $1', [request.params.id]);
+    for (const it of items) {
+      if (!it || it.amount == null || !String(it.title || '').trim()) continue;
+      await query(
+        `INSERT INTO transaction_items (transaction_id, title, amount, category)
+         VALUES ($1, $2, $3, $4)`,
+        [request.params.id, String(it.title).trim(), Math.abs(Number(it.amount)), it.category || null],
+      );
+    }
+    const { rows } = await query(
+      `SELECT id, title, amount::float8 AS amount, category
+       FROM transaction_items WHERE transaction_id = $1 ORDER BY created_at`,
+      [request.params.id],
+    );
+    return { items: rows };
+  });
+
   // Сводка за месяц. ?month=YYYY-MM (по умолчанию текущий).
   app.get('/stats/summary', { preHandler: app.auth }, async (request) => {
     const month = /^\d{4}-\d{2}$/.test(request.query?.month || '') ? request.query.month + '-01' : null;
@@ -100,11 +142,24 @@ export default async function transactionRoutes(app) {
     const summary = { income: 0, expense: 0 };
     for (const r of rows) summary[r.type] = r.total;
 
+    // Разбивка по категориям: если у операции есть позиции — считаем по категориям позиций,
+    // иначе по категории самой операции.
     const { rows: byCat } = await query(
-      `SELECT category, COALESCE(SUM(amount),0)::float8 AS total
-       FROM transactions
-       WHERE user_id = $1 AND type = 'expense' AND occurred_at >= ${startExpr} AND occurred_at < ${endExpr}
-       GROUP BY category ORDER BY total DESC LIMIT 8`,
+      `WITH base AS (
+         SELECT t.id, COALESCE(t.category,'Прочее') AS category, t.amount,
+                EXISTS (SELECT 1 FROM transaction_items i WHERE i.transaction_id = t.id) AS has_items
+         FROM transactions t
+         WHERE t.user_id = $1 AND t.type = 'expense'
+           AND t.occurred_at >= ${startExpr} AND t.occurred_at < ${endExpr}
+       ),
+       parts AS (
+         SELECT category, amount FROM base WHERE NOT has_items
+         UNION ALL
+         SELECT COALESCE(i.category, b.category, 'Прочее') AS category, i.amount
+         FROM transaction_items i JOIN base b ON b.id = i.transaction_id WHERE b.has_items
+       )
+       SELECT category, COALESCE(SUM(amount),0)::float8 AS total
+       FROM parts GROUP BY category ORDER BY total DESC LIMIT 8`,
       params,
     );
 
