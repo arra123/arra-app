@@ -51,6 +51,9 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: npx eas-cli@latest submit --platform ios --path "$GITHUB_WORKSPACE/Arra.ipa" --profile production --non-interactive
 
+      - name: Add build to Internal testing group
+        run: node scripts/asc-add-latest-to-group.mjs
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
