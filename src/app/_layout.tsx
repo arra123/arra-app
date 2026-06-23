@@ -18,15 +18,9 @@ import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
 import { AuthScreen } from '@/components/auth-screen';
 import { AuthProvider, useAuth } from '@/lib/auth';
-import { registerPush } from '@/lib/push';
 
 function Gate() {
   const { user, loading } = useAuth();
-
-  // После входа — регистрируем push-уведомления (файл получен, Claude закончил и т.п.)
-  useEffect(() => {
-    if (user) registerPush();
-  }, [user]);
 
   if (loading) {
     return (
