@@ -21,6 +21,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api, API_URL, getToken } from '@/lib/api';
+import { haptic } from '@/lib/haptics';
 
 type Msg = { id: string; role: 'user' | 'assistant'; content: string; created_at?: string };
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -95,6 +96,7 @@ export function Assistant() {
   async function send(text: string) {
     const t = text.trim();
     if (!t || sending) return;
+    haptic.tap();
     Keyboard.dismiss();
     setInput('');
     setMsgs((p) => [...p, { id: 'tmp-' + p.length, role: 'user', content: t }]);
@@ -102,7 +104,9 @@ export function Assistant() {
     try {
       await api('/ai/assistant', { body: { text: t } });
       await load();
+      haptic.success();
     } catch (e: any) {
+      haptic.error();
       Alert.alert('Не получилось', e?.message || '');
     } finally {
       setSending(false);
@@ -116,12 +120,14 @@ export function Assistant() {
     await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: true });
     await recorder.prepareToRecordAsync();
     recorder.record();
+    haptic.press();
     setRecSecs(0);
     setRecording(true);
     recTimer.current = setInterval(() => setRecSecs((s) => s + 1), 1000);
   }
   async function stopVoice(doSend: boolean) {
     if (!recording) return;
+    haptic.tap();
     if (recTimer.current) clearInterval(recTimer.current);
     setRecording(false);
     try { await recorder.stop(); } catch { /* ignore */ }

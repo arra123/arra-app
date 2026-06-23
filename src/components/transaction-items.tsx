@@ -16,6 +16,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
+import { haptic } from '@/lib/haptics';
 
 const CATEGORIES = [
   'Продукты', 'Кафе и рестораны', 'Транспорт', 'Такси', 'Здоровье', 'Одежда',
@@ -82,6 +83,7 @@ export function TransactionItemsEditor({
         .filter((i) => i.title.trim() && Number(i.amount.replace(',', '.')))
         .map((i) => ({ title: i.title.trim(), amount: Number(i.amount.replace(',', '.')), category: i.category }));
       await api(`/transactions/${txId}/items`, { method: 'PUT', body: { items: payload } });
+      haptic.success();
       onSaved?.();
       onClose();
     } catch {

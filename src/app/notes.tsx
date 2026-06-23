@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassCard } from '@/components/glass-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { haptic } from '@/lib/haptics';
 import { BottomTabInset, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api, API_URL, getToken } from '@/lib/api';
@@ -148,6 +149,7 @@ export default function NotesScreen() {
       } else if (editing) {
         await api(`/notes/${editing.id}`, { method: 'PUT', body: { title: title.trim(), body, color } });
       }
+      haptic.success();
       close();
       await load();
     } catch (e: any) {
@@ -296,7 +298,7 @@ export default function NotesScreen() {
                 rightThreshold={30}
                 overshootRight={false}
                 renderRightActions={() => (
-                  <TouchableOpacity onPress={() => deleteNote(n.id)} activeOpacity={0.8} style={[styles.swipeDelete, { backgroundColor: theme.danger }]}>
+                  <TouchableOpacity onPress={() => { haptic.warning(); deleteNote(n.id); }} activeOpacity={0.8} style={[styles.swipeDelete, { backgroundColor: theme.danger }]}>
                     <SymbolView name="trash.fill" tintColor="#fff" size={22} />
                   </TouchableOpacity>
                 )}>

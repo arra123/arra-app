@@ -17,12 +17,19 @@ import { ThemedText } from '@/components/themed-text';
 import { TransactionItemsEditor } from '@/components/transaction-items';
 import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { haptic } from '@/lib/haptics';
 import type { Tx } from '@/components/transaction-row';
 
 const CATEGORIES = [
-  'Продукты', 'Кафе и рестораны', 'Транспорт', 'Такси', 'Жильё', 'Связь и интернет',
-  'Здоровье', 'Одежда', 'Развлечения', 'Подписки', 'Образование', 'Подарки',
-  'Путешествия', 'Дом и быт', 'Дети', 'Питомцы', 'Авто', 'Зарплата', 'Перевод', 'Прочее',
+  'Продукты', 'Кафе и рестораны', 'Кофе', 'Доставка', 'Алкоголь',
+  'Транспорт', 'Такси', 'Каршеринг', 'Парковка', 'Топливо',
+  'Жильё', 'ЖКХ', 'Связь и интернет',
+  'Здоровье', 'Аптека', 'Спорт', 'Красота',
+  'Одежда', 'Развлечения', 'Кино', 'Музыка', 'Игры', 'Подписки',
+  'Образование', 'Книги', 'Подарки', 'Путешествия',
+  'Дом и быт', 'Техника', 'Дети', 'Питомцы', 'Авто',
+  'Маркетплейс', 'Налоги', 'Бизнес', 'Инвестиции',
+  'Зарплата', 'Перевод', 'Прочее',
 ];
 
 // Популярные магазины/сервисы — логотип подтянется автоматически
@@ -73,6 +80,7 @@ export function TransactionEdit({
     const num = Number(amount.replace(',', '.'));
     if (!num) { onClose(); return; }
     savedRef.current = true;
+    haptic.success();
     onSave(tx.id, { type, amount: num, category, title: title.trim() || null, merchant: merchant.trim() || null, occurred_at: date.toISOString() });
   }
 
@@ -169,7 +177,7 @@ export function TransactionEdit({
           </ScrollView>
 
           {!isNew && type === 'expense' && (
-            <TouchableOpacity activeOpacity={0.7} onPress={() => setShowItems(true)} style={[styles.splitBtn, { borderColor: theme.separator }]}>
+            <TouchableOpacity activeOpacity={0.7} onPress={() => { haptic.tap(); setShowItems(true); }} style={[styles.splitBtn, { borderColor: theme.separator }]}>
               <CategoryIcon category="Прочее" size={20} />
               <ThemedText type="smallBold" style={{ color: theme.text }}>Разбить на позиции</ThemedText>
             </TouchableOpacity>
