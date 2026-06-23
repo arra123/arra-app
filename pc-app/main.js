@@ -191,6 +191,27 @@ function fsRead(reqId, p, send) {
   }
 }
 
+// Предпросмотр файла на телефоне БЕЗ отправки: читаем картинку/PDF и шлём base64.
+const PREVIEW_MIME = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.bmp': 'image/bmp', '.heic': 'image/heic', '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+};
+function fsPreview(reqId, p, send) {
+  const abs = resolveFsPath(p);
+  if (!abs) { send({ type: 'err', reqId, message: 'Нет пути' }); return; }
+  try {
+    const st = fs.statSync(abs);
+    const ext = path.extname(abs).toLowerCase();
+    const mime = PREVIEW_MIME[ext] || 'application/octet-stream';
+    if (st.size > 18 * 1024 * 1024) { send({ type: 'err', reqId, message: 'Файл большой (>18 МБ) — лучше скачать' }); return; }
+    const data = fs.readFileSync(abs).toString('base64');
+    send({ type: 'fs_preview', reqId, path: abs, mime, name: path.basename(abs), data });
+  } catch (e) {
+    send({ type: 'err', reqId, message: e.message });
+  }
+}
+
 function fsWrite(reqId, p, content, send) {
   const abs = resolveFsPath(p);
   if (!abs) { send({ type: 'err', reqId, message: 'Нет пути' }); return; }
@@ -501,6 +522,9 @@ function handleRelay(msg, send) {
       break;
     case 'fs_read':
       fsRead(msg.reqId, msg.path, send);
+      break;
+    case 'fs_preview':
+      fsPreview(msg.reqId, msg.path, send);
       break;
     case 'fs_write':
       fsWrite(msg.reqId, msg.path, msg.content, send);

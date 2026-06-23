@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -136,6 +137,7 @@ export default function PcScreen() {
   const [tree, setTree] = useState<{ path: string; parent: string | null; drives: boolean; entries: Entry[] }>({ path: '', parent: null, drives: true, entries: [] });
   const [file, setFile] = useState<{ path: string; content: string; editable: boolean } | null>(null);
   const [draft, setDraft] = useState('');
+  const [preview, setPreview] = useState<{ path: string; name: string; mime: string; data: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyMsg, setBusyMsg] = useState('');
 
@@ -213,6 +215,7 @@ export default function PcScreen() {
           break;
         }
         case 'fs_read': setFile({ path: m.path, content: m.content, editable: m.editable }); setDraft(m.content); break;
+        case 'fs_preview': setBusyMsg(''); setPreview({ path: m.path, name: m.name, mime: m.mime, data: m.data }); break;
         case 'fs_write': setSaving(false); break;
         case 'fs_download': setBusyMsg('Файл отправлен в приложение ✓'); setTimeout(() => setBusyMsg(''), 2500); break;
         case 'fs_zip': setBusyMsg(`Архив готов: ${m.name} → во вкладке «Файлы»`); setTimeout(() => setBusyMsg(''), 3500); break;
@@ -408,11 +411,13 @@ export default function PcScreen() {
   const downloadFile = (path: string) => { setBusyMsg('Скачиваю в приложение → смотри во вкладке «Файлы»'); send({ type: 'fs_download', reqId: newReq(), path }); };
   const zipFolder = (path: string) => { setBusyMsg('Архивирую папку… появится во вкладке «Файлы»'); send({ type: 'fs_zip', reqId: newReq(), path }); };
   const TEXT_EXT = /\.(txt|md|js|jsx|ts|tsx|json|css|scss|html|xml|ya?ml|py|java|c|cpp|h|cs|go|rs|rb|php|sh|bat|ps1|env|gitignore|sql|toml|ini|conf|log|mjs|cjs|vue|svelte)$/i;
+  const PREVIEW_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|svg|pdf)$/i;
   const openEntry = (e: Entry) => {
     if (e.dir) { openDir(e.path); return; }
     if (pickMode.current) { pickMode.current = false; send({ type: 'pty_input', termId: activeTerm, data: `"${e.path}" ` }); setSub('term'); return; }
     if (TEXT_EXT.test(e.name)) send({ type: 'fs_read', reqId: newReq(), path: e.path });
-    else downloadFile(e.path); // картинки/бинарь — скачиваем в приложение
+    else if (PREVIEW_EXT.test(e.name)) { setBusyMsg('Открываю…'); send({ type: 'fs_preview', reqId: newReq(), path: e.path }); }
+    else downloadFile(e.path); // прочий бинарь — скачиваем в приложение
   };
   const saveFile = () => { if (!file) return; setSaving(true); send({ type: 'fs_write', reqId: newReq(), path: file.path, content: draft }); };
 
@@ -629,6 +634,41 @@ export default function PcScreen() {
           </KeyboardAvoidingView>
         </ThemedView>
       </Modal>
+
+      {/* Предпросмотр файла с ПК (картинка/PDF) прямо на телефоне, без отправки */}
+      <Modal visible={!!preview} animationType="fade" onRequestClose={() => setPreview(null)} supportedOrientations={['portrait', 'landscape']}>
+        <View style={{ flex: 1, backgroundColor: '#000' }}>
+          <View style={[styles.previewBar, { paddingTop: insets.top + 6 }]}>
+            <ThemedText type="smallBold" style={{ color: '#fff', flex: 1 }} numberOfLines={1}>{preview?.name}</ThemedText>
+            <TouchableOpacity onPress={() => { if (preview) downloadFile(preview.path); }} hitSlop={8} style={styles.previewBtn}>
+              <SymbolView name="square.and.arrow.down" tintColor="#fff" size={18} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setPreview(null)} hitSlop={8} style={styles.previewBtn}>
+              <SymbolView name="xmark" tintColor="#fff" size={18} />
+            </TouchableOpacity>
+          </View>
+          {preview?.mime === 'application/pdf' ? (
+            <WebView
+              originWhitelist={['*']}
+              source={{ uri: `data:application/pdf;base64,${preview.data}` }}
+              style={{ flex: 1, backgroundColor: '#000' }}
+            />
+          ) : preview ? (
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center' }}
+              maximumZoomScale={5}
+              minimumZoomScale={1}
+              centerContent>
+              <Image
+                source={{ uri: `data:${preview.mime};base64,${preview.data}` }}
+                style={{ width: '100%', height: '100%' }}
+                resizeMode="contain"
+              />
+            </ScrollView>
+          ) : null}
+        </View>
+      </Modal>
     </ThemedView>
   );
 }
@@ -669,4 +709,6 @@ const styles = StyleSheet.create({
   dlBtn: { padding: Spacing.two },
   editHead: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.three, paddingBottom: Spacing.two },
   editArea: { flex: 1, fontFamily: mono, fontSize: 13, lineHeight: 19, color: c.text, padding: Spacing.three, textAlignVertical: 'top' },
+  previewBar: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, paddingHorizontal: Spacing.three, paddingBottom: 8, backgroundColor: 'rgba(0,0,0,0.6)' },
+  previewBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)' },
 });
