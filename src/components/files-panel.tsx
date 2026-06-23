@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Modal,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -18,6 +19,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { WebView } from 'react-native-webview';
 
 import { GlassCard } from '@/components/glass-card';
 import { PhotoViewer } from '@/components/photo-viewer';
@@ -46,6 +48,7 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
   const [uploading, setUploading] = useState(false);
   const [token, setTok] = useState<string | null>(null);
   const [viewer, setViewer] = useState<number | null>(null);
+  const [pdf, setPdf] = useState<FileRec | null>(null);
   const screenW = Dimensions.get('window').width;
   const col = (screenW - Spacing.three * 2 - Spacing.two * 2) / 3;
 
@@ -208,10 +211,14 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
                   key={f.id}
                   activeOpacity={0.8}
                   onPress={() => {
-                    if (!isImg) return;
-                    const imgs = files.filter((x) => (x.mime || '').startsWith('image'));
-                    const idx = imgs.findIndex((x) => x.id === f.id);
-                    if (idx >= 0) setViewer(idx);
+                    const isPdf = (f.mime || '').includes('pdf') || (f.original_name || '').toLowerCase().endsWith('.pdf');
+                    if (isImg) {
+                      const imgs = files.filter((x) => (x.mime || '').startsWith('image'));
+                      const idx = imgs.findIndex((x) => x.id === f.id);
+                      if (idx >= 0) setViewer(idx);
+                    } else if (isPdf) {
+                      setPdf(f);
+                    }
                   }}
                   style={[styles.gridItem, { width: col, height: col, borderColor: theme.separator }]}>
                   {isImg && token ? (
@@ -248,6 +255,26 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
           onClose={() => setViewer(null)}
         />
       )}
+
+      {/* Просмотр PDF прямо в приложении */}
+      <Modal visible={!!pdf} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setPdf(null)}>
+        <ThemedView style={{ flex: 1 }}>
+          <View style={styles.pdfHead}>
+            <ThemedText type="smallBold" numberOfLines={1} style={{ flex: 1 }}>{pdf?.original_name || 'Документ'}</ThemedText>
+            <TouchableOpacity onPress={() => setPdf(null)} hitSlop={10}>
+              <SymbolView name="xmark.circle.fill" tintColor={theme.textSecondary} size={28} />
+            </TouchableOpacity>
+          </View>
+          {pdf && token && (
+            <WebView
+              source={{ uri: `${API_URL}/files/${pdf.id}/download`, headers: { Authorization: `Bearer ${token}` } }}
+              style={{ flex: 1, backgroundColor: theme.background }}
+              startInLoadingState
+              renderLoading={() => <ActivityIndicator style={{ marginTop: Spacing.five }} color={theme.tint} />}
+            />
+          )}
+        </ThemedView>
+      </Modal>
     </ThemedView>
   );
 }
@@ -268,4 +295,5 @@ const styles = StyleSheet.create({
   gridImg: { width: '100%', height: '100%' },
   gridDoc: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4 },
   badge: { position: 'absolute', right: 5, bottom: 5, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
+  pdfHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three, paddingTop: Spacing.three, paddingBottom: Spacing.two },
 });

@@ -87,6 +87,58 @@ const TERM_HTML = `<!doctype html><html><head>
 })();
 </script></body></html>`;
 
+// Удалённый экран: показывает кадры (jpeg base64) и шлёт жесты как нормализованные координаты.
+const SCREEN_HTML = `<!doctype html><html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>html,body{height:100%;margin:0;background:#000;overflow:hidden;touch-action:none}
+#wrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+#s{max-width:100%;max-height:100%;display:block;image-rendering:auto}
+#hint{position:absolute;top:8px;left:8px;color:#888;font:12px -apple-system,sans-serif}</style>
+</head><body><div id="wrap"><img id="s"/><div id="hint" id="h">подключаюсь…</div></div>
+<script>(function(){
+  function send(o){ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(o)); }
+  var img=document.getElementById('s'), hint=document.getElementById('hint'), wrap=document.getElementById('wrap');
+  window.__frame=function(b64){ img.src='data:image/jpeg;base64,'+b64; if(hint) hint.style.display='none'; };
+  // координаты пальца -> нормализованные [0..1] по реальной картинке (с учётом letterbox)
+  function norm(cx,cy){
+    var cr=wrap.getBoundingClientRect(), iw=img.naturalWidth||16, ih=img.naturalHeight||9;
+    var sc=Math.min(cr.width/iw, cr.height/ih), dw=iw*sc, dh=ih*sc;
+    var ox=cr.left+(cr.width-dw)/2, oy=cr.top+(cr.height-dh)/2;
+    return { nx:Math.max(0,Math.min(1,(cx-ox)/dw)), ny:Math.max(0,Math.min(1,(cy-oy)/dh)) };
+  }
+  var startX=0,startY=0,moved=false,lastMove=0,lastTap=0,twoY=null,lp=null,lpFired=false,dragging=false,lastNx=0,lastNy=0;
+  window.__drag=function(on){ window.__dragMode=!!on; };
+  function clearLp(){ if(lp){clearTimeout(lp);lp=null;} }
+  wrap.addEventListener('touchstart',function(e){
+    if(e.touches.length===2){ twoY=(e.touches[0].clientY+e.touches[1].clientY)/2; clearLp(); return; }
+    var t=e.touches[0]; startX=t.clientX; startY=t.clientY; moved=false; lpFired=false; dragging=false;
+    var p=norm(startX,startY); lastNx=p.nx; lastNy=p.ny;
+    if(window.__dragMode){ dragging=true; send({t:'input',action:'down',nx:p.nx,ny:p.ny}); }
+    else { lp=setTimeout(function(){ lpFired=true; var q=norm(startX,startY); send({t:'input',action:'click',nx:q.nx,ny:q.ny,button:'right'}); }, 500); }
+  },{passive:false});
+  wrap.addEventListener('touchmove',function(e){
+    e.preventDefault();
+    if(e.touches.length===2 && twoY!==null){
+      var y=(e.touches[0].clientY+e.touches[1].clientY)/2, dy=y-twoY;
+      if(Math.abs(dy)>6){ var p=norm(e.touches[0].clientX,e.touches[0].clientY); send({t:'input',action:'scroll',nx:p.nx,ny:p.ny,dy: dy>0?120:-120}); twoY=y; }
+      return;
+    }
+    var t=e.touches[0], dx=t.clientX-startX, dyy=t.clientY-startY;
+    if(Math.abs(dx)>6||Math.abs(dyy)>6){ moved=true; clearLp(); }
+    var now=Date.now();
+    if(moved && now-lastMove>33){ lastMove=now; var p=norm(t.clientX,t.clientY); lastNx=p.nx; lastNy=p.ny; send({t:'input',action:'move',nx:p.nx,ny:p.ny}); }
+  },{passive:false});
+  wrap.addEventListener('touchend',function(e){
+    clearLp();
+    if(twoY!==null && e.touches.length===0){ twoY=null; return; }
+    if(dragging){ send({t:'input',action:'up',nx:lastNx,ny:lastNy}); dragging=false; return; }
+    if(lpFired || moved) return;
+    var now=Date.now(), p=norm(startX,startY);
+    if(now-lastTap<300){ send({t:'input',action:'dbl',nx:p.nx,ny:p.ny}); lastTap=0; }
+    else { send({t:'input',action:'click',nx:p.nx,ny:p.ny,button:'left'}); lastTap=now; }
+  },{passive:false});
+})();</script></body></html>`;
+
 const KEYS: { label: string; seq: string }[] = [
   { label: 'esc', seq: '\x1b' },
   { label: 'tab', seq: '\t' },
@@ -103,7 +155,17 @@ export default function PcScreen() {
   const [connected, setConnected] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]);
   const [deviceId, setDeviceId] = useState<string | null>(null);
-  const [sub, setSub] = useState<'term' | 'explorer'>('term');
+  const [sub, setSub] = useState<'term' | 'explorer' | 'screen'>('term');
+
+  // удалённый экран
+  const screenWeb = useRef<WebView>(null);
+  const [screens, setScreens] = useState<{ id: string; label: string; primary: boolean; width: number; height: number }[]>([]);
+  const [activeScreen, setActiveScreen] = useState<string | null>(null);
+  const screenOn = useRef(false);
+  const [dragMode, setDragMode] = useState(false);
+  const kbInput = useRef<TextInput>(null);
+  const SENT = String.fromCharCode(0x200b); // невидимый «якорь», чтобы ловить Backspace даже на пустом поле
+  const [kbVal, setKbVal] = useState(SENT);
 
   // терминалы (несколько вкладок, как в VS Code). У каждого свой termId, своя папка и сессия на ПК.
   const [terms, setTerms] = useState<{ id: string; cwd: string }[]>([{ id: '1', cwd: '' }]);
@@ -175,6 +237,13 @@ export default function PcScreen() {
           // сессия на ПК завершилась — перезапустим терминал в той же вкладке
           termReady.current[m.termId || '1'] = false;
           break;
+        case 'screen_frame':
+          screenWeb.current?.injectJavaScript(`window.__frame&&window.__frame(${JSON.stringify(m.data)});true;`);
+          break;
+        case 'screens':
+          setScreens(m.screens || []);
+          setActiveScreen((cur) => cur || (m.screens || []).find((s: any) => s.primary)?.id || (m.screens?.[0]?.id ?? null));
+          break;
         case 'claude_done': {
           const idx = termsRef.current.findIndex((t) => t.id === (m.termId || '1'));
           setBusyMsg(`✅ Claude закончил${idx >= 0 ? ` в терминале ${idx + 1}` : ''}`);
@@ -200,6 +269,7 @@ export default function PcScreen() {
         case 'fs_read': setFile({ path: m.path, content: m.content, editable: m.editable }); setDraft(m.content); break;
         case 'fs_write': setSaving(false); break;
         case 'fs_download': setBusyMsg('Файл отправлен в приложение ✓'); setTimeout(() => setBusyMsg(''), 2500); break;
+        case 'fs_zip': setBusyMsg(`Архив готов: ${m.name} → во вкладке «Файлы»`); setTimeout(() => setBusyMsg(''), 3500); break;
         case 'pc_offline': setBusyMsg('Компьютер не в сети'); setTimeout(() => setBusyMsg(''), 2500); break;
         case 'err': setBusyMsg(m.message || 'Ошибка'); setSaving(false); setTimeout(() => setBusyMsg(''), 3000); break;
         default: break;
@@ -241,6 +311,28 @@ export default function PcScreen() {
   const scrollTerm = (n: number) => activeWeb()?.injectJavaScript(`window.__scroll&&window.__scroll(${n});true;`);
   const pickMode = useRef(false);
   const pickFileForTerminal = () => { pickMode.current = true; setSub('explorer'); setBusyMsg('Выбери файл — его путь вставится в терминал'); setTimeout(() => setBusyMsg(''), 3500); };
+
+  // ---- удалённый экран ----
+  const startScreenShare = (displayId?: string) => { screenOn.current = true; send({ type: 'screen_start', displayId: displayId || activeScreen || undefined, fps: 4, quality: 42, width: 1000 }); };
+  const stopScreenShare = () => { screenOn.current = false; send({ type: 'screen_stop' }); };
+  const switchScreen = (id: string) => { setActiveScreen(id); send({ type: 'screen_start', displayId: id, fps: 4, quality: 42, width: 1000 }); };
+  const onScreenMessage = (e: any) => {
+    let m: any; try { m = JSON.parse(e.nativeEvent.data); } catch { return; }
+    if (m.t === 'input') send({ type: 'screen_input', action: m.action, nx: m.nx, ny: m.ny, dy: m.dy, button: m.button });
+  };
+  const toggleDrag = () => { const v = !dragMode; setDragMode(v); screenWeb.current?.injectJavaScript(`window.__drag&&window.__drag(${v});true;`); };
+  const sendScrKey = (key: string) => send({ type: 'screen_input', action: 'key', key });
+  const onKbChange = (t: string) => {
+    if (t.length > kbVal.length) send({ type: 'screen_input', action: 'key', text: t.slice(kbVal.length) });
+    else if (t.length < kbVal.length) send({ type: 'screen_input', action: 'key', key: 'backspace' });
+    setKbVal(SENT);
+  };
+  useEffect(() => {
+    if (!connected || !deviceId) return;
+    if (sub === 'screen') { send({ type: 'screen_list' }); startScreenShare(); }
+    else if (screenOn.current) { stopScreenShare(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sub, connected, deviceId]);
 
   // вставить то, что скопировано на телефоне
   const pasteFromClipboard = async () => {
@@ -378,6 +470,7 @@ export default function PcScreen() {
     setSub('term');
   };
   const downloadFile = (path: string) => { setBusyMsg('Скачиваю в приложение → смотри во вкладке «Файлы»'); send({ type: 'fs_download', reqId: newReq(), path }); };
+  const zipFolder = (path: string) => { setBusyMsg('Архивирую папку… появится во вкладке «Файлы»'); send({ type: 'fs_zip', reqId: newReq(), path }); };
   const TEXT_EXT = /\.(txt|md|js|jsx|ts|tsx|json|css|scss|html|xml|ya?ml|py|java|c|cpp|h|cs|go|rs|rb|php|sh|bat|ps1|env|gitignore|sql|toml|ini|conf|log|mjs|cjs|vue|svelte)$/i;
   const openEntry = (e: Entry) => {
     if (e.dir) { openDir(e.path); return; }
@@ -405,6 +498,7 @@ export default function PcScreen() {
       <View style={styles.seg}>
         <SegBtn label="Терминал" active={sub === 'term'} onPress={() => setSub('term')} />
         <SegBtn label="Проводник" active={sub === 'explorer'} onPress={() => setSub('explorer')} />
+        <SegBtn label="Экран" active={sub === 'screen'} onPress={() => setSub('screen')} />
       </View>
 
       {!!busyMsg && <ThemedText type="small" style={styles.toast}>{busyMsg}</ThemedText>}
@@ -477,6 +571,58 @@ export default function PcScreen() {
           </ScrollView>
           <View style={{ height: kb ? 0 : insets.bottom + BottomTabInset - 8 }} />
         </KeyboardAvoidingView>
+      ) : sub === 'screen' ? (
+        <View style={{ flex: 1 }}>
+          {screens.length > 1 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 6, paddingHorizontal: Spacing.three, paddingBottom: Spacing.two }}>
+              {screens.map((s, i) => (
+                <TouchableOpacity key={s.id} onPress={() => switchScreen(s.id)} style={[styles.key, { backgroundColor: s.id === activeScreen ? c.accent : c.backgroundElement }]}>
+                  <ThemedText type="smallBold" style={{ color: s.id === activeScreen ? '#fff' : c.text }}>{s.primary ? 'Основной' : `Монитор ${i + 1}`}</ThemedText>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+          <View style={styles.termWrap}>
+            <WebView
+              ref={screenWeb}
+              originWhitelist={['*']}
+              source={{ html: SCREEN_HTML }}
+              onMessage={onScreenMessage}
+              style={{ backgroundColor: '#000' }}
+              scrollEnabled={false}
+            />
+          </View>
+          {/* скрытый ввод — ловит набор с системной клавиатуры */}
+          <TextInput
+            ref={kbInput}
+            value={kbVal}
+            onChangeText={onKbChange}
+            onSubmitEditing={() => sendScrKey('enter')}
+            blurOnSubmit={false}
+            autoCapitalize="none"
+            autoCorrect={false}
+            spellCheck={false}
+            style={styles.hiddenInput}
+          />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 6, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, alignItems: 'center' }}>
+            <TouchableOpacity style={[styles.key, { backgroundColor: c.backgroundElement }]} onPress={() => kbInput.current?.focus()}>
+              <SymbolView name="keyboard" tintColor={c.text} size={16} />
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.key, { backgroundColor: dragMode ? c.accent : c.backgroundElement }]} onPress={toggleDrag}>
+              <ThemedText type="smallBold" style={{ color: dragMode ? '#fff' : c.text }}>Перетаскивание</ThemedText>
+            </TouchableOpacity>
+            {([['esc', 'esc'], ['tab', 'tab'], ['enter', '⏎'], ['backspace', '⌫'], ['left', '←'], ['up', '↑'], ['down', '↓'], ['right', '→']] as [string, string][]).map(([k, label]) => (
+              <TouchableOpacity key={k} style={[styles.key, { backgroundColor: c.backgroundElement }]} onPress={() => sendScrKey(k)}>
+                <ThemedText type="smallBold" style={{ color: c.text }}>{label}</ThemedText>
+              </TouchableOpacity>
+            ))}
+            <View style={{ width: Spacing.three }} />
+          </ScrollView>
+          <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center', paddingBottom: 4 }}>
+            тап — клик · долгое нажатие — правый клик · двумя пальцами — прокрутка
+          </ThemedText>
+          <View style={{ height: kb ? 0 : insets.bottom + BottomTabInset - 16 }} />
+        </View>
       ) : (
         <View style={{ flex: 1 }}>
           <View style={styles.pathBar}>
@@ -509,7 +655,11 @@ export default function PcScreen() {
                     <SymbolView name={e.dir ? 'folder.fill' : 'doc.text'} tintColor={e.dir ? c.accent : c.textSecondary} size={18} />
                     <ThemedText style={{ flex: 1 }} numberOfLines={1}>{e.name}</ThemedText>
                   </TouchableOpacity>
-                  {!e.dir && (
+                  {e.dir ? (
+                    <TouchableOpacity hitSlop={8} onPress={() => zipFolder(e.path)} style={styles.dlBtn}>
+                      <SymbolView name="archivebox" tintColor={c.accent} size={18} />
+                    </TouchableOpacity>
+                  ) : (
                     <TouchableOpacity hitSlop={8} onPress={() => downloadFile(e.path)} style={styles.dlBtn}>
                       <SymbolView name="square.and.arrow.down" tintColor={c.accent} size={18} />
                     </TouchableOpacity>
@@ -617,6 +767,7 @@ const styles = StyleSheet.create({
   termWrap: { flex: 1, marginHorizontal: Spacing.three, borderRadius: Radius.md, overflow: 'hidden', backgroundColor: '#0a0b0d', borderWidth: 1, borderColor: c.glassBorder },
   keybar: { flexGrow: 0, paddingVertical: Spacing.two },
   key: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: Radius.sm, backgroundColor: c.backgroundSelected, minWidth: 40, alignItems: 'center' },
+  hiddenInput: { position: 'absolute', width: 1, height: 1, opacity: 0, top: 0, left: 0 },
   pathBar: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   termHereBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.two, marginHorizontal: Spacing.three, marginBottom: Spacing.two, paddingVertical: Spacing.two, borderRadius: Radius.md, backgroundColor: c.backgroundElement },

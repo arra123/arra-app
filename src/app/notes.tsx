@@ -27,8 +27,18 @@ import { BottomTabInset, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api, API_URL, getToken } from '@/lib/api';
 
-type Note = { id: string; title: string | null; body: string; updated_at: string; created_at: string };
+type Note = { id: string; title: string | null; body: string; color?: string | null; updated_at: string; created_at: string };
 type Editing = Note | 'new' | null;
+
+// Категории-цвета заметок (подсветка)
+const NOTE_CATS: { color: string; label: string }[] = [
+  { color: '#5B8DEF', label: 'Работа' },
+  { color: '#4CB782', label: 'Личное' },
+  { color: '#E0A33E', label: 'Идеи' },
+  { color: '#E06C75', label: 'Важное' },
+  { color: '#9A7BE0', label: 'Учёба' },
+];
+const catLabel = (c?: string | null) => NOTE_CATS.find((x) => x.color === c)?.label || '';
 
 const fmtTime = (iso: string) =>
   new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -42,6 +52,7 @@ export default function NotesScreen() {
   const [editing, setEditing] = useState<Editing>(null);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [color, setColor] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
@@ -111,11 +122,13 @@ export default function NotesScreen() {
   function openNew() {
     setTitle('');
     setBody('');
+    setColor(null);
     setEditing('new');
   }
   function openNote(n: Note) {
     setTitle(n.title || '');
     setBody(n.body);
+    setColor(n.color || null);
     setEditing(n);
   }
   function close() {
@@ -131,9 +144,9 @@ export default function NotesScreen() {
     setSaving(true);
     try {
       if (editing === 'new') {
-        await api('/notes', { body: { title: title.trim(), body } });
+        await api('/notes', { body: { title: title.trim(), body, color } });
       } else if (editing) {
-        await api(`/notes/${editing.id}`, { method: 'PUT', body: { title: title.trim(), body } });
+        await api(`/notes/${editing.id}`, { method: 'PUT', body: { title: title.trim(), body, color } });
       }
       close();
       await load();
@@ -222,6 +235,17 @@ export default function NotesScreen() {
               onChangeText={setTitle}
               style={[styles.titleInput, { color: theme.text }]}
             />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={styles.catRow} keyboardShouldPersistTaps="handled">
+              {NOTE_CATS.map((cat) => {
+                const on = color === cat.color;
+                return (
+                  <TouchableOpacity key={cat.color} onPress={() => setColor(on ? null : cat.color)} style={[styles.catChip, { backgroundColor: on ? cat.color : 'rgba(255,255,255,0.06)', borderColor: cat.color }]}>
+                    <View style={[styles.catDot, { backgroundColor: cat.color }]} />
+                    <ThemedText type="small" style={{ color: on ? '#fff' : theme.text, fontWeight: '600' }}>{cat.label}</ThemedText>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
             <TextInput
               placeholder="Текст заметки…"
               placeholderTextColor={theme.textSecondary}
@@ -278,10 +302,14 @@ export default function NotesScreen() {
                 )}>
                 <Pressable onPress={() => openNote(n)}>
                   {/* Плоская карточка (без блюра) — иначе свайп дёргался */}
-                  <View style={styles.noteCard}>
-                    <ThemedText type="smallBold" numberOfLines={1}>
-                      {n.title?.trim() || 'Без названия'}
-                    </ThemedText>
+                  <View style={[styles.noteCard, n.color ? { borderLeftWidth: 4, borderLeftColor: n.color } : null]}>
+                    <View style={styles.noteTitleRow}>
+                      {!!n.color && <View style={[styles.catDot, { backgroundColor: n.color }]} />}
+                      <ThemedText type="smallBold" numberOfLines={1} style={{ flex: 1 }}>
+                        {n.title?.trim() || 'Без названия'}
+                      </ThemedText>
+                      {!!catLabel(n.color) && <ThemedText type="small" style={{ color: n.color || theme.textSecondary, fontWeight: '600' }}>{catLabel(n.color)}</ThemedText>}
+                    </View>
                     {!!n.body.trim() && (
                       <ThemedText type="small" themeColor="textSecondary" numberOfLines={2} style={{ marginTop: 3 }}>
                         {n.body.trim()}
@@ -302,14 +330,19 @@ export default function NotesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  // Фон в стиле Telegram (тёмно-синий графит)
+  container: { flex: 1, backgroundColor: '#0E1621' },
   content: { paddingHorizontal: Spacing.three, paddingBottom: BottomTabInset + Spacing.five, gap: Spacing.three },
   headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   h1: { fontSize: 34, fontWeight: '700', lineHeight: 40, marginTop: Spacing.one },
   addBtn: { width: 42, height: 42, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
   emptyCard: { paddingVertical: Spacing.five, alignItems: 'center', gap: Spacing.two, marginTop: Spacing.two },
-  noteCard: { padding: Spacing.three, backgroundColor: '#101216', borderRadius: Radius.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.07)' },
+  noteCard: { padding: Spacing.three, backgroundColor: '#17212B', borderRadius: Radius.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.07)' },
+  noteTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   noteTime: { marginTop: Spacing.two, fontSize: 12 },
+  catRow: { gap: 8, paddingVertical: Spacing.two, paddingRight: Spacing.three },
+  catChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth },
+  catDot: { width: 9, height: 9, borderRadius: 5 },
   swipeDelete: { width: 76, marginLeft: Spacing.two, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' },
   editorBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.three, paddingBottom: Spacing.two },
   barBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },

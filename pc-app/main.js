@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage, shell, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage, shell, Notification, desktopCapturer, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -218,6 +218,38 @@ async function fsDownload(reqId, p, send) {
   }
 }
 
+// Заархивировать папку (встроенный Compress-Archive, без сторонних установок) и отправить в приложение
+async function fsZip(reqId, p, send) {
+  const abs = resolveFsPath(p);
+  if (!abs) { send({ type: 'err', reqId, message: 'Нет пути' }); return; }
+  let dir;
+  try {
+    if (!fs.statSync(abs).isDirectory()) { send({ type: 'err', reqId, message: 'Это не папка' }); return; }
+    const name = path.basename(abs) + '.zip';
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arrazip-'));
+    const tmp = path.join(dir, name);
+    await new Promise((resolve, reject) => {
+      const ps = spawn('powershell.exe', ['-NoProfile', '-NoLogo', '-NonInteractive', '-Command',
+        `Compress-Archive -Path "${abs.replace(/"/g, '""')}" -DestinationPath "${tmp.replace(/"/g, '""')}" -Force`],
+        { windowsHide: true });
+      let err = '';
+      ps.stderr.on('data', (d) => (err += d));
+      ps.on('error', reject);
+      ps.on('close', (code) => (code === 0 ? resolve() : reject(new Error(err.trim() || ('код ' + code)))));
+    });
+    const size = fs.statSync(tmp).size;
+    if (size > 200 * 1024 * 1024) { send({ type: 'err', reqId, message: 'Архив больше 200 МБ' }); return; }
+    const jwt = await getJwt();
+    if (!jwt) { send({ type: 'err', reqId, message: 'Нет авторизации ПК' }); return; }
+    await uploadFileToBackend(tmp, jwt);
+    send({ type: 'fs_zip', reqId, ok: true, name });
+  } catch (e) {
+    send({ type: 'err', reqId, message: 'Архивация: ' + e.message });
+  } finally {
+    try { if (dir) fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+}
+
 // multipart-загрузка файла на бэкенд (без сторонних либ)
 function uploadFileToBackend(absPath, jwt) {
   return new Promise((resolve, reject) => {
@@ -308,10 +340,117 @@ function restartPty(termId, cols, rows, cwd, local) {
 }
 
 // Единый диспетчер релей-команд (msg от телефона ИЛИ от локального терминала ПК)
+// ---- Удалённый экран (трансляция + управление мышью) ----
+let screenTimer = null;
+let screenCfg = { displayId: null, quality: 45, fps: 6, width: 1100 };
+let screenBusy = false;
+
+function listScreens() {
+  const prim = screen.getPrimaryDisplay().id;
+  return screen.getAllDisplays().map((d, i) => ({
+    id: String(d.id),
+    label: d.label || ('Монитор ' + (i + 1)),
+    primary: d.id === prim,
+    width: d.size.width,
+    height: d.size.height,
+  }));
+}
+function curDisplay() {
+  return screen.getAllDisplays().find((d) => String(d.id) === String(screenCfg.displayId)) || screen.getPrimaryDisplay();
+}
+async function captureFrame() {
+  if (screenBusy) return;
+  screenBusy = true;
+  try {
+    const disp = curDisplay();
+    const w = Math.min(screenCfg.width, disp.size.width);
+    const h = Math.round((w * disp.size.height) / disp.size.width);
+    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: w, height: h } });
+    let src = sources.find((s) => String(s.display_id) === String(disp.id)) || sources[0];
+    if (src && src.thumbnail && ws && ws.readyState === 1) {
+      const b64 = src.thumbnail.toJPEG(screenCfg.quality).toString('base64');
+      ws.send(JSON.stringify({ to: 'client', type: 'screen_frame', data: b64 }));
+    }
+  } catch {} finally { screenBusy = false; }
+}
+function startScreen(cfg) {
+  stopScreen();
+  screenCfg = { ...screenCfg, ...(cfg || {}) };
+  if (!screenCfg.displayId) screenCfg.displayId = String(screen.getPrimaryDisplay().id);
+  const ms = Math.max(150, Math.round(1000 / (screenCfg.fps || 4)));
+  screenTimer = setInterval(captureFrame, ms);
+  captureFrame();
+}
+function stopScreen() { if (screenTimer) { clearInterval(screenTimer); screenTimer = null; } }
+
+// Инъекция мыши/клавиатуры через постоянный PowerShell (быстро, без сторонних модулей)
+let mousePs = null;
+function ensureMousePs() {
+  if (mousePs) return;
+  try {
+    mousePs = spawn('powershell.exe', ['-NoProfile', '-NoLogo', '-Command', '-'], { windowsHide: true });
+    mousePs.on('error', () => { mousePs = null; });
+    mousePs.on('exit', () => { mousePs = null; });
+    mousePs.stdin.write(
+      'Add-Type @"\n' +
+      'using System;using System.Runtime.InteropServices;\n' +
+      'public class Mz{[DllImport("user32.dll")]public static extern bool SetCursorPos(int X,int Y);' +
+      '[DllImport("user32.dll")]public static extern void mouse_event(uint f,uint x,uint y,uint d,IntPtr e);}\n' +
+      '"@\n' +
+      'Add-Type -AssemblyName System.Windows.Forms\n' +
+      'function Mv($x,$y){[Mz]::SetCursorPos($x,$y)}\n' +
+      'function Cl($x,$y,$b){[Mz]::SetCursorPos($x,$y);if($b -eq "right"){[Mz]::mouse_event(0x08,0,0,0,[IntPtr]::Zero);[Mz]::mouse_event(0x10,0,0,0,[IntPtr]::Zero)}else{[Mz]::mouse_event(0x02,0,0,0,[IntPtr]::Zero);[Mz]::mouse_event(0x04,0,0,0,[IntPtr]::Zero)}}\n' +
+      'function Dbl($x,$y){Cl $x $y "left";Start-Sleep -Milliseconds 60;Cl $x $y "left"}\n' +
+      'function Dn($x,$y){[Mz]::SetCursorPos($x,$y);[Mz]::mouse_event(0x02,0,0,0,[IntPtr]::Zero)}\n' +
+      'function Up($x,$y){[Mz]::SetCursorPos($x,$y);[Mz]::mouse_event(0x04,0,0,0,[IntPtr]::Zero)}\n' +
+      'function Scr($x,$y,$d){[Mz]::SetCursorPos($x,$y);[Mz]::mouse_event(0x0800,0,0,[uint32]([int]$d),[IntPtr]::Zero)}\n' +
+      'function Ky($t){[System.Windows.Forms.SendKeys]::SendWait($t)}\n',
+    );
+  } catch { mousePs = null; }
+}
+function psCmd(line) { ensureMousePs(); try { mousePs && mousePs.stdin.write(line + '\n'); } catch {} }
+function screenInput(msg) {
+  const disp = curDisplay();
+  const b = disp.bounds;
+  const x = Math.round(b.x + Math.max(0, Math.min(1, msg.nx || 0)) * b.width);
+  const y = Math.round(b.y + Math.max(0, Math.min(1, msg.ny || 0)) * b.height);
+  switch (msg.action) {
+    case 'move': psCmd(`Mv ${x} ${y}`); break;
+    case 'click': psCmd(`Cl ${x} ${y} ${msg.button === 'right' ? 'right' : 'left'}`); break;
+    case 'dbl': psCmd(`Dbl ${x} ${y}`); break;
+    case 'down': psCmd(`Dn ${x} ${y}`); break;
+    case 'up': psCmd(`Up ${x} ${y}`); break;
+    case 'scroll': psCmd(`Scr ${x} ${y} ${Math.round(msg.dy || 0)}`); break;
+    case 'key': {
+      const map = { enter: '{ENTER}', backspace: '{BACKSPACE}', esc: '{ESC}', tab: '{TAB}', up: '{UP}', down: '{DOWN}', left: '{LEFT}', right: '{RIGHT}', delete: '{DELETE}', home: '{HOME}', end: '{END}', space: ' ' };
+      if (msg.key && map[msg.key]) { psCmd(`Ky '${map[msg.key].replace(/'/g, "''")}'`); }
+      else if (msg.text) {
+        const esc = String(msg.text).replace(/[{}()[\]+^%~]/g, '{$&}').replace(/'/g, "''");
+        psCmd(`Ky '${esc}'`);
+      }
+      break;
+    }
+    default: break;
+  }
+}
+
 function handleRelay(msg, send) {
   switch (msg.type) {
     case 'hello':
       send({ type: 'cwd', cwd: getTermCwd(), root: codeRoot() });
+      break;
+    case 'screen_list':
+      send({ type: 'screens', screens: listScreens() });
+      break;
+    case 'screen_start':
+      startScreen({ displayId: msg.displayId, fps: msg.fps, quality: msg.quality, width: msg.width });
+      send({ type: 'screens', screens: listScreens() });
+      break;
+    case 'screen_stop':
+      stopScreen();
+      break;
+    case 'screen_input':
+      screenInput(msg);
       break;
     case 'pty_start':
       startPty(msg.termId || '1', msg.cols, msg.rows, msg.cwd, false);
@@ -342,6 +481,9 @@ function handleRelay(msg, send) {
       break;
     case 'fs_write':
       fsWrite(msg.reqId, msg.path, msg.content, send);
+      break;
+    case 'fs_zip':
+      fsZip(msg.reqId, msg.path, send);
       break;
     case 'fs_download':
       fsDownload(msg.reqId, msg.path, send);
@@ -486,6 +628,7 @@ function connectWS() {
   });
   ws.on('close', () => {
     online = false;
+    stopScreen();
     pushStatus();
     if (!manualClose) reconnectTimer = setTimeout(connectWS, 3000);
   });

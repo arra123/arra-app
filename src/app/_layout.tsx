@@ -7,6 +7,8 @@ import {
   useFonts,
 } from '@expo-google-fonts/inter';
 import { DefaultTheme, ThemeProvider } from 'expo-router';
+import * as Updates from 'expo-updates';
+import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -38,6 +40,23 @@ export default function RootLayout() {
     Inter_700Bold,
     Inter_800ExtraBold,
   });
+
+  // Жёсткая авто-проверка апдейта при каждом запуске: качаем и применяем сразу,
+  // не полагаясь на капризное нативное поведение expo-updates (из-за него версия «застревала»).
+  useEffect(() => {
+    if (__DEV__) return;
+    (async () => {
+      try {
+        const res = await Updates.checkForUpdateAsync();
+        if (res.isAvailable) {
+          await Updates.fetchUpdateAsync();
+          await Updates.reloadAsync();
+        }
+      } catch {
+        // нет сети / уже последняя — молча
+      }
+    })();
+  }, []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

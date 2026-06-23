@@ -1,4 +1,3 @@
-import { GlassView } from 'expo-glass-effect';
 import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import * as Updates from 'expo-updates';
@@ -6,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppleButton } from '@/components/apple-button';
 import { GlassCard } from '@/components/glass-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -147,11 +147,15 @@ export default function ProfileScreen({ embedded = false }: { embedded?: boolean
             </GlassCard>
           </TouchableOpacity>
 
-          <TouchableOpacity activeOpacity={0.85} onPress={logout}>
-            <GlassView isInteractive tintColor={theme.danger} style={[styles.logout, { borderRadius: Radius.pill }]}>
-              <ThemedText style={{ color: theme.danger, fontWeight: '600', fontSize: 16 }}>Выйти</ThemedText>
-            </GlassView>
-          </TouchableOpacity>
+          <AppleButton
+            label="Выйти"
+            onPress={logout}
+            variant="glass"
+            role="destructive"
+            tint={theme.danger}
+            full
+            style={{ marginTop: Spacing.two }}
+          />
       </ScrollView>
     </ThemedView>
   );

@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppleButton } from '@/components/apple-button';
 import { GlassCard } from '@/components/glass-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -106,17 +107,18 @@ export function AuthScreen() {
             </ThemedText>
           )}
 
-          <TouchableOpacity activeOpacity={0.85} onPress={submit} disabled={busy}>
+          {busy ? (
             <GlassView isInteractive tintColor={theme.tint} style={[styles.button, { borderRadius: Radius.pill }]}>
-              {busy ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <ThemedText style={styles.buttonText}>
-                  {mode === 'login' ? 'Войти' : 'Создать аккаунт'}
-                </ThemedText>
-              )}
+              <ActivityIndicator color="#fff" />
             </GlassView>
-          </TouchableOpacity>
+          ) : (
+            <AppleButton
+              label={mode === 'login' ? 'Войти' : 'Создать аккаунт'}
+              onPress={submit}
+              variant="glass"
+              full
+            />
+          )}
         </GlassCard>
       </KeyboardAvoidingView>
     </ThemedView>
