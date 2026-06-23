@@ -26,9 +26,11 @@ const api = async (path, opts = {}) => fetch(`https://api.appstoreconnect.apple.
 // 1. Последний загруженный билд — ждём, пока Apple закончит обработку (VALID)
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 let build = null;
+let r;
+let j;
 for (let attempt = 0; attempt < 30; attempt++) {
-  const r = await api(`/v1/builds?filter[app]=${APP}&sort=-uploadedDate&limit=1&fields[builds]=version,processingState`);
-  const j = await r.json();
+  r = await api(`/v1/builds?filter[app]=${APP}&sort=-uploadedDate&limit=1&fields[builds]=version,processingState`);
+  j = await r.json();
   build = j.data?.[0];
   if (!build) { console.error('Билды не найдены'); process.exit(1); }
   const st = build.attributes.processingState;
