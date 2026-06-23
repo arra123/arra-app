@@ -12,6 +12,7 @@ import authRoutes from './routes/auth.js';
 import debtRoutes from './routes/debts.js';
 import fileRoutes from './routes/files.js';
 import noteRoutes from './routes/notes.js';
+import pushRoutes from './routes/push.js';
 import relayRoutes from './routes/relay.js';
 import transactionRoutes from './routes/transactions.js';
 
@@ -35,6 +36,7 @@ await app.register(aiRoutes);
 await app.register(assistantRoutes);
 await app.register(fileRoutes);
 await app.register(noteRoutes);
+await app.register(pushRoutes);
 await app.register(relayRoutes);
 
 try {

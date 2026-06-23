@@ -48,3 +48,24 @@ Web  WARN  props.pointerEvents is deprecated. Use style.pointerEvents
 λ Bundled 3157ms node_modules\expo\node_modules\@expo\cli\node_modules\@expo\router-server\node\render.js (1 module)
 "shadow*" style props are deprecated. Use "boxShadow".
 Web Bundled 6956ms node_modules\expo-router\entry.js (1 module)
+C:\Claude\Tima\07_Appstore\node_modules\expo\node_modules\@expo\cli\build\src\utils\errors.js:130
+    throw error;
+    ^
+
+Error: ENOENT: no such file or directory, watch 'C:\Claude\Tima\07_Appstore\node_modules\expo-application\local-maven-repo'
+    at FSWatcher.<computed> (node:internal/fs/watchers:321:19)
+    at Object.watch (node:fs:2548:36)
+    at #watchdir (C:\Claude\Tima\07_Appstore\node_modules\@expo\metro-file-map\build\watchers\FallbackWatcher.js:164:38)
+    at C:\Claude\Tima\07_Appstore\node_modules\@expo\metro-file-map\build\watchers\FallbackWatcher.js:268:39
+    at Walker.<anonymous> (C:\Claude\Tima\07_Appstore\node_modules\@expo\metro-file-map\build\watchers\FallbackWatcher.js:410:33)
+    at Walker.emit (node:events:509:28)
+    at C:\Claude\Tima\07_Appstore\node_modules\walker\lib\walker.js:69:16
+    at FSReqCallback.oncomplete (node:fs:185:23) {
+  errno: -4058,
+  syscall: 'watch',
+  code: 'ENOENT',
+  path: 'C:\\Claude\\Tima\\07_Appstore\\node_modules\\expo-application\\local-maven-repo',
+  filename: 'C:\\Claude\\Tima\\07_Appstore\\node_modules\\expo-application\\local-maven-repo'
+}
+
+Node.js v24.16.0

@@ -7,6 +7,7 @@ import {
   useFonts,
 } from '@expo-google-fonts/inter';
 import { DefaultTheme, ThemeProvider } from 'expo-router';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import * as Updates from 'expo-updates';
 import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
@@ -17,9 +18,15 @@ import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
 import { AuthScreen } from '@/components/auth-screen';
 import { AuthProvider, useAuth } from '@/lib/auth';
+import { registerPush } from '@/lib/push';
 
 function Gate() {
   const { user, loading } = useAuth();
+
+  // После входа — регистрируем push-уведомления (файл получен, Claude закончил и т.п.)
+  useEffect(() => {
+    if (user) registerPush();
+  }, [user]);
 
   if (loading) {
     return (
@@ -40,6 +47,11 @@ export default function RootLayout() {
     Inter_700Bold,
     Inter_800ExtraBold,
   });
+
+  // По умолчанию приложение портретное; альбомную включает только удалённый экран.
+  useEffect(() => {
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+  }, []);
 
   // Жёсткая авто-проверка апдейта при каждом запуске: качаем и применяем сразу,
   // не полагаясь на капризное нативное поведение expo-updates (из-за него версия «застревала»).

@@ -1,3 +1,5 @@
+import { sendPushToUser } from './push.js';
+
 // In-memory шина: userId -> Map(tokenId -> Set<socket>)
 // Каждый ПК (устройство) = отдельный pc_token. Маршрутизируем файлы на конкретное устройство.
 const users = new Map();
@@ -86,6 +88,8 @@ export function removeClient(userId, socket) {
 
 /** Переслать сообщение от ПК-агента всем клиентам пользователя (терминал/файлы/Claude) */
 export function relayToClients(userId, event) {
+  // Важные события дублируем push-уведомлением (дойдёт, даже если приложение закрыто)
+  maybePush(userId, event);
   const set = clients.get(userId);
   if (!set || set.size === 0) return false;
   const payload = JSON.stringify(event);
@@ -99,6 +103,14 @@ export function relayToClients(userId, event) {
     }
   }
   return sent;
+}
+
+function maybePush(userId, event) {
+  let title = null;
+  let body = null;
+  if (event?.type === 'file_saved') { title = 'Файл получен на компьютере'; body = event.name || 'Готов к работе'; }
+  else if (event?.type === 'claude_done') { title = 'Claude закончил'; body = 'Задача в терминале выполнена'; }
+  if (title) sendPushToUser(userId, title, body, { type: event.type });
 }
 
 /**

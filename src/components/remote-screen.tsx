@@ -1,12 +1,14 @@
 import { SymbolView } from 'expo-symbols';
-import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
-import { Modal, StatusBar, StyleSheet, TextInput, TouchableOpacity, Vibration, View } from 'react-native';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { Modal, StatusBar, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { WebView } from 'react-native-webview';
 
 import { ThemedText } from '@/components/themed-text';
 import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { haptic } from '@/lib/haptics';
+import * as ScreenOrientation from 'expo-screen-orientation';
 
 export type RemoteScreenHandle = { pushFrame: (data: string) => void };
 
@@ -123,6 +125,16 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
   const [mode, setMode] = useState<'control' | 'drag' | 'scroll'>('control');
   const fullRef = useRef(false);
 
+  // В полном экране — поворачиваем телефон в альбомную (как видео), потом обратно в портрет.
+  useEffect(() => {
+    if (full) {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+    } else {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    }
+    return () => { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {}); };
+  }, [full]);
+
   const activeWeb = () => (fullRef.current ? fsWeb.current : inlineWeb.current);
 
   useImperativeHandle(ref, () => ({
@@ -137,7 +149,7 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
     let m: any;
     try { m = JSON.parse(e.nativeEvent.data); } catch { return; }
     if (m.t !== 'input') return;
-    if (m.action === 'click' || m.action === 'dbl' || m.action === 'down') Vibration.vibrate(8);
+    if (m.action === 'click' || m.action === 'dbl' || m.action === 'down') haptic.tap();
     send({ type: 'screen_input', action: m.action, nx: m.nx, ny: m.ny, dy: m.dy, button: m.button });
   }
 
@@ -152,7 +164,7 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
     inlineWeb.current?.injectJavaScript('window.__reset&&window.__reset();true;');
     fsWeb.current?.injectJavaScript('window.__reset&&window.__reset();true;');
   }
-  const key = (k: string) => { Vibration.vibrate(6); send({ type: 'screen_input', action: 'key', key: k }); };
+  const key = (k: string) => { haptic.tap(); send({ type: 'screen_input', action: 'key', key: k }); };
   function onKbChange(t: string) {
     if (t.length > kbVal.length) send({ type: 'screen_input', action: 'key', text: t.slice(kbVal.length) });
     else if (t.length < kbVal.length) send({ type: 'screen_input', action: 'key', key: 'backspace' });
@@ -177,7 +189,7 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
     <>
       {/* верхние кнопки: меню + развернуть/свернуть + сброс зума */}
       <View style={[styles.topBar, { top: inFull ? 44 : 8 }]} pointerEvents="box-none">
-        <TouchableOpacity onPress={() => { Vibration.vibrate(6); setMenu((v) => !v); }} style={[styles.fab, { backgroundColor: menu ? c.accent : 'rgba(20,22,28,0.82)' }]}>
+        <TouchableOpacity onPress={() => { haptic.press(); setMenu((v) => !v); }} style={[styles.fab, { backgroundColor: menu ? c.accent : 'rgba(20,22,28,0.82)' }]}>
           <SymbolView name={menu ? 'xmark' : 'slider.horizontal.3'} tintColor="#fff" size={18} />
         </TouchableOpacity>
         <View style={{ flex: 1 }} />
@@ -185,7 +197,7 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
           <SymbolView name="arrow.up.left.and.arrow.down.right" tintColor="#fff" size={16} />
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => { Vibration.vibrate(8); fullRef.current = !inFull; setFull(!inFull); setMenu(false); }}
+          onPress={() => { haptic.press(); fullRef.current = !inFull; setFull(!inFull); setMenu(false); }}
           style={[styles.fab, { backgroundColor: 'rgba(20,22,28,0.82)' }]}>
           <SymbolView name={inFull ? 'arrow.down.right.and.arrow.up.left' : 'arrow.up.left.and.arrow.down.right.circle'} tintColor="#fff" size={inFull ? 16 : 18} />
         </TouchableOpacity>
@@ -210,7 +222,7 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
           {screens.length > 1 && (
             <View style={styles.monitors}>
               {screens.map((s, i) => (
-                <TouchableOpacity key={s.id} onPress={() => { Vibration.vibrate(6); onSwitch(s.id); }}
+                <TouchableOpacity key={s.id} onPress={() => { haptic.select(); onSwitch(s.id); }}
                   style={[styles.monBtn, { backgroundColor: s.id === activeScreen ? c.accent : 'rgba(255,255,255,0.1)' }]}>
                   <ThemedText type="small" style={{ color: '#fff' }}>{s.primary ? 'Осн.' : `М${i + 1}`}</ThemedText>
                 </TouchableOpacity>
