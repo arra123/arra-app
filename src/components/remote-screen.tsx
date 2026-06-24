@@ -45,7 +45,7 @@ const SCREEN_HTML = `<!doctype html><html><head>
     var minX=W-W*scale, minY=H-H*scale;
     tx=Math.min(0,Math.max(minX,tx)); ty=Math.min(0,Math.max(minY,ty));
   }
-  var sx0=0,sy0=0,moved=false,lastMove=0,lastTap=0,lp=null,lpFired=false,dragging=false,lastNx=0,lastNy=0;
+  var sx0=0,sy0=0,moved=false,lastMove=0,lastTap=0,lp=null,lpFired=false,dragging=false,lastNx=0,lastNy=0,startT=0,maxd=0;
   var pinchD=0,pinchCx=0,pinchCy=0,pinching=false;
   function dist(a,b){ var dx=a.clientX-b.clientX, dy=a.clientY-b.clientY; return Math.sqrt(dx*dx+dy*dy); }
   function clearLp(){ if(lp){clearTimeout(lp);lp=null;} }
@@ -57,7 +57,7 @@ const SCREEN_HTML = `<!doctype html><html><head>
       pinchCy=(e.touches[0].clientY+e.touches[1].clientY)/2;
       return;
     }
-    var t=e.touches[0]; sx0=t.clientX; sy0=t.clientY; moved=false; lpFired=false; dragging=false;
+    var t=e.touches[0]; sx0=t.clientX; sy0=t.clientY; moved=false; lpFired=false; dragging=false; startT=Date.now(); maxd=0;
     var p=norm(sx0,sy0); lastNx=p.nx; lastNy=p.ny;
     if(mode==='drag'){ dragging=true; send({t:'input',action:'down',nx:p.nx,ny:p.ny}); }
     else { lp=setTimeout(function(){ lpFired=true; var q=norm(sx0,sy0); send({t:'input',action:'click',nx:q.nx,ny:q.ny,button:'right'}); }, 480); }
@@ -77,7 +77,8 @@ const SCREEN_HTML = `<!doctype html><html><head>
       clampPan(); applyT(); return;
     }
     var t=e.touches[0], dx=t.clientX-sx0, dy=t.clientY-sy0;
-    if(Math.abs(dx)>5||Math.abs(dy)>5){ if(!moved){moved=true;clearLp();} }
+    var dd=Math.sqrt(dx*dx+dy*dy); if(dd>maxd) maxd=dd;
+    if(dd>5){ if(!moved){moved=true;clearLp();} }
     if(!moved) return;
     var now=Date.now();
     if(mode==='scroll'){
@@ -88,15 +89,19 @@ const SCREEN_HTML = `<!doctype html><html><head>
       if(now-lastMove>30){ lastMove=now; var p=norm(t.clientX,t.clientY); lastNx=p.nx; lastNy=p.ny; send({t:'input',action:'move',nx:p.nx,ny:p.ny}); }
       return;
     }
-    // control: если увеличено — панорамируем вид; иначе двигаем курсор ПК
-    if(scale>1.02){ tx+=dx; ty+=dy; sx0=t.clientX; sy0=t.clientY; clampPan(); applyT(); }
-    else if(now-lastMove>30){ lastMove=now; var p=norm(t.clientX,t.clientY); lastNx=p.nx; lastNy=p.ny; send({t:'input',action:'move',nx:p.nx,ny:p.ny}); }
+    // control: одним пальцем ВСЕГДА двигаем курсор ПК (даже в зуме — norm() учитывает zoom/pan).
+    // Панорама в увеличенном виде — двумя пальцами (см. обработчик pinch выше).
+    if(now-lastMove>30){ lastMove=now; var p=norm(t.clientX,t.clientY); lastNx=p.nx; lastNy=p.ny; send({t:'input',action:'move',nx:p.nx,ny:p.ny}); }
   },{passive:false});
   wrap.addEventListener('touchend',function(e){
     clearLp();
     if(pinching){ if(e.touches.length===0){pinching=false;} return; }
     if(dragging){ send({t:'input',action:'up',nx:lastNx,ny:lastNy}); dragging=false; return; }
-    if(lpFired||moved) return;
+    if(lpFired) return;
+    // Тап = клик, даже если палец слегка дрогнул (до 12px) и недолго (<600мс).
+    // Раньше любое смещение >5px отменяло клик — поэтому «клики не работали».
+    var dt=Date.now()-startT;
+    if(maxd>12 || dt>600) return; // это было перемещение курсора, не клик
     var now=Date.now(), p=norm(sx0,sy0);
     if(now-lastTap<300){ send({t:'input',action:'dbl',nx:p.nx,ny:p.ny}); lastTap=0; }
     else { send({t:'input',action:'click',nx:p.nx,ny:p.ny,button:'left'}); lastTap=now; }
@@ -193,13 +198,10 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
           <SymbolView name={menu ? 'xmark' : 'slider.horizontal.3'} tintColor="#fff" size={18} />
         </TouchableOpacity>
         <View style={{ flex: 1 }} />
-        <TouchableOpacity onPress={resetZoom} style={[styles.fab, { backgroundColor: 'rgba(20,22,28,0.82)' }]}>
-          <SymbolView name="arrow.up.left.and.arrow.down.right" tintColor="#fff" size={16} />
-        </TouchableOpacity>
         <TouchableOpacity
           onPress={() => { haptic.press(); fullRef.current = !inFull; setFull(!inFull); setMenu(false); }}
           style={[styles.fab, { backgroundColor: 'rgba(20,22,28,0.82)' }]}>
-          <SymbolView name={inFull ? 'arrow.down.right.and.arrow.up.left' : 'arrow.up.left.and.arrow.down.right.circle'} tintColor="#fff" size={inFull ? 16 : 18} />
+          <SymbolView name={inFull ? 'arrow.down.right.and.arrow.up.left' : 'arrow.up.left.and.arrow.down.right'} tintColor="#fff" size={18} />
         </TouchableOpacity>
       </View>
 
@@ -217,6 +219,10 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
           <TouchableOpacity style={styles.row} onPress={() => setModeBoth('scroll')}>
             <SymbolView name="arrow.up.arrow.down" tintColor={mode === 'scroll' ? c.accent : '#fff'} size={16} />
             <ThemedText type="smallBold" style={[styles.rowTxt, mode === 'scroll' && { color: c.accent }]}>Прокрутка</ThemedText>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.row} onPress={() => { resetZoom(); setMenu(false); }}>
+            <SymbolView name="arrow.up.left.and.arrow.down.right" tintColor="#fff" size={16} />
+            <ThemedText type="smallBold" style={styles.rowTxt}>Сбросить масштаб</ThemedText>
           </TouchableOpacity>
 
           {screens.length > 1 && (
@@ -256,7 +262,7 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
         {!full && controls(false)}
       </View>
       <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center', paddingVertical: 6 }}>
-        тап — клик · долгое — правый клик · 2 пальца — зум · ☰ — управление
+        1 палец — курсор · тап — клик · долгое — правый · 2 пальца — зум/панорама
       </ThemedText>
       <View style={{ height: bottomInset }} />
 

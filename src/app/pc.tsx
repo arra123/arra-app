@@ -154,6 +154,7 @@ export default function PcScreen() {
 
   const deviceIdRef = useRef<string | null>(null);
   deviceIdRef.current = deviceId;
+  const manualPick = useRef(false); // пользователь выбрал ПК вручную → не переключать автоматически
 
   const send = useCallback((obj: any) => {
     const ws = wsRef.current;
@@ -182,6 +183,10 @@ export default function PcScreen() {
         case 'devices':
           setDevices(m.devices || []);
           setDeviceId((cur) => {
+            // Если выбрал ПК вручную — НЕ переключаем сам (раньше авто-опрос скакал
+            // между ноутом и ПК → два потока, лаг, клики не туда). Держим выбор,
+            // пока устройство вообще существует в списке.
+            if (manualPick.current && cur && (m.devices || []).some((d: Device) => d.id === cur)) return cur;
             if (cur && (m.devices || []).some((d: Device) => d.id === cur && d.online)) return cur;
             const online = (m.devices || []).find((d: Device) => d.online);
             return online ? online.id : cur || (m.devices?.[0]?.id ?? null);
@@ -442,6 +447,10 @@ export default function PcScreen() {
   const pickDevice = (id: string) => {
     setDevOpen(false);
     if (id === deviceId) return;
+    manualPick.current = true;
+    // Останавливаем трансляцию на ТЕКУЩЕМ ПК (send ещё уходит на старый deviceId),
+    // иначе оба ПК продолжают слать кадры → каша и лаг.
+    if (screenOn.current) send({ type: 'screen_stop' });
     setDeviceId(id);
     setTree({ path: '', parent: null, drives: true, entries: [] });
     setScreens([]);
