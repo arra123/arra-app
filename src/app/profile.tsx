@@ -6,6 +6,7 @@ import { ActivityIndicator, Alert, ScrollView, StyleSheet, TouchableOpacity, Vie
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppleButton } from '@/components/apple-button';
+import { ChangelogModal } from '@/components/changelog-modal';
 import { GlassCard } from '@/components/glass-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -34,6 +35,7 @@ export default function ProfileScreen({ embedded = false }: { embedded?: boolean
   }, []);
 
   const [checking, setChecking] = useState(false);
+  const [showChangelog, setShowChangelog] = useState(false);
   async function checkUpdate() {
     if (checking) return;
     setChecking(true);
@@ -147,6 +149,18 @@ export default function ProfileScreen({ embedded = false }: { embedded?: boolean
             </GlassCard>
           </TouchableOpacity>
 
+          <TouchableOpacity activeOpacity={0.8} onPress={() => setShowChangelog(true)}>
+            <GlassCard radius={Radius.lg} style={styles.infoCard}>
+              <View style={styles.infoRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.two }}>
+                  <SymbolView name="clock.badge.checkmark" tintColor={theme.accent} size={18} />
+                  <ThemedText type="smallBold">Последние изменения</ThemedText>
+                </View>
+                <SymbolView name="chevron.right" tintColor={theme.textSecondary} size={16} />
+              </View>
+            </GlassCard>
+          </TouchableOpacity>
+
           <AppleButton
             label="Выйти"
             onPress={logout}
@@ -157,6 +171,7 @@ export default function ProfileScreen({ embedded = false }: { embedded?: boolean
             style={{ marginTop: Spacing.two }}
           />
       </ScrollView>
+      <ChangelogModal visible={showChangelog} onClose={() => setShowChangelog(false)} />
     </ThemedView>
   );
 }
