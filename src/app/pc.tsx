@@ -25,6 +25,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Colors, Radius, Spacing } from '@/constants/theme';
 import { API_URL, getToken } from '@/lib/api';
+import { haptic } from '@/lib/haptics';
 
 const c = Colors.dark;
 const WS_URL = API_URL.replace(/^http/, 'ws') + '/client';
@@ -115,6 +116,7 @@ export default function PcScreen() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [devOpen, setDevOpen] = useState(false); // открыт ли список выбора ПК
+  const [termEpoch, setTermEpoch] = useState(0); // ремоунт терминалов только при ручной смене ПК
   const [sub, setSub] = useState<'term' | 'explorer' | 'screen'>('term');
 
   // удалённый экран
@@ -203,8 +205,10 @@ export default function PcScreen() {
           break;
         case 'claude_done': {
           const idx = termsRef.current.findIndex((t) => t.id === (m.termId || '1'));
+          haptic.success(); // заметная вибрация — видно/чувствуется, даже если не смотришь
+          setTimeout(() => haptic.success(), 350); // двойной импульс — точно не пропустить
           setBusyMsg(`✅ Claude закончил${idx >= 0 ? ` в терминале ${idx + 1}` : ''}`);
-          setTimeout(() => setBusyMsg(''), 5000);
+          setTimeout(() => setBusyMsg(''), 9000);
           break;
         }
         case 'file_saved':
@@ -271,7 +275,7 @@ export default function PcScreen() {
   const pickFileForTerminal = () => { pickMode.current = true; setSub('explorer'); setBusyMsg('Выбери файл — его путь вставится в терминал'); setTimeout(() => setBusyMsg(''), 3500); };
 
   // ---- удалённый экран ----
-  const startScreenShare = (displayId?: string) => { screenOn.current = true; send({ type: 'screen_start', displayId: displayId || activeScreen || undefined, fps: 15, quality: 55, width: 1280 }); };
+  const startScreenShare = (displayId?: string) => { screenOn.current = true; send({ type: 'screen_start', displayId: displayId || activeScreen || undefined, fps: 16, quality: 68, width: 1600 }); };
   const stopScreenShare = () => { screenOn.current = false; send({ type: 'screen_stop' }); };
   // Мгновенное переключение монитора — без перезапуска потока на ПК.
   const switchScreen = (id: string) => { setActiveScreen(id); send({ type: 'screen_switch', displayId: id }); };
@@ -445,6 +449,7 @@ export default function PcScreen() {
     setTerms([{ id: '1', cwd: '' }]);
     setActiveTerm('1');
     termReady.current = {};
+    setTermEpoch((e) => e + 1); // принудительный ремоунт терминалов под новый ПК
   };
 
   return (
@@ -507,7 +512,7 @@ export default function PcScreen() {
           <View style={styles.termWrap}>
             {terms.map((t) => (
               <View
-                key={`${deviceId || 'none'}:${t.id}`}
+                key={`${termEpoch}:${t.id}`}
                 style={[StyleSheet.absoluteFill, { opacity: t.id === activeTerm ? 1 : 0, zIndex: t.id === activeTerm ? 1 : 0 }]}
                 pointerEvents={t.id === activeTerm ? 'auto' : 'none'}>
                 <WebView

@@ -52,7 +52,12 @@ export default function NotesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState<Editing>(null);
   const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
+  // Текст заметки держим в ref (неконтролируемый ввод) — иначе большой текст
+  // перерисовывается на каждый символ и всё виснет. bodyKey форсит ремоунт при
+  // открытии другой заметки / вставке надиктованного.
+  const bodyRef = useRef('');
+  const [bodyKey, setBodyKey] = useState(0);
+  const setBodyText = (t: string) => { bodyRef.current = t; setBodyKey((k) => k + 1); };
   const [color, setColor] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [dictating, setDictating] = useState(false);
@@ -91,7 +96,7 @@ export default function NotesScreen() {
       });
       if (res.status >= 400) throw new Error('Ошибка ' + res.status);
       const data = JSON.parse(res.body || '{}');
-      if (data.text) setBody((b) => (b.trim() ? b.trim() + ' ' : '') + data.text);
+      if (data.text) setBodyText((bodyRef.current.trim() ? bodyRef.current.trim() + ' ' : '') + data.text);
     } catch (e: any) {
       Alert.alert('Не распознал', e?.message || '');
     } finally {
@@ -122,13 +127,13 @@ export default function NotesScreen() {
 
   function openNew() {
     setTitle('');
-    setBody('');
+    setBodyText('');
     setColor(null);
     setEditing('new');
   }
   function openNote(n: Note) {
     setTitle(n.title || '');
-    setBody(n.body);
+    setBodyText(n.body);
     setColor(n.color || null);
     setEditing(n);
   }
@@ -138,6 +143,7 @@ export default function NotesScreen() {
 
   async function save() {
     if (saving) return;
+    const body = bodyRef.current;
     if (!title.trim() && !body.trim()) {
       close();
       return;
@@ -249,11 +255,13 @@ export default function NotesScreen() {
               })}
             </ScrollView>
             <TextInput
+              key={bodyKey}
               placeholder="Текст заметки…"
               placeholderTextColor={theme.textSecondary}
-              value={body}
-              onChangeText={setBody}
+              defaultValue={bodyRef.current}
+              onChangeText={(t) => { bodyRef.current = t; }}
               multiline
+              scrollEnabled={false}
               style={[styles.bodyInput, { color: theme.text }]}
             />
           </ScrollView>
