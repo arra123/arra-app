@@ -24,6 +24,8 @@ const SVG = {
   user: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20a8 8 0 0 1 16 0"/></svg>',
   file: '<svg viewBox="0 0 24 24"><path d="M14 3v5h5"/><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>',
   arrow: '<svg viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+  drive: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></svg>',
+  folder: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
 };
 
 // ---- state ----
@@ -488,7 +490,7 @@ async function renderTerminal() {
     <div class="vscode">
       <div class="vs-left">
         <div class="vs-lhead">
-          <button class="vs-mini" id="drives" title="Диски">🖥</button>
+          <button class="vs-mini" id="drives" title="Диски">${SVG.drive}</button>
           <span class="treepath lbl ellip" id="treepath" title="">обзор</span>
         </div>
         <div id="treebox" class="treebox"></div>
@@ -518,7 +520,7 @@ function renderTree() {
   if (!t.drives && t.parent != null) html += `<div class="treerow up" data-up="${esc(t.parent)}">‹ наверх</div>`;
   if (!t.entries.length) html += `<div class="empty" style="padding:14px">Пусто</div>`;
   else html += t.entries.map((e) =>
-    `<div class="treerow ${e.dir ? 'isdir' : ''}" data-path="${esc(e.path)}" data-dir="${e.dir ? 1 : 0}">${e.dir ? '📁' : '📄'} ${esc(e.name)}</div>`).join('');
+    `<div class="treerow ${e.dir ? 'isdir' : ''}" data-path="${esc(e.path)}" data-dir="${e.dir ? 1 : 0}">${e.dir ? SVG.folder : SVG.file} ${esc(e.name)}</div>`).join('');
   box.innerHTML = html;
   const upEl = box.querySelector('.treerow.up');
   if (upEl) upEl.onclick = () => termSend({ type: 'fs_list', reqId: newReq(), path: upEl.dataset.up });
