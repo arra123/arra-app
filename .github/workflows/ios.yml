@@ -1,0 +1,62 @@
+name: ios-testflight
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Restore signing certs
+        env:
+          IOS_DIST_P12_B64: ${{ secrets.IOS_DIST_P12_B64 }}
+          IOS_PROFILE_B64: ${{ secrets.IOS_PROFILE_B64 }}
+          ASC_KEY_P8_B64: ${{ secrets.ASC_KEY_P8_B64 }}
+          IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+        run: |
+          set -e
+          mkdir -p credentials
+          echo "$IOS_DIST_P12_B64" | base64 --decode > credentials/dist.p12
+          echo "$IOS_PROFILE_B64" | base64 --decode > credentials/profile.mobileprovision
+          echo "$ASC_KEY_P8_B64" | base64 --decode > credentials/AuthKey_63Y56V3L2D.p8
+          printf '{ "ios": { "provisioningProfilePath": "credentials/profile.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } } }' "$IOS_DIST_P12_PASSWORD" > credentials.json
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      - name: Build IPA (eas local)
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: npx eas-cli@latest build --platform ios --profile production --local --non-interactive --output "$GITHUB_WORKSPACE/Arra.ipa"
+
+      - name: Submit to TestFlight
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: npx eas-cli@latest submit --platform ios --path "$GITHUB_WORKSPACE/Arra.ipa" --profile production --non-interactive
+
+      - name: Add build to Internal testing group
+        run: node scripts/asc-add-latest-to-group.mjs
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Arra-ipa
+          path: ${{ github.workspace }}/Arra.ipa
+          if-no-files-found: warn

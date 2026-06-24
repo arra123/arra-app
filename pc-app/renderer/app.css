@@ -1,0 +1,193 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --bg: #08090A;
+  --text: #F7F8F8;
+  --muted: #8A8F98;
+  --tint: #5E6AD2;
+  --green: #4CB782;
+  --red: #EB5757;
+  --yellow: #F2C94C;
+  --hair: rgba(255, 255, 255, 0.08);
+  --glass: linear-gradient(137deg, rgba(17, 18, 20, 0.75) 5%, rgba(12, 13, 15, 0.9) 76%);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  letter-spacing: -0.01em; font-size: 14px; overflow: hidden;
+  -webkit-user-select: none; user-select: none;
+  display: flex; flex-direction: column;
+}
+body::before { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background: radial-gradient(700px 320px at 50% -10%, rgba(94, 106, 210, 0.10), transparent 70%); }
+.hidden { display: none !important; }
+
+/* Титульбар */
+.titlebar { -webkit-app-region: drag; height: 40px; display: flex; align-items: center; justify-content: space-between; padding: 0 6px 0 18px; position: relative; z-index: 5; flex: none; }
+.tb-brand { font-weight: 700; font-size: 14px; letter-spacing: 0.02em; }
+.tb-controls { -webkit-app-region: no-drag; display: flex; gap: 2px; }
+.tb-btn { width: 32px; height: 28px; border: none; background: transparent; border-radius: 7px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--muted); }
+.tb-btn:hover { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+.tb-close:hover { background: var(--red); color: #fff; }
+.tb-btn svg { width: 12px; height: 12px; fill: currentColor; stroke: currentColor; }
+.tb-btn svg path { stroke: currentColor; fill: none; }
+
+/* Контент */
+main { position: relative; z-index: 1; flex: 1; overflow-y: auto; padding: 4px 22px 22px; }
+main::-webkit-scrollbar { width: 9px; }
+main::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); border-radius: 9px; }
+
+h1 { font-size: 26px; font-weight: 800; margin: 6px 0 16px; }
+h2 { font-size: 14px; font-weight: 700; color: var(--muted); margin: 18px 2px 10px; }
+.sub { color: var(--muted); font-size: 13px; }
+
+.card { background: var(--glass); backdrop-filter: blur(12px) saturate(1.2); border: 1px solid var(--hair); border-radius: 16px; box-shadow: inset 0 1px 1px 0 rgba(255, 255, 255, 0.1); padding: 16px; }
+.gap { display: flex; flex-direction: column; gap: 12px; }
+.row { display: flex; align-items: center; gap: 12px; }
+.grow { flex: 1; min-width: 0; }
+.ellip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lbl { font-size: 12px; color: var(--muted); }
+.b { font-weight: 600; }
+.right { margin-left: auto; }
+
+label.field span { display: block; font-size: 12px; color: var(--muted); margin: 0 0 6px 2px; }
+input, textarea { width: 100%; padding: 11px 13px; border-radius: 11px; font-family: inherit; font-size: 14px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--hair); color: var(--text); outline: none; -webkit-user-select: text; user-select: text; -webkit-app-region: no-drag; }
+input:focus, textarea:focus { border-color: rgba(94, 106, 210, 0.6); }
+textarea { resize: none; line-height: 1.5; }
+
+.btn { padding: 12px; border-radius: 12px; border: none; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600; color: #fff; background: var(--tint); display: flex; align-items: center; justify-content: center; gap: 8px; }
+.btn:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn.ghost { background: rgba(255, 255, 255, 0.05); border: 1px solid var(--hair); color: var(--text); }
+.btn.sm { padding: 8px 12px; font-size: 13px; font-weight: 500; }
+.btn.full { width: 100%; }
+
+/* Нижняя навигация */
+.nav { flex: none; z-index: 5; display: flex; padding: 8px 10px 12px; gap: 4px; border-top: 1px solid var(--hair); background: rgba(10,11,13,0.7); backdrop-filter: blur(14px); }
+.nav button { flex: 1; background: transparent; border: none; cursor: pointer; color: var(--muted); font-family: inherit; font-size: 11px; font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 0; border-radius: 12px; }
+.nav button.active { color: var(--tint); }
+.nav button:hover { background: rgba(255,255,255,0.04); }
+.nav svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Статус-точка */
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.on { background: var(--green); }
+
+/* Сегмент */
+.seg { display: flex; background: rgba(255,255,255,0.05); border: 1px solid var(--hair); border-radius: 12px; padding: 4px; gap: 4px; }
+.seg button { flex: 1; padding: 8px; border: none; border-radius: 9px; background: transparent; color: var(--muted); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.seg button.active { background: var(--tint); color: #fff; }
+
+/* Иконки-плитки */
+.tile { width: 38px; height: 38px; border-radius: 12px; background: rgba(255,255,255,0.06); border: 1px solid var(--hair); display: flex; align-items: center; justify-content: center; flex: none; color: rgba(247,248,248,0.92); }
+.tile svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.track { height: 7px; border-radius: 99px; background: rgba(255,255,255,0.08); overflow: hidden; }
+.track i { display: block; height: 100%; border-radius: 99px; background: var(--tint); }
+
+/* Финансы */
+.hero { display: flex; align-items: center; gap: 14px; }
+.hero .big { font-size: 34px; font-weight: 800; }
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border-radius: 99px; background: rgba(255,255,255,0.06); font-size: 13px; }
+.monthbar { display: flex; align-items: center; justify-content: center; gap: 24px; margin: 12px 0; }
+.monthbar button { background: none; border: none; color: var(--text); cursor: pointer; font-size: 18px; padding: 4px 10px; }
+.monthbar button:disabled { color: rgba(255,255,255,0.2); }
+.monthbar .m { font-weight: 700; text-transform: capitalize; }
+.txrow { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 13px; background: rgba(255,255,255,0.04); border: 1px solid var(--hair); margin-bottom: 8px; }
+.amount.exp { color: var(--text); font-weight: 700; }
+.amount.inc { color: var(--green); font-weight: 700; }
+.empty { text-align: center; color: var(--muted); font-size: 13px; padding: 28px 0; }
+
+/* Диалог */
+.chat { display: flex; flex-direction: column; gap: 8px; padding-bottom: 92px; }
+.msg { max-width: 78%; padding: 10px 13px; border-radius: 15px; font-size: 14px; line-height: 1.4; }
+.msg.user { align-self: flex-end; background: var(--tint); color: #fff; border-bottom-right-radius: 5px; }
+.msg.ai { align-self: flex-start; background: rgba(255,255,255,0.05); border: 1px solid var(--hair); border-bottom-left-radius: 5px; }
+.composer { position: fixed; left: 0; right: 0; bottom: 74px; z-index: 4; display: flex; gap: 10px; align-items: center; padding: 10px 18px; background: rgba(8,9,10,0.92); backdrop-filter: blur(10px); border-top: 1px solid var(--hair); }
+.composer input { flex: 1; }
+.send { width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--tint); color: #fff; cursor: pointer; flex: none; display: flex; align-items: center; justify-content: center; }
+.send:disabled { opacity: 0.5; }
+
+/* Файлы — превью */
+.feed-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+.imgcard { border-radius: 14px; overflow: hidden; border: 1px solid var(--hair); background: #0c0d10; cursor: pointer; }
+.imgcard:hover { border-color: var(--tint); }
+.imgcard img { width: 100%; height: 170px; object-fit: contain; display: block; background: #0c0d10; }
+.file { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 13px; background: rgba(255,255,255,0.04); border: 1px solid var(--hair); cursor: pointer; margin-bottom: 8px; }
+.copybtn { flex: none; border: 1px solid var(--hair); background: rgba(255,255,255,0.05); color: var(--text); font-family: inherit; font-size: 12px; font-weight: 600; padding: 7px 11px; border-radius: 9px; cursor: pointer; }
+.copybtn:hover { background: rgba(255,255,255,0.09); }
+.copybtn.ok { background: rgba(76,183,130,0.18); color: var(--green); border-color: transparent; }
+
+/* Заметки */
+.note { padding: 13px 14px; border-radius: 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--hair); cursor: pointer; margin-bottom: 8px; }
+.note:hover { background: rgba(255,255,255,0.07); }
+.note .nt { font-weight: 600; margin-bottom: 3px; }
+.note .nb { font-size: 13px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Экран входа */
+.center { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 18px; }
+.err { color: var(--red); font-size: 13px; min-height: 16px; }
+.foot { text-align: center; margin-top: 8px; }
+.foot button { background: none; border: none; color: var(--muted); font-family: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
+
+/* Просмотр фото на весь экран */
+.viewer { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.95); display: flex; align-items: center; justify-content: center; }
+.viewer img { max-width: 92%; max-height: 88%; object-fit: contain; }
+.viewer .vclose { position: absolute; top: 16px; right: 18px; width: 40px; height: 40px; border-radius: 20px; background: rgba(255,255,255,0.12); border: none; color: #fff; font-size: 20px; cursor: pointer; }
+.viewer .vnav { position: absolute; top: 50%; transform: translateY(-50%); width: 46px; height: 46px; border-radius: 23px; background: rgba(255,255,255,0.1); border: none; color: #fff; font-size: 22px; cursor: pointer; }
+.viewer .vprev { left: 18px; } .viewer .vnext { right: 18px; }
+.viewer .vcopy { position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%); }
+
+/* Терминал / код */
+.termout {
+  background: #0a0b0d; border: 1px solid var(--hair); border-radius: 12px;
+  padding: 14px 16px; margin-top: 12px; height: 46vh; min-height: 240px; overflow-y: auto;
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+  font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+  color: #cfd3da; -webkit-user-select: text; user-select: text;
+}
+.termout::-webkit-scrollbar { width: 9px; }
+.termout::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 9px; }
+.termcmd { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.termcmd #termprompt { font-family: ui-monospace, monospace; flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.termcmd input { flex: 1; font-family: ui-monospace, monospace; }
+
+.xterm-host { height: 66vh; min-height: 340px; background: #0a0b0d; border: 1px solid var(--hair); border-radius: 12px; padding: 10px 6px 6px 10px; overflow: hidden; }
+.xterm-host .xterm { height: 100%; }
+.xterm-host .xterm-viewport::-webkit-scrollbar { width: 9px; }
+.xterm-host .xterm-viewport::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 9px; }
+
+/* VS Code-вёрстка: эксплорер слева, терминал справа */
+.vscode { display: grid; grid-template-columns: 260px 1fr; gap: 12px; height: calc(100vh - 168px); min-height: 320px; margin-top: 12px; }
+.vs-left { display: flex; flex-direction: column; background: rgba(255,255,255,0.03); border: 1px solid var(--hair); border-radius: 12px; overflow: hidden; }
+.vs-lhead { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--hair); }
+.vs-mini { background: rgba(255,255,255,0.06); border: 1px solid var(--hair); color: var(--text); border-radius: 8px; width: 28px; height: 26px; cursor: pointer; font-size: 13px; }
+.vs-mini:hover { background: rgba(255,255,255,0.12); }
+.vs-left .treebox { flex: 1; border: none; background: transparent; padding: 6px; }
+.vs-right { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.vs-right .xterm-host { flex: 1; height: auto; min-height: 0; margin: 0; }
+
+/* Вкладки терминалов (как в VS Code) */
+.termtabs { display: flex; align-items: center; gap: 6px; flex: none; }
+.ttab { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 9px; border: 1px solid var(--hair); background: rgba(255,255,255,0.05); color: var(--muted); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.ttab.on { background: var(--tint); color: #fff; border-color: transparent; }
+.ttab .tclose { opacity: 0.8; font-size: 11px; padding: 0 2px; }
+.ttab .tclose:hover { opacity: 1; }
+.ttadd { width: 32px; height: 30px; border-radius: 9px; border: 1px solid var(--hair); background: rgba(255,255,255,0.05); color: var(--text); cursor: pointer; font-size: 16px; }
+.ttadd:hover { background: rgba(255,255,255,0.1); }
+
+.editmodal { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; padding: 30px; }
+.editcard { width: 90%; max-width: 1000px; background: #15161b; border: 1px solid var(--hair); border-radius: 14px; padding: 16px; }
+
+.codecols { display: grid; grid-template-columns: 280px 1fr; gap: 14px; align-items: start; }
+.treebox { background: rgba(255,255,255,0.03); border: 1px solid var(--hair); border-radius: 12px; padding: 8px; max-height: 64vh; overflow-y: auto; }
+.treebox::-webkit-scrollbar { width: 8px; } .treebox::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 8px; }
+.treepath { padding: 6px 8px 8px; border-bottom: 1px solid var(--hair); margin-bottom: 6px; }
+.treerow { padding: 7px 9px; border-radius: 8px; cursor: pointer; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.treerow:hover { background: rgba(255,255,255,0.06); }
+.treerow.isdir { font-weight: 600; }
+.treerow.up { color: var(--muted); }
+.editbox { min-width: 0; }
+.codearea { height: 60vh; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 12.5px; line-height: 1.5; margin-top: 8px; white-space: pre; overflow: auto; }

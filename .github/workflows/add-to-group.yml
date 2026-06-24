@@ -1,0 +1,27 @@
+name: add-to-group
+
+on:
+  workflow_dispatch:
+
+jobs:
+  add:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Restore ASC key
+        env:
+          ASC_KEY_P8_B64: ${{ secrets.ASC_KEY_P8_B64 }}
+        run: |
+          mkdir -p credentials
+          echo "$ASC_KEY_P8_B64" | base64 --decode > credentials/AuthKey_63Y56V3L2D.p8
+
+      - name: Add latest build to Internal group
+        run: node scripts/asc-add-latest-to-group.mjs

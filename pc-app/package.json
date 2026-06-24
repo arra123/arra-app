@@ -1,0 +1,50 @@
+{
+  "name": "arra-desktop",
+  "version": "1.0.0",
+  "description": "Arra — приёмник файлов на ПК (телефон → папка → буфер обмена)",
+  "main": "main.js",
+  "author": "Arra",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.18.0"
+  },
+  "build": {
+    "appId": "com.arratima.arra.desktop",
+    "productName": "Arra",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "icon.png",
+      "renderer/**",
+      "node_modules/**"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Arra"
+    }
+  }
+}

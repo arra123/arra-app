@@ -1,0 +1,13 @@
+{
+  "name": "aura-pc-agent",
+  "version": "1.0.0",
+  "description": "Агент Aura для ПК: принимает файлы с телефона и копирует путь в буфер обмена",
+  "type": "module",
+  "main": "agent.mjs",
+  "scripts": {
+    "start": "node agent.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

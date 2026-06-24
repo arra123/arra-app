@@ -1,0 +1,68 @@
+# Сборка iOS на macOS-раннере Codemagic через `eas build --local`.
+# Это НЕ тратит квоту EAS Build (собирается локально на Mac Codemagic),
+# но переиспользует нашу подпись (credentials.json + сертификаты) и заливку eas submit.
+#
+# Секреты задаются в Codemagic → Environment variables (группа "arra"):
+#   EXPO_TOKEN            — токен Expo (как в .env)
+#   IOS_DIST_P12_B64      — base64 от credentials/dist.p12
+#   IOS_DIST_P12_PASSWORD — пароль p12 (aura-dist)
+#   IOS_PROFILE_B64       — base64 от credentials/profile.mobileprovision
+#   ASC_KEY_P8_B64        — base64 от credentials/AuthKey_63Y56V3L2D.p8
+# Все — отметить "Secure".
+
+workflows:
+  ios-testflight:
+    name: Arra → TestFlight (eas local)
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      groups:
+        - arra
+      node: 20.18.0
+    scripts:
+      - name: Восстановить сертификаты подписи из секретов
+        script: |
+          set -e
+          mkdir -p credentials
+          echo "$IOS_DIST_P12_B64"  | base64 --decode > credentials/dist.p12
+          echo "$IOS_PROFILE_B64"   | base64 --decode > credentials/profile.mobileprovision
+          echo "$ASC_KEY_P8_B64"    | base64 --decode > credentials/AuthKey_63Y56V3L2D.p8
+          cat > credentials.json <<EOF
+          {
+            "ios": {
+              "provisioningProfilePath": "credentials/profile.mobileprovision",
+              "distributionCertificate": {
+                "path": "credentials/dist.p12",
+                "password": "$IOS_DIST_P12_PASSWORD"
+              }
+            }
+          }
+          EOF
+          echo "Сертификаты восстановлены."
+      - name: Установить зависимости
+        script: |
+          npm ci || npm install
+      - name: Собрать .ipa локально (без квоты EAS Build)
+        script: |
+          npx eas-cli@latest build \
+            --platform ios \
+            --profile production \
+            --local \
+            --non-interactive \
+            --output "$CM_BUILD_DIR/Arra.ipa"
+      - name: Залить в TestFlight
+        script: |
+          npx eas-cli@latest submit \
+            --platform ios \
+            --path "$CM_BUILD_DIR/Arra.ipa" \
+            --profile production \
+            --non-interactive
+    artifacts:
+      - Arra.ipa
+    publishing:
+      email:
+        recipients:
+          - timatipushin@gmail.com
+        notify:
+          success: true
+          failure: true
