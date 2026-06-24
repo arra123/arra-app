@@ -818,6 +818,7 @@ ipcMain.handle('api', async (_e, { method, path, body }) => {
 ipcMain.handle('open-folder', () => shell.openPath(currentFolder()));
 ipcMain.handle('open-path', (_e, p) => shell.showItemInFolder(p));
 ipcMain.handle('copy-path', (_e, p) => { clipboard.writeText(p); return true; });
+ipcMain.handle('clip-read', () => clipboard.readText());
 ipcMain.handle('recopy', (_e, f) => copyToClipboard(f.path, f.mime));
 ipcMain.handle('logout', () => {
   manualClose = true;

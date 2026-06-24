@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('arra', {
   openFolder: () => ipcRenderer.invoke('open-folder'),
   openPath: (p) => ipcRenderer.invoke('open-path', p),
   copyPath: (p) => ipcRenderer.invoke('copy-path', p),
+  copyText: (t) => ipcRenderer.invoke('copy-path', t),
+  clipRead: () => ipcRenderer.invoke('clip-read'),
   recopy: (f) => ipcRenderer.invoke('recopy', f),
   logout: () => ipcRenderer.invoke('logout'),
   winMin: () => ipcRenderer.send('win-min'),

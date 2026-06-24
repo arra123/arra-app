@@ -117,6 +117,28 @@ function ensureXterm(termId, cwd) {
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.onData((d) => window.arra.ptyInput(d, termId));
+  // Копирование/вставка как в консоли Windows:
+  //  • Ctrl+C — копирует выделенное; без выделения уходит обычный ^C (прерывание).
+  //  • Ctrl+Shift+C — всегда копировать выделенное.
+  //  • Ctrl+V / Ctrl+Shift+V — вставить из буфера.
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+    const k = (e.key || '').toLowerCase();
+    if (e.ctrlKey && !e.altKey && k === 'c' && !e.shiftKey) {
+      const sel = term.getSelection();
+      if (sel) { window.arra.copyText(sel); term.clearSelection(); return false; }
+      return true; // нет выделения → пусть идёт ^C
+    }
+    if (e.ctrlKey && e.shiftKey && k === 'c') {
+      const sel = term.getSelection(); if (sel) window.arra.copyText(sel);
+      return false;
+    }
+    if (e.ctrlKey && k === 'v') {
+      window.arra.clipRead().then((t) => { if (t) window.arra.ptyInput(t, termId); }).catch(() => {});
+      return false;
+    }
+    return true;
+  });
   xts[termId] = { term, fit, ro: null, started: false, cwd: cwd || '' };
   return xts[termId];
 }
@@ -127,6 +149,14 @@ function mountActiveTerm(host) {
   host.innerHTML = '';
   if (!x.term.element) x.term.open(host); else host.appendChild(x.term.element);
   host.onclick = () => { try { x.term.focus(); } catch {} };
+  // Правый клик: есть выделение → копируем; нет → вставляем (как в консоли Windows).
+  host.oncontextmenu = (e) => {
+    e.preventDefault();
+    const sel = x.term.getSelection();
+    if (sel) { window.arra.copyText(sel); x.term.clearSelection(); }
+    else { window.arra.clipRead().then((t) => { if (t) window.arra.ptyInput(t, activeLocal); }).catch(() => {}); }
+    try { x.term.focus(); } catch {}
+  };
   // ВАЖНО: без ResizeObserver — он зацикливался с fit() (терминал бесконечно рос/мигал).
   // Подгоняем по window-resize и по таймерам при монтировании/переключении.
   const fitNow = () => { fitLocal(activeLocal); try { x.term.focus(); } catch {} };
