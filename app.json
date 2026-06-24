@@ -3,7 +3,7 @@
     "name": "Arra",
     "slug": "aura",
     "owner": "arratima",
-    "version": "1.4.0",
+    "version": "1.2.0",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "aura",
