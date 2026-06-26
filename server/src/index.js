@@ -15,6 +15,7 @@ import noteRoutes from './routes/notes.js';
 import pushRoutes from './routes/push.js';
 import relayRoutes from './routes/relay.js';
 import transactionRoutes from './routes/transactions.js';
+import ulyanaRoutes from './routes/ulyana.js';
 
 const app = Fastify({ logger: true, bodyLimit: 25 * 1024 * 1024 });
 
@@ -38,6 +39,7 @@ await app.register(fileRoutes);
 await app.register(noteRoutes);
 await app.register(pushRoutes);
 await app.register(relayRoutes);
+await app.register(ulyanaRoutes);
 
 try {
   await app.listen({ port: config.port, host: config.host });

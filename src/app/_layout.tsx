@@ -18,6 +18,10 @@ import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
 import { AuthScreen } from '@/components/auth-screen';
 import { AuthProvider, useAuth } from '@/lib/auth';
+import UlyanaApp from '@/ulyana/ulyana-app';
+
+// Секретный аккаунт: вход «ульяна» открывает совсем другое приложение (УльянаOS).
+const SECRET_LOGIN = 'ульяна';
 
 function Gate() {
   const { user, loading } = useAuth();
@@ -29,7 +33,9 @@ function Gate() {
       </View>
     );
   }
-  return user ? <AppTabs /> : <AuthScreen />;
+  if (!user) return <AuthScreen />;
+  if (user.email?.trim().toLowerCase() === SECRET_LOGIN) return <UlyanaApp />;
+  return <AppTabs />;
 }
 
 export default function RootLayout() {
