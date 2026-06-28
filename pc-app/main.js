@@ -306,7 +306,10 @@ function uploadFileToBackend(absPath, jwt) {
 // '1'/'2'/'3'… — терминалы, открытые с телефона. У каждой свой процесс и папка.
 let pty = null;
 try { pty = require('node-pty'); } catch (e) { console.error('node-pty недоступен:', e.message); }
-const ptys = new Map(); // termId -> { proc, cwd, local }
+const ptys = new Map(); // termId -> { proc, cwd, local, buf }
+
+// Отправить сообщение телефону (если подключён)
+function wsSend(o) { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); } catch {} }
 
 function startPty(termId, cols, rows, cwd, local) {
   if (!pty) return false;
@@ -331,26 +334,46 @@ function startPty(termId, cols, rows, cwd, local) {
     if (local) win?.webContents.send('pty-data', '\r\n[не удалось открыть терминал: ' + e.message + ']\r\n');
     return false;
   }
-  s = { proc, cwd: wantCwd, local: !!local };
+  const side0 = local ? 'pc' : 'phone';
+  s = { proc, cwd: wantCwd, local: !!local, buf: '', activeSide: side0, dims: { [side0]: { cols: cols || 100, rows: rows || 30 } } };
   ptys.set(termId, s);
+  // ОБЩАЯ сессия: вывод идёт И в окно ПК, И на телефон одновременно. Так можно начать
+  // работу в приложении на ПК и продолжить ту же сессию с телефона (и наоборот).
   proc.onData((d) => {
-    if (s.local) win?.webContents.send('pty-data', { termId, data: d });
-    else { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ to: 'client', type: 'pty_out', termId, data: d })); } catch {} }
-    // Claude Code (и др. TUI) звонит терминальным «беллом» (\x07) когда закончил/ждёт ввода.
-    // Шлём телефону сигнал — там покажем уведомление «Claude закончил».
-    if (!s.local && d.indexOf('\x07') >= 0) {
-      try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ to: 'client', type: 'claude_done', termId })); } catch {}
-    }
+    s.buf += d;
+    if (s.buf.length > 120000) s.buf = s.buf.slice(-100000); // буфер прокрутки для подключения
+    win?.webContents.send('pty-data', { termId, data: d });
+    wsSend({ to: 'client', type: 'pty_out', termId, data: d });
   });
   proc.onExit(() => {
     ptys.delete(termId);
-    if (s.local) win?.webContents.send('pty-data', { termId, data: '\r\n[сессия завершена]\r\n' });
-    else { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ to: 'client', type: 'pty_exit', termId })); } catch {} }
+    win?.webContents.send('pty-data', { termId, data: '\r\n[сессия завершена]\r\n' });
+    win?.webContents.send('pty-exit', { termId });
+    wsSend({ to: 'client', type: 'pty_exit', termId });
   });
+  // сообщаем телефону, что появилась новая сессия (чтобы он мог показать её в списке)
+  wsSend({ to: 'client', type: 'pty_opened', termId, cwd: wantCwd });
   return true;
 }
-function ptyWrite(termId, d) { const s = ptys.get(termId || 'local'); if (s && s.proc) { try { s.proc.write(d); } catch {} } }
-function ptyResize(termId, cols, rows) { const s = ptys.get(termId || 'local'); if (s && s.proc && cols && rows) { try { s.proc.resize(cols, rows); } catch {} } }
+// Размер общего терминала «следует за активным устройством»: PTY подстраивается под того,
+// кто последним печатал. dims хранит размеры обеих сторон; activeSide — чей размер применён.
+function activate(termId, side) {
+  const s = ptys.get(termId || 'local'); if (!s || !s.proc || s.activeSide === side) return;
+  s.activeSide = side;
+  const d = s.dims && s.dims[side];
+  if (d && d.cols && d.rows) { try { s.proc.resize(d.cols, d.rows); } catch {} }
+}
+function ptyWrite(termId, d, side) {
+  const s = ptys.get(termId || 'local'); if (!s || !s.proc) return;
+  if (side) activate(termId || 'local', side); // печать → это устройство становится активным
+  try { s.proc.write(d); } catch {}
+}
+function ptyResize(termId, cols, rows, side) {
+  const s = ptys.get(termId || 'local'); if (!s || !s.proc || !cols || !rows) return;
+  side = side || s.activeSide || 'pc';
+  s.dims[side] = { cols, rows };
+  if (s.activeSide === side) { try { s.proc.resize(cols, rows); } catch {} }
+}
 function killPty(termId) { const s = ptys.get(termId); if (s && s.proc) { try { s.proc.kill(); } catch {} } ptys.delete(termId); }
 function restartPty(termId, cols, rows, cwd, local) {
   const s = ptys.get(termId);
@@ -527,14 +550,25 @@ function handleRelay(msg, send) {
       startPty(msg.termId || '1', msg.cols, msg.rows, msg.cwd, false);
       break;
     case 'pty_input':
-      ptyWrite(msg.termId || '1', msg.data);
+      ptyWrite(msg.termId || '1', msg.data, 'phone');
       break;
     case 'pty_resize':
-      ptyResize(msg.termId || '1', msg.cols, msg.rows);
+      ptyResize(msg.termId || '1', msg.cols, msg.rows, 'phone');
       break;
     case 'pty_kill':
       killPty(msg.termId || '1');
       break;
+    case 'pty_list':
+      // список всех активных сессий ПК — чтобы телефон мог подключиться к уже открытой
+      send({ type: 'pty_list', terms: [...ptys.entries()].map(([id, s]) => ({ termId: id, cwd: s.cwd })) });
+      break;
+    case 'pty_attach': {
+      // подключиться к существующей сессии: отдаём накопленный буфер (текущее содержимое экрана)
+      const s = ptys.get(msg.termId);
+      if (s) { ptyResize(msg.termId, msg.cols, msg.rows, 'phone'); activate(msg.termId, 'phone'); send({ type: 'pty_out', termId: msg.termId, data: s.buf || '' }); }
+      else startPty(msg.termId, msg.cols, msg.rows, msg.cwd, false);
+      break;
+    }
     case 'run':
       execTerminal(msg.reqId, msg.cmd, send);
       break;
@@ -717,13 +751,13 @@ function createWindow() {
     minWidth: 720,
     minHeight: 560,
     frame: false,
-    backgroundColor: '#08090A',
+    backgroundColor: '#F4F5F7',
     title: 'Arra',
     icon: path.join(__dirname, 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  win.once('ready-to-show', () => { pushStatus(); win.show(); });
+  win.once('ready-to-show', () => { pushStatus(); win.maximize(); win.show(); });
 }
 
 app.whenReady().then(() => {
@@ -817,6 +851,11 @@ ipcMain.handle('api', async (_e, { method, path, body }) => {
 });
 ipcMain.handle('open-folder', () => shell.openPath(currentFolder()));
 ipcMain.handle('open-path', (_e, p) => shell.showItemInFolder(p));
+ipcMain.handle('open-file', (_e, p) => shell.openPath(p)); // открыть файл/папку дефолтным приложением
+ipcMain.handle('fs-delete', async (_e, p) => {
+  try { await fs.promises.rm(p, { recursive: true, force: true }); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle('copy-path', (_e, p) => { clipboard.writeText(p); return true; });
 ipcMain.handle('clip-read', () => clipboard.readText());
 ipcMain.handle('recopy', (_e, f) => copyToClipboard(f.path, f.mime));
@@ -848,8 +887,8 @@ ipcMain.handle('choose-code-root', async () => {
 
 // PTY для локальных терминалов ПК-приложения (termId = 'L1','L2'… ; есть выбор папки cwd)
 ipcMain.handle('pty-start', (_e, { cols, rows, termId, cwd } = {}) => startPty(termId || 'L1', cols, rows, cwd || null, true));
-ipcMain.on('pty-input', (_e, { d, termId } = {}) => ptyWrite(termId || 'L1', d));
-ipcMain.on('pty-resize', (_e, { cols, rows, termId } = {}) => ptyResize(termId || 'L1', cols, rows));
+ipcMain.on('pty-input', (_e, { d, termId } = {}) => ptyWrite(termId || 'L1', d, 'pc'));
+ipcMain.on('pty-resize', (_e, { cols, rows, termId } = {}) => ptyResize(termId || 'L1', cols, rows, 'pc'));
 ipcMain.on('pty-restart', (_e, { cols, rows, termId } = {}) => restartPty(termId || 'L1', cols, rows, null, true));
 ipcMain.on('pty-kill', (_e, { termId } = {}) => killPty(termId || 'L1'));
 

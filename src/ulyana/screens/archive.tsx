@@ -78,7 +78,6 @@ export function ArchiveScreen() {
         </View>
         <View style={styles.statsRow}>
           <Stat value={`${stats?.avg_intensity ?? 0}`} label="ср. сила" />
-          <Stat value={`${stats?.total_napkins ?? 0}`} label="салфеток" />
           <Stat value={`${Math.round(stats?.total_minutes ?? 0)}м`} label="всего ревел(а)" />
         </View>
         {stats?.top_reason ? (
@@ -106,7 +105,7 @@ export function ArchiveScreen() {
                   <Sticker src={scoreSticker(c.score)} size={40} />
                   <View style={{ flex: 1 }}>
                     <T kind="h3">{c.score}/100 · {c.reason ?? '—'}</T>
-                    <T kind="tiny" color={U.textFaint}>{fmtDate(c.created_at)} · сила {c.intensity}/10 · {c.napkins} салф.</T>
+                    <T kind="tiny" color={U.textFaint}>{fmtDate(c.created_at)} · сила {c.intensity}/10</T>
                   </View>
                   {c.has_media && (
                     c.media_kind === 'image' && token ? (
@@ -141,14 +140,19 @@ export function ArchiveScreen() {
                   <View style={styles.matchRow}>
                     <Sticker src={STK.trophy} size={32} />
                     <View style={{ flex: 1 }}>
-                      <T kind="h3">
+                      <View style={styles.scoreLine}>
                         <T kind="h3" color={aWon ? U.pink : U.text}>{m.player_a}</T>
-                        {'  '}{m.sets_a}:{m.sets_b}{'  '}
+                        <T kind="h3" color={U.textDim}>{m.sets_a}:{m.sets_b}</T>
                         <T kind="h3" color={!aWon ? U.blue : U.text}>{m.player_b}</T>
+                      </View>
+                      <T kind="tiny" color={U.textFaint} style={{ marginTop: 2 }}>
+                        {fmtDate(m.created_at)} · до {m.best_of} · {(m.sets || []).length} парт.
                       </T>
-                      <T kind="tiny" color={U.textFaint}>
-                        {fmtDate(m.created_at)} · BO{m.best_of} · {(m.sets || []).map((s) => `${s.a}:${s.b}`).join('  ')}
-                      </T>
+                      {(m.sets || []).length > 0 && (
+                        <T kind="tiny" color={U.textDim} style={{ marginTop: 2 }}>
+                          {(m.sets || []).map((s) => `${s.a}:${s.b}`).join('  ')}
+                        </T>
+                      )}
                     </View>
                   </View>
                 </Card>
@@ -228,5 +232,6 @@ const styles = StyleSheet.create({
   thumb: { width: 52, height: 52, borderRadius: UR.sm },
   thumbIcon: { width: 52, height: 52, borderRadius: UR.sm, backgroundColor: U.card, alignItems: 'center', justifyContent: 'center' },
   matchRow: { flexDirection: 'row', alignItems: 'center', gap: US.sm },
+  scoreLine: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
   empty: { alignItems: 'center', gap: US.md, paddingVertical: US.xl },
 });

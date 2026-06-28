@@ -11,15 +11,24 @@
 </head>
 <body>
   <header class="titlebar">
-    <div class="tb-brand">Arra</div>
+    <div class="tb-left">
+      <button class="tb-btn" id="navtoggle" title="Скрыть/показать панель">
+        <svg viewBox="0 0 16 16"><path d="M2.5 4h11M2.5 8h11M2.5 12h11" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>
+      <div class="tb-brand"><span class="tb-logo"></span>Arra</div>
+    </div>
     <div class="tb-controls">
       <button class="tb-btn" id="min" title="Свернуть"><svg viewBox="0 0 12 12"><rect x="2" y="5.5" width="8" height="1.2" rx="0.6"/></svg></button>
       <button class="tb-btn tb-close" id="close" title="Закрыть"><svg viewBox="0 0 12 12"><path d="M3 3 L9 9 M9 3 L3 9" stroke-width="1.3" stroke-linecap="round"/></svg></button>
     </div>
   </header>
 
-  <main id="app"></main>
-  <nav id="nav" class="nav hidden"></nav>
+  <div class="shell">
+    <aside id="nav" class="sidebar hidden"></aside>
+    <main id="app"></main>
+  </div>
+
+  <div id="toasts" class="toasts"></div>
 
   <script src="app.js"></script>
 </body>

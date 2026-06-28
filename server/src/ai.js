@@ -63,11 +63,11 @@ async function chat(messages, model = config.ai.chatModel) {
 }
 
 /** Вызов модели с инструментами (function calling). Возвращает message целиком. */
-export async function chatWithTools(messages, tools, model = config.ai.chatModel) {
+export async function chatWithTools(messages, tools, model = config.ai.chatModel, temperature = 0.3) {
   const res = await fetch(`${config.ai.openaiBase}/chat/completions`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${config.ai.key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, messages, tools, temperature: 0 }),
+    body: JSON.stringify({ model, messages, tools, temperature }),
   });
   if (!res.ok) {
     const txt = await res.text();

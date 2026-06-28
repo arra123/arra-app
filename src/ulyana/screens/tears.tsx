@@ -19,7 +19,6 @@ export function TearsScreen() {
   const [intensity, setIntensity] = useState(5);
   const [reason, setReason] = useState<Reason | null>(null);
   const [duration, setDuration] = useState(2);
-  const [napkins, setNapkins] = useState(1);
   const [moodBefore, setMoodBefore] = useState<string | null>(null);
   const [moodAfter, setMoodAfter] = useState<string | null>(null);
   const [note, setNote] = useState('');
@@ -67,7 +66,7 @@ export function TearsScreen() {
     }
     const perm = await requestRecordingPermissionsAsync();
     if (!perm.granted) return Alert.alert('Нужен доступ к микрофону');
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: true });
     await recorder.prepareToRecordAsync();
     recorder.record();
     pop();
@@ -78,7 +77,7 @@ export function TearsScreen() {
 
   function diagnose() {
     pop();
-    setResult(analyze({ intensity, reason, duration, napkins }));
+    setResult(analyze({ intensity, reason, duration }));
   }
 
   async function save() {
@@ -89,7 +88,6 @@ export function TearsScreen() {
         intensity,
         reason: reason || 'none',
         duration_min: duration,
-        napkins,
         mood_before: moodBefore,
         mood_after: moodAfter,
         score: result.score,
@@ -112,7 +110,6 @@ export function TearsScreen() {
     setIntensity(5);
     setReason(null);
     setDuration(2);
-    setNapkins(1);
     setMoodBefore(null);
     setMoodAfter(null);
     setNote('');
@@ -152,7 +149,7 @@ export function TearsScreen() {
         <Chips options={REASONS} value={reason} onChange={setReason} />
       </Card>
 
-      {/* Длительность + салфетки */}
+      {/* Длительность */}
       <Card>
         <View style={styles.rowBetween}>
           <View style={styles.iconLabel}>
@@ -160,14 +157,6 @@ export function TearsScreen() {
             <T kind="h3">Длилось, мин</T>
           </View>
           <Stepper value={duration} onChange={setDuration} min={0} max={180} />
-        </View>
-        <View style={[styles.divider]} />
-        <View style={styles.rowBetween}>
-          <View style={styles.iconLabel}>
-            <Sticker src={STK.napkins} size={26} />
-            <T kind="h3">Салфеток</T>
-          </View>
-          <Stepper value={napkins} onChange={setNapkins} min={0} max={99} />
         </View>
       </Card>
 

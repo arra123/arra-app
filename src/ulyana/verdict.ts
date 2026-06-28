@@ -61,18 +61,17 @@ export function analyze(input: {
   intensity: number; // 1..10
   reason: Reason | null;
   duration: number; // минут
-  napkins: number;
 }): { score: number; verdict: string; recommendation: string; levelName: string; sticker: string } {
-  const { intensity, reason, duration, napkins } = input;
+  const { intensity, reason, duration } = input;
 
-  // Балл 0..100: интенсивность весит больше всего, плюс длительность и салфетки
-  let score = intensity * 7 + Math.min(duration, 60) * 0.4 + Math.min(napkins, 20) * 1.0;
+  // Балл 0..100: интенсивность весит больше всего, плюс длительность
+  let score = intensity * 8 + Math.min(duration, 60) * 0.5;
   if (reason === 'laugh') score *= 0.7; // смех — несчитово
   if (reason === 'onion') score *= 0.5;
   score = Math.max(0, Math.min(100, Math.round(score)));
 
   const lvl = level(score);
-  const seed = Math.round(intensity * 13 + duration + napkins * 3);
+  const seed = Math.round(intensity * 13 + duration * 2);
   const quip = reason ? pick(QUIPS[reason], seed) : 'Слёзы без объяснительной записки.';
 
   const verdict = `Диагноз: «${lvl.name}», ${score}/100. Причина — ${reasonName(reason).toLowerCase()}. ${quip}`;

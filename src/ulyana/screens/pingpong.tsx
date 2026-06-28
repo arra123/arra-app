@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { STK } from '../assets';
 import { savePingMatch } from '../api';
 import { U, UG, UR, US } from '../theme';
-import { Gradient, Sticker, T, pop, tap, yay } from '../ui';
+import { celebrate, Gradient, Sticker, T, pop, tap, yay } from '../ui';
 
 type Side = 'a' | 'b';
 type State = {
@@ -37,13 +37,14 @@ export function PingPongScreen() {
   const insets = useSafeAreaInsets();
   const [nameA, setNameA] = useState('Я');
   const [nameB, setNameB] = useState('Соперник');
-  const [bestOf, setBestOf] = useState(5);
+  const [target, setTarget] = useState(12); // матч до N побеждённых партий
   const [st, setSt] = useState<State>(fresh());
   const [hist, setHist] = useState<State[]>([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const setsToWin = Math.floor(bestOf / 2) + 1;
+  const setsToWin = target;
+  const matchStarted = st.sets.length > 0 || st.a > 0 || st.b > 0;
 
   function push(next: State) {
     setHist((h) => [...h.slice(-50), st]);
@@ -62,8 +63,9 @@ export function PingPongScreen() {
       if (aWon) next.setsA += 1; else next.setsB += 1;
       if (next.setsA >= setsToWin || next.setsB >= setsToWin) {
         next.winner = next.setsA > next.setsB ? 'a' : 'b';
-        yay();
+        celebrate();
       } else {
+        yay();
         // новый сет: счёт обнуляется, первый подающий меняется
         next.a = 0;
         next.b = 0;
@@ -94,7 +96,7 @@ export function PingPongScreen() {
       await savePingMatch({
         player_a: nameA, player_b: nameB,
         sets_a: st.setsA, sets_b: st.setsB,
-        sets: st.sets, winner: st.winner, best_of: bestOf,
+        sets: st.sets, winner: st.winner, best_of: target,
       });
       setSaved(true);
       yay();
@@ -110,17 +112,23 @@ export function PingPongScreen() {
 
   return (
     <View style={{ flex: 1, paddingTop: insets.top + US.sm }}>
-      {/* Верхняя плашка: формат + сеты */}
+      {/* Верхняя плашка: цель матча (до N побеждённых партий) */}
       <View style={styles.topBar}>
         <Sticker src={STK.pingpong} size={30} />
-        <T kind="h3" color={U.text} style={{ flex: 1 }}>До {setsToWin} побед</T>
-        {[3, 5, 7].map((n) => (
-          <Pressable key={n} onPress={() => { if (st.sets.length || st.a || st.b) return; tap(); setBestOf(n); }} hitSlop={6}>
-            <View style={[styles.fmt, bestOf === n && { backgroundColor: U.pink }]}>
-              <T kind="tiny" color={bestOf === n ? '#fff' : U.textDim}>BO{n}</T>
-            </View>
-          </Pressable>
-        ))}
+        <T kind="h3" color={U.text} style={{ flex: 1 }}>Матч до {target} побед</T>
+        <Pressable
+          onPress={() => { if (matchStarted || target <= 1) return; tap(); setTarget((n) => n - 1); }}
+          hitSlop={8}
+          style={[styles.tgtBtn, (matchStarted || target <= 1) && { opacity: 0.35 }]}>
+          <T kind="h3" color={U.text}>−</T>
+        </Pressable>
+        <T kind="h2" color={U.pink} style={{ minWidth: 34, textAlign: 'center' }}>{target}</T>
+        <Pressable
+          onPress={() => { if (matchStarted || target >= 21) return; tap(); setTarget((n) => n + 1); }}
+          hitSlop={8}
+          style={[styles.tgtBtn, (matchStarted || target >= 21) && { opacity: 0.35 }]}>
+          <T kind="h3" color={U.text}>+</T>
+        </Pressable>
       </View>
 
       {/* Две зоны-тапа */}
@@ -151,8 +159,13 @@ export function PingPongScreen() {
       {/* Победа */}
       {st.winner && (
         <Gradient g={UG.sun} radius={UR.lg} style={styles.winBanner}>
-          <Sticker src={STK.trophy} size={40} />
-          <T kind="h2" color="#1B1030" style={{ flex: 1 }}>Победа: {winnerName}!</T>
+          <Sticker src={STK.trophy} size={48} />
+          <View style={{ flex: 1 }}>
+            <T kind="h2" color="#1B1030">🎉 Поздравляем!</T>
+            <T kind="body" color="#3A2257" style={{ fontWeight: '700' }}>
+              {winnerName} — победа {st.setsA}:{st.setsB} за {st.sets.length} парт.
+            </T>
+          </View>
           {!saved ? (
             <Pressable onPress={save} disabled={saving}>
               <View style={styles.saveBtn}><T kind="label" color="#fff">{saving ? '…' : 'В архив'}</T></View>
@@ -195,7 +208,7 @@ function PlayerZone({
           {Array.from({ length: Math.max(sets, 0) }).map((_, i) => (
             <View key={i} style={styles.pip} />
           ))}
-          <T kind="label" color="rgba(255,255,255,0.85)">{sets} сет(ов)</T>
+          <T kind="label" color="rgba(255,255,255,0.85)">{sets} парт.</T>
         </View>
         <T kind="tiny" color="rgba(255,255,255,0.7)">тапни, чтобы +1</T>
       </Gradient>
@@ -216,7 +229,10 @@ function CtrlBtn({ label, icon, onPress, dim }: { label: string; icon: string; o
 
 const styles = StyleSheet.create({
   topBar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: US.md, paddingBottom: US.sm },
-  fmt: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: UR.pill, backgroundColor: U.card },
+  tgtBtn: {
+    width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: U.card, borderColor: U.border, borderWidth: StyleSheet.hairlineWidth,
+  },
   zones: { flex: 1, flexDirection: 'row', gap: US.sm, paddingHorizontal: US.md },
   zone: { flex: 1, padding: US.md, alignItems: 'center', justifyContent: 'space-between' },
   zoneTop: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 34 },

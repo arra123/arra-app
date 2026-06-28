@@ -62,7 +62,7 @@ const TERM_HTML = `<!doctype html><html><head>
       else if(window.CanvasAddon){ term.loadAddon(new CanvasAddon.CanvasAddon()); }
     } catch(e){ try{ if(window.CanvasAddon) term.loadAddon(new CanvasAddon.CanvasAddon()); }catch(e2){} }
     function doFit(){ try{ fit.fit(); send({t:'resize',cols:term.cols,rows:term.rows}); }catch(e){} }
-    window.__recv=function(d){ term.write(d); };
+    window.__recv=function(d){ term.write(d, function(){ try{ term.refresh(0, term.rows-1); }catch(e){} }); };
     window.__fit=doFit;
     window.__focus=function(){ term.focus(); };
     window.__blur=function(){ try{ if(term.textarea) term.textarea.blur(); term.blur(); }catch(e){} };
@@ -132,6 +132,8 @@ export default function PcScreen() {
   const webRefs = useRef<Record<string, WebView | null>>({});
   const termReady = useRef<Record<string, boolean>>({});
   const termCwds = useRef<Record<string, string>>({ '1': '' }); // termId -> папка (для pty_start)
+  const termAttach = useRef<Record<string, boolean>>({}); // termId -> подключаемся к уже открытой на ПК сессии
+  const [pcTerms, setPcTerms] = useState<{ termId: string; cwd: string }[]>([]); // сессии, открытые на самом ПК
   const activeWeb = () => webRefs.current[activeTerm];
   // refs для доступа из замыкания WS-обработчика (иначе видит устаревшее состояние)
   const termsRef = useRef(terms); termsRef.current = terms;
@@ -200,6 +202,21 @@ export default function PcScreen() {
         case 'pty_exit':
           // сессия на ПК завершилась — перезапустим терминал в той же вкладке
           termReady.current[m.termId || '1'] = false;
+          setPcTerms((prev) => prev.filter((t) => t.termId !== (m.termId || '')));
+          break;
+        case 'pty_list':
+          // список сессий, открытых на ПК — можно подключиться к той же
+          setPcTerms((m.terms || []).filter((t: any) => t.termId));
+          break;
+        case 'pty_opened':
+          setPcTerms((prev) => prev.some((t) => t.termId === m.termId) ? prev : [...prev, { termId: m.termId, cwd: m.cwd || '' }]);
+          // PC→телефон: сессию, открытую на ПК, сразу показываем вкладкой и подключаемся к ней
+          if (m.termId) setTerms((prev) => {
+            if (prev.some((t) => t.id === m.termId)) return prev;
+            termAttach.current[m.termId] = true;
+            termCwds.current[m.termId] = m.cwd || '';
+            return [...prev, { id: m.termId, cwd: m.cwd || '' }];
+          });
           break;
         case 'screen_frame':
           screenRef.current?.pushFrame(m.data);
@@ -249,7 +266,7 @@ export default function PcScreen() {
   }, []);
 
   useEffect(() => {
-    if (connected && deviceId) { send({ type: 'hello' }); if (tree.entries.length === 0) send({ type: 'fs_list', reqId: newReq(), path: '' }); }
+    if (connected && deviceId) { send({ type: 'hello' }); send({ type: 'pty_list' }); if (tree.entries.length === 0) send({ type: 'fs_list', reqId: newReq(), path: '' }); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, deviceId]);
 
@@ -271,7 +288,13 @@ export default function PcScreen() {
     let m: any; try { m = JSON.parse(e.nativeEvent.data); } catch { return; }
     if (m.t === 'data') send({ type: 'pty_input', termId, data: m.d });
     else if (m.t === 'resize') send({ type: 'pty_resize', termId, cols: m.cols, rows: m.rows });
-    else if (m.t === 'ready') { termReady.current[termId] = true; send({ type: 'pty_start', termId, cols: m.cols, rows: m.rows, cwd: termCwds.current[termId] || undefined }); }
+    else if (m.t === 'ready') {
+      termReady.current[termId] = true;
+      // если это подключение к уже открытой на ПК сессии — attach (получим текущий экран),
+      // иначе — старт новой
+      if (termAttach.current[termId]) send({ type: 'pty_attach', termId, cols: m.cols, rows: m.rows, cwd: termCwds.current[termId] || undefined });
+      else send({ type: 'pty_start', termId, cols: m.cols, rows: m.rows, cwd: termCwds.current[termId] || undefined });
+    }
   };
   const sendKey = (seq: string) => { send({ type: 'pty_input', termId: activeTerm, data: seq }); activeWeb()?.injectJavaScript('window.__focus&&window.__focus();true;'); };
   const hideKeyboard = () => { activeWeb()?.injectJavaScript('window.__blur&&window.__blur();if(document.activeElement)document.activeElement.blur();true;'); Keyboard.dismiss(); };
@@ -356,6 +379,14 @@ export default function PcScreen() {
     setTerms((p) => [...p, { id, cwd: cwd || '' }]);
     setActiveTerm(id);
     setPicker(false);
+  };
+  // Подключиться к сессии, открытой НА ПК (тот же терминал — продолжаем работу с телефона)
+  const attachPcTerm = (t: { termId: string; cwd: string }) => {
+    if (terms.some((x) => x.id === t.termId)) { switchTerm(t.termId); return; }
+    termAttach.current[t.termId] = true;
+    termCwds.current[t.termId] = t.cwd || '';
+    setTerms((p) => [...p, { id: t.termId, cwd: t.cwd || '' }]);
+    setActiveTerm(t.termId);
   };
   const doCloseTerm = (id: string) => {
     send({ type: 'pty_kill', termId: id });
@@ -457,6 +488,8 @@ export default function PcScreen() {
     setActiveScreen(null);
     setTerms([{ id: '1', cwd: '' }]);
     setActiveTerm('1');
+    setPcTerms([]);
+    termAttach.current = {};
     termReady.current = {};
     setTermEpoch((e) => e + 1); // принудительный ремоунт терминалов под новый ПК
   };
@@ -517,6 +550,12 @@ export default function PcScreen() {
             <TouchableOpacity onPress={addTerm} style={styles.termAdd}>
               <SymbolView name="plus" tintColor={c.accent} size={16} />
             </TouchableOpacity>
+            {pcTerms.filter((pt) => !terms.some((t) => t.id === pt.termId)).map((pt) => (
+              <TouchableOpacity key={pt.termId} onPress={() => attachPcTerm(pt)} style={[styles.termTab, styles.termTabPc]}>
+                <SymbolView name="desktopcomputer" tintColor={c.success} size={12} />
+                <ThemedText type="smallBold" style={{ color: c.success }}>ПК</ThemedText>
+              </TouchableOpacity>
+            ))}
           </View>
           <View style={styles.termWrap}>
             {terms.map((t) => (
@@ -754,6 +793,7 @@ const styles = StyleSheet.create({
   termTabs: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: Spacing.three, marginBottom: Spacing.two },
   termTab: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.sm, backgroundColor: c.backgroundElement },
   termTabOn: { backgroundColor: c.accent },
+  termTabPc: { borderWidth: 1, borderColor: c.success },
   termAdd: { width: 34, height: 30, borderRadius: Radius.sm, backgroundColor: c.backgroundElement, alignItems: 'center', justifyContent: 'center' },
   termWrap: { flex: 1, marginHorizontal: Spacing.three, borderRadius: Radius.md, overflow: 'hidden', backgroundColor: '#0a0b0d', borderWidth: 1, borderColor: c.glassBorder },
   keybar: { flexGrow: 0, paddingVertical: Spacing.two },

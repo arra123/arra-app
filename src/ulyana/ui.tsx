@@ -17,7 +17,16 @@ import { U, UG, UR, US } from './theme';
 
 export const tap = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 export const pop = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+export const rigid = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Rigid).catch(() => {});
 export const yay = () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+
+// Праздничная серия вибраций — для победы в матче
+export const celebrate = () => {
+  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}), 130);
+  setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}), 270);
+  setTimeout(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}), 410);
+};
 
 // ---------- Текст ----------
 type TextKind = 'h1' | 'h2' | 'h3' | 'body' | 'label' | 'tiny' | 'huge';
@@ -216,7 +225,8 @@ export function Slider({
     const clamped = Math.max(min, Math.min(max, snapped));
     if (clamped !== lastVal.current) {
       lastVal.current = clamped;
-      tap();
+      if (clamped === min || clamped === max) pop(); // упор на краях — заметнее
+      else tap();
       onChange(clamped);
     }
   };
@@ -266,16 +276,18 @@ export function Stepper({
   max?: number;
 }) {
   const btn = (delta: number) => () => {
+    const nv = Math.max(min, Math.min(max, value + delta));
+    if (nv === value) { rigid(); return; } // упёрлись в предел
     tap();
-    onChange(Math.max(min, Math.min(max, value + delta)));
+    onChange(nv);
   };
   return (
     <View style={styles.stepper}>
-      <Pressable onPress={btn(-1)} style={styles.stepBtn}>
+      <Pressable onPress={btn(-1)} style={({ pressed }) => [styles.stepBtn, pressed && styles.stepBtnPressed]}>
         <Text style={styles.stepSign}>−</Text>
       </Pressable>
       <Text style={styles.stepVal}>{value}</Text>
-      <Pressable onPress={btn(1)} style={styles.stepBtn}>
+      <Pressable onPress={btn(1)} style={({ pressed }) => [styles.stepBtn, pressed && styles.stepBtnPressed]}>
         <Text style={styles.stepSign}>+</Text>
       </Pressable>
     </View>
@@ -283,7 +295,10 @@ export function Stepper({
 }
 
 const styles = StyleSheet.create({
-  btn: { height: 58, flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: US.lg },
+  btn: {
+    height: 58, flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: US.lg,
+    shadowColor: U.pink, shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 6,
+  },
   btnTxt: { color: '#fff', fontSize: 17, fontWeight: '800', letterSpacing: 0.2 },
   chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 9, borderRadius: UR.pill },
@@ -300,18 +315,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     top: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.28,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
   },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   stepBtn: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: U.card,
+    backgroundColor: U.cardSolid,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: U.border,
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
   },
+  stepBtnPressed: { backgroundColor: U.pink, transform: [{ scale: 0.92 }] },
   stepSign: { color: U.text, fontSize: 26, fontWeight: '700', marginTop: -2 },
   stepVal: { color: U.text, fontSize: 22, fontWeight: '800', minWidth: 40, textAlign: 'center' },
 });

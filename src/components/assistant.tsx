@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   Keyboard,
   Platform,
   ScrollView,
@@ -36,6 +37,7 @@ export function Assistant() {
   const [recording, setRecording] = useState(false);
   const [recSecs, setRecSecs] = useState(0);
   const recTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recStart = useRef(0); // момент старта записи (реальные часы) — переживает сворачивание
   const scrollRef = useRef<ScrollView>(null);
   const pulse = useRef(new Animated.Value(1)).current;
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -55,6 +57,18 @@ export function Assistant() {
     const hide = Keyboard.addListener(hideEvt, () => setKbHeight(0));
     return () => { show.remove(); hide.remove(); };
   }, [scrollEnd]);
+
+  // Запись на iOS продолжается в фоне (UIBackgroundModes: audio + shouldPlayInBackground).
+  // JS-таймеры замирают при сворачивании, поэтому счётчик считаем от реального времени старта,
+  // а при возврате в приложение сразу подтягиваем актуальную длительность.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active' && recording && recStart.current) {
+        setRecSecs(Math.floor((Date.now() - recStart.current) / 1000));
+      }
+    });
+    return () => sub.remove();
+  }, [recording]);
 
   useEffect(() => {
     if (!recording) return;
@@ -121,9 +135,11 @@ export function Assistant() {
     await recorder.prepareToRecordAsync();
     recorder.record();
     haptic.press();
+    recStart.current = Date.now();
     setRecSecs(0);
     setRecording(true);
-    recTimer.current = setInterval(() => setRecSecs((s) => s + 1), 1000);
+    // Считаем от реального времени старта — счётчик верен даже после сворачивания
+    recTimer.current = setInterval(() => setRecSecs(Math.floor((Date.now() - recStart.current) / 1000)), 1000);
   }
   async function stopVoice(doSend: boolean) {
     if (!recording) return;
@@ -132,7 +148,8 @@ export function Assistant() {
     setRecording(false);
     try { await recorder.stop(); } catch { /* ignore */ }
     const uri = recorder.uri;
-    if (!doSend || !uri || recSecs < 1) return;
+    const elapsed = recStart.current ? (Date.now() - recStart.current) / 1000 : recSecs;
+    if (!doSend || !uri || elapsed < 1) return;
     setSending(true);
     try {
       const token = await getToken();

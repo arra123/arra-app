@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('arra', {
   api: (method, path, body) => ipcRenderer.invoke('api', { method, path, body }),
   openFolder: () => ipcRenderer.invoke('open-folder'),
   openPath: (p) => ipcRenderer.invoke('open-path', p),
+  openFile: (p) => ipcRenderer.invoke('open-file', p),
+  fsDelete: (p) => ipcRenderer.invoke('fs-delete', p),
   copyPath: (p) => ipcRenderer.invoke('copy-path', p),
   copyText: (t) => ipcRenderer.invoke('copy-path', t),
   clipRead: () => ipcRenderer.invoke('clip-read'),
@@ -31,4 +33,6 @@ contextBridge.exposeInMainWorld('arra', {
   ptyRestart: (size, termId) => ipcRenderer.send('pty-restart', { ...size, termId }),
   ptyKill: (termId) => ipcRenderer.send('pty-kill', { termId }),
   onPtyData: (cb) => ipcRenderer.on('pty-data', (_e, payload) => cb(payload)),
+  onPtyExit: (cb) => ipcRenderer.on('pty-exit', (_e, payload) => cb(payload)),
+  onClaudeDone: (cb) => ipcRenderer.on('claude-done', (_e, payload) => cb(payload)),
 });

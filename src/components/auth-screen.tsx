@@ -2,8 +2,7 @@ import { GlassView } from 'expo-glass-effect';
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
+  ScrollView,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -50,9 +49,12 @@ export function AuthScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={[styles.center, { paddingTop: insets.top }]}>
+      <ScrollView
+        contentContainerStyle={[styles.center, { paddingTop: insets.top }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets
+        showsVerticalScrollIndicator={false}>
         <GlassCard radius={Radius.xl} style={styles.card}>
           {/* Переключатель Войти / Регистрация */}
           <View style={[styles.segment, { backgroundColor: theme.backgroundSelected }]}>
@@ -120,14 +122,14 @@ export function AuthScreen() {
             />
           )}
         </GlassCard>
-      </KeyboardAvoidingView>
+      </ScrollView>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  center: { flex: 1, justifyContent: 'center', paddingHorizontal: Spacing.four, gap: Spacing.four },
+  center: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: Spacing.four, gap: Spacing.four },
   logoWrap: { alignItems: 'center', gap: Spacing.two },
   logoBadge: { width: 72, height: 72, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   logoBadgeText: { color: '#fff', fontSize: 40, fontWeight: '800' },

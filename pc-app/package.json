@@ -1,7 +1,7 @@
 {
   "name": "arra-desktop",
-  "version": "1.0.0",
-  "description": "Arra — приёмник файлов на ПК (телефон → папка → буфер обмена)",
+  "version": "1.1.9",
+  "description": "Arra — рабочее место на ПК: терминал, файлы, помощник (связь с телефоном)",
   "main": "main.js",
   "author": "Arra",
   "scripts": {
