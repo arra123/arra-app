@@ -69,6 +69,8 @@ const TERM_HTML = `<!doctype html><html><head>
     window.__scroll=function(n){ try{ term.scrollLines(n); }catch(e){} };
     term.onData(function(d){ send({t:'data',d:d}); });
     window.addEventListener('resize',doFit);
+    // авто-подгонка под контейнер при любом изменении (клавиатура, строка сообщения) — без обрезки
+    try { if(window.ResizeObserver){ var __ro=new ResizeObserver(function(){ doFit(); }); __ro.observe(host); __ro.observe(document.body); } } catch(e){}
     // Скролл пальцем. В обычном буфере — прокрутка истории xterm.
     // Внутри claude/vim (альтернативный экран) истории нет — шлём «колесо мыши»,
     // чтобы приложение само листало (иначе свайп замирал).
@@ -237,9 +239,8 @@ export default function PcScreen() {
           // файл с телефона сохранён на ПК — если ждём прикрепление, вставляем путь в терминал
           if (pendingAttach.current && m.path) {
             pendingAttach.current = false;
-            send({ type: 'pty_input', termId: activeTermRef.current, data: `"${m.path}" ` });
-            webRefs.current[activeTermRef.current]?.injectJavaScript('window.__focus&&window.__focus();true;');
-            setBusyMsg('Файл прикреплён в терминал ✓');
+            setCompose((prev) => (prev.trim() ? prev.trimEnd() + ' ' : '') + `"${m.path}" `);
+            setBusyMsg('Файл добавлен в сообщение ✓');
             setTimeout(() => setBusyMsg(''), 2500);
           }
           break;
@@ -412,7 +413,18 @@ export default function PcScreen() {
     setTimeout(() => webRefs.current[id]?.injectJavaScript('window.__fit&&window.__fit();window.__focus&&window.__focus();true;'), 60);
   };
 
-  // голосовой ввод в терминал
+  // Поле «сообщения»: набираешь/диктуешь/прикрепляешь, потом «отправить» → вставляется в терминал
+  const [compose, setCompose] = useState('');
+  const appendCompose = (t: string) => setCompose((prev) => (prev.trim() ? prev.trimEnd() + ' ' : '') + t);
+  const sendCompose = () => {
+    const t = compose.trim();
+    if (!t) return;
+    send({ type: 'pty_input', termId: activeTerm, data: t }); // вставляем в терминал (без Enter — можно доредактировать)
+    setCompose('');
+    activeWeb()?.injectJavaScript('window.__focus&&window.__focus();true;');
+  };
+
+  // голосовой ввод → в поле сообщения (а не сразу в терминал)
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [recording, setRecording] = useState(false);
   async function startVoice() {
@@ -439,7 +451,7 @@ export default function PcScreen() {
       });
       const data = JSON.parse(res.body || '{}');
       setBusyMsg('');
-      if (data.text) { send({ type: 'pty_input', termId: activeTerm, data: data.text }); activeWeb()?.injectJavaScript('window.__focus&&window.__focus();true;'); }
+      if (data.text) appendCompose(data.text); // надиктованное → в поле сообщения
     } catch {
       setBusyMsg('Не распознал'); setTimeout(() => setBusyMsg(''), 2500);
     }
@@ -463,7 +475,7 @@ export default function PcScreen() {
   const PREVIEW_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|svg|pdf)$/i;
   const openEntry = (e: Entry) => {
     if (e.dir) { openDir(e.path); return; }
-    if (pickMode.current) { pickMode.current = false; send({ type: 'pty_input', termId: activeTerm, data: `"${e.path}" ` }); setSub('term'); return; }
+    if (pickMode.current) { pickMode.current = false; appendCompose(`"${e.path}" `); setSub('term'); return; }
     if (TEXT_EXT.test(e.name)) send({ type: 'fs_read', reqId: newReq(), path: e.path });
     else if (PREVIEW_EXT.test(e.name)) { setBusyMsg('Открываю…'); send({ type: 'fs_preview', reqId: newReq(), path: e.path }); }
     else downloadFile(e.path); // прочий бинарь — скачиваем в приложение
@@ -576,36 +588,43 @@ export default function PcScreen() {
               </View>
             ))}
           </View>
+          {/* Компактный ряд клавиш: свернуть клавиатуру, Enter и стрелки (↑↓←→), esc/tab/ctrl c */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.keybar} contentContainerStyle={{ gap: 6, paddingHorizontal: Spacing.three, alignItems: 'center' }}>
-            <TouchableOpacity style={[styles.key, { backgroundColor: recording ? c.danger : c.backgroundElement }]} onPress={recording ? stopVoice : startVoice}>
-              <SymbolView name={recording ? 'stop.fill' : 'mic.fill'} tintColor="#fff" size={18} />
-            </TouchableOpacity>
             <TouchableOpacity style={[styles.key, { backgroundColor: c.backgroundElement }]} onPress={hideKeyboard}>
               <SymbolView name="keyboard.chevron.compact.down" tintColor={c.text} size={18} />
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.key, { backgroundColor: c.backgroundElement }]} onPress={attachToTerminal}>
-              <SymbolView name="paperclip" tintColor={c.text} size={18} />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.key, { backgroundColor: c.backgroundElement }]} onPress={pasteFromClipboard}>
-              <SymbolView name="doc.on.clipboard" tintColor={c.text} size={17} />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.key, { backgroundColor: c.accent, minWidth: 56 }]} onPress={() => sendKey('\r')}>
-              <ThemedText type="smallBold" style={{ color: '#fff' }}>↵ Enter</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.key, { backgroundColor: c.backgroundElement }]} onPress={() => scrollTerm(-6)}>
-              <SymbolView name="chevron.up" tintColor={c.text} size={16} />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.key, { backgroundColor: c.backgroundElement }]} onPress={() => scrollTerm(6)}>
-              <SymbolView name="chevron.down" tintColor={c.text} size={16} />
+            <TouchableOpacity style={[styles.key, { backgroundColor: c.accent, minWidth: 50 }]} onPress={() => sendKey('\r')}>
+              <ThemedText type="smallBold" style={{ color: '#fff', fontSize: 16 }}>↵</ThemedText>
             </TouchableOpacity>
             {KEYS.map((k) => (
-              <TouchableOpacity key={k.label} style={styles.key} onPress={() => sendKey(k.seq)}>
-                <ThemedText type="smallBold" style={{ color: c.text }}>{k.label}</ThemedText>
+              <TouchableOpacity key={k.label} style={[styles.key, /↑|↓|←|→/.test(k.label) && { minWidth: 46 }]} onPress={() => sendKey(k.seq)}>
+                <ThemedText type="smallBold" style={{ color: c.text, fontSize: /↑|↓|←|→/.test(k.label) ? 17 : 13 }}>{k.label}</ThemedText>
               </TouchableOpacity>
             ))}
-            <View style={{ width: Spacing.three + BottomTabInset }} />
+            <View style={{ width: Spacing.two }} />
           </ScrollView>
-          <View style={{ height: kb ? 0 : insets.bottom + BottomTabInset - 8 }} />
+          {/* Строка сообщения (как в Telegram): диктуй / прикрепляй / правь → стрелка вверх вставляет в терминал */}
+          <View style={[styles.composeBar, { paddingBottom: kb ? 6 : insets.bottom + BottomTabInset - 6 }]}>
+            <TouchableOpacity onPress={recording ? stopVoice : startVoice} style={[styles.composeBtn, { backgroundColor: recording ? c.danger : c.backgroundElement }]}>
+              <SymbolView name={recording ? 'stop.fill' : 'mic.fill'} tintColor={recording ? '#fff' : c.text} size={20} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={attachToTerminal} style={[styles.composeBtn, { backgroundColor: c.backgroundElement }]}>
+              <SymbolView name="paperclip" tintColor={c.text} size={19} />
+            </TouchableOpacity>
+            <TextInput
+              value={compose}
+              onChangeText={setCompose}
+              placeholder="Команда или сообщение…"
+              placeholderTextColor={c.textSecondary}
+              style={styles.composeInput}
+              multiline
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TouchableOpacity onPress={sendCompose} disabled={!compose.trim()} style={[styles.composeSend, { backgroundColor: compose.trim() ? c.accent : c.backgroundElement }]}>
+              <SymbolView name="arrow.up" tintColor="#fff" size={20} />
+            </TouchableOpacity>
+          </View>
         </KeyboardAvoidingView>
       ) : sub === 'screen' ? (
         <RemoteScreen
@@ -798,6 +817,10 @@ const styles = StyleSheet.create({
   termWrap: { flex: 1, marginHorizontal: Spacing.three, borderRadius: Radius.md, overflow: 'hidden', backgroundColor: '#0a0b0d', borderWidth: 1, borderColor: c.glassBorder },
   keybar: { flexGrow: 0, paddingVertical: Spacing.two },
   key: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: Radius.sm, backgroundColor: c.backgroundSelected, minWidth: 40, alignItems: 'center' },
+  composeBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: Spacing.three, paddingTop: Spacing.two },
+  composeBtn: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  composeInput: { flex: 1, minHeight: 42, maxHeight: 120, backgroundColor: c.backgroundElement, borderRadius: Radius.lg, paddingHorizontal: Spacing.three, paddingVertical: 11, color: c.text, fontSize: 16 },
+  composeSend: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   hiddenInput: { position: 'absolute', width: 1, height: 1, opacity: 0, top: 0, left: 0 },
   pathBar: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three, paddingVertical: Spacing.two },
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
