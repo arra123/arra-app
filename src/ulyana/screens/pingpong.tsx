@@ -1,9 +1,9 @@
-import { useState } from 'react';
-import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { STK } from '../assets';
-import { savePingMatch } from '../api';
+import { listPingMatches, savePingMatch, type PingMatch } from '../api';
 import { U, UG, UR, US } from '../theme';
 import { celebrate, Gradient, Sticker, T, pop, tap, yay } from '../ui';
 
@@ -42,6 +42,13 @@ export function PingPongScreen() {
   const [hist, setHist] = useState<State[]>([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [matches, setMatches] = useState<PingMatch[]>([]);
+
+  const loadHistory = useCallback(async () => {
+    try { setMatches(await listPingMatches()); } catch { /* молча */ }
+  }, []);
+  useEffect(() => { loadHistory(); }, [loadHistory]);
 
   const setsToWin = target;
   const matchStarted = st.sets.length > 0 || st.a > 0 || st.b > 0;
@@ -100,6 +107,7 @@ export function PingPongScreen() {
       });
       setSaved(true);
       yay();
+      loadHistory();
     } catch (e: any) {
       Alert.alert('Не сохранилось', e?.message || '');
     } finally {
@@ -179,9 +187,69 @@ export function PingPongScreen() {
       {/* Нижняя панель управления */}
       <View style={[styles.controls, { paddingBottom: insets.bottom + 90 }]}>
         <CtrlBtn label="Отменить" icon={STK.droplet} onPress={undo} dim={!hist.length} />
+        <CtrlBtn label="История" icon={STK.scroll} onPress={() => { tap(); setShowHistory(true); }} />
         <CtrlBtn label="Новый матч" icon={STK.fire} onPress={resetMatch} />
       </View>
+
+      <HistoryModal visible={showHistory} matches={matches} onClose={() => setShowHistory(false)} />
     </View>
+  );
+}
+
+function fmtDate(iso: string) {
+  try {
+    return new Date(iso).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  } catch { return iso; }
+}
+
+function HistoryModal({ visible, matches, onClose }: { visible: boolean; matches: PingMatch[]; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.histBackdrop} onPress={onClose}>
+        <Pressable style={[styles.histSheet, { paddingBottom: insets.bottom + US.md }]} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.histHandle} />
+          <View style={styles.histHead}>
+            <Sticker src={STK.trophy} size={28} />
+            <T kind="h2" style={{ flex: 1 }}>История партий</T>
+            <Pressable onPress={() => { tap(); onClose(); }} hitSlop={10}>
+              <T kind="label" color={U.textDim}>закрыть</T>
+            </Pressable>
+          </View>
+          {matches.length === 0 ? (
+            <View style={{ alignItems: 'center', paddingVertical: US.xl, gap: US.sm }}>
+              <Sticker src={STK.pingpong} size={56} />
+              <T kind="body" color={U.textFaint}>Пока нет сыгранных партий.</T>
+            </View>
+          ) : (
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              {matches.map((m) => {
+                const aWon = m.winner === 'a';
+                return (
+                  <View key={m.id} style={styles.histRow}>
+                    <View style={{ flex: 1 }}>
+                      <View style={styles.histScore}>
+                        <T kind="h3" color={aWon ? U.pink : U.text}>{m.player_a}</T>
+                        <T kind="h3" color={U.textDim}>{m.sets_a}:{m.sets_b}</T>
+                        <T kind="h3" color={!aWon ? U.blue : U.text}>{m.player_b}</T>
+                      </View>
+                      <T kind="tiny" color={U.textFaint} style={{ marginTop: 2 }}>
+                        {fmtDate(m.created_at)} · до {m.best_of}
+                      </T>
+                      {(m.sets || []).length > 0 && (
+                        <T kind="tiny" color={U.textDim} style={{ marginTop: 2 }}>
+                          {(m.sets || []).map((s) => `${s.a}:${s.b}`).join('  ')}
+                        </T>
+                      )}
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          )}
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -250,4 +318,14 @@ const styles = StyleSheet.create({
     backgroundColor: U.card, borderColor: U.border, borderWidth: StyleSheet.hairlineWidth,
     borderRadius: UR.md, paddingVertical: US.md,
   },
+  histBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  histSheet: {
+    backgroundColor: U.cardSolid,
+    borderTopLeftRadius: UR.xl, borderTopRightRadius: UR.xl,
+    padding: US.lg, gap: US.sm,
+  },
+  histHandle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: U.border, marginBottom: US.xs },
+  histHead: { flexDirection: 'row', alignItems: 'center', gap: US.sm, marginBottom: US.xs },
+  histRow: { paddingVertical: US.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: U.border },
+  histScore: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
 });

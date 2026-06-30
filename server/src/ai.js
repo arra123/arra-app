@@ -121,6 +121,70 @@ export async function parseExpenseImage(dataUrl) {
   return normalize(parsed);
 }
 
+// ---------- УльянаOS: ИИ-подружка ----------
+
+// Характер: саркастичная, но в душе заботливая подружка. Мемный русский, лёгкий троллинг.
+const ULYANA_PERSONA = `Ты — Ульяна, ИИ-подружка внутри секретного приложения «УльянаOS».
+Характер: саркастичная, дерзкая, но в глубине души заботливая лучшая подруга.
+Стиль речи: живой разговорный русский, мемы, лёгкий троллинг, эмодзи в меру.
+Подкалываешь, но всегда заканчиваешь поддержкой. Отвечай коротко (1–4 предложения),
+будто переписываешься в мессенджере. Без занудства и морали. Обращайся на «ты».`;
+
+// Простой текстовый ответ модели (без JSON-формата)
+async function chatText(messages, model = config.ai.chatModel, temperature = 0.85) {
+  const res = await fetch(`${config.ai.openaiBase}/chat/completions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${config.ai.key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, messages, temperature }),
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`AI ${res.status}: ${txt.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content?.trim() || '';
+}
+
+/** Чат с Ульяной. history — массив [{role:'user'|'assistant', content}]. */
+export async function ulyanaChat(history) {
+  const safe = (Array.isArray(history) ? history : [])
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    .slice(-16);
+  const reply = await chatText([{ role: 'system', content: ULYANA_PERSONA }, ...safe]);
+  return reply || 'Чёт я зависла, повтори 😅';
+}
+
+/** ИИ-диагноз плача в характере Ульяны. Возвращает {verdict, recommendation}. */
+export async function ulyanaDiagnose(input) {
+  const { intensity, reason, duration, note, mood_before, mood_after, score } = input || {};
+  const facts = [
+    `сила плача: ${intensity ?? '?'}/10`,
+    `причина: ${reason || 'не указана'}`,
+    `длилось: ${duration ?? '?'} мин`,
+    mood_before ? `настроение до: ${mood_before}` : null,
+    mood_after ? `настроение после: ${mood_after}` : null,
+    note ? `комментарий: «${note}»` : null,
+    score != null ? `балл слёзометра: ${score}/100` : null,
+  ].filter(Boolean).join('; ');
+
+  const parsed = await chat([
+    {
+      role: 'system',
+      content: `${ULYANA_PERSONA}
+Сейчас ты — «Слёзометр 3000» и ставишь шуточный диагноз по данным о плаче подруги.
+Верни СТРОГО JSON без пояснений, поля:
+- verdict: 1–2 предложения — саркастичный, но тёплый диагноз, опирайся на данные.
+- recommendation: 1 короткое предложение — что делать дальше (с юмором, но по-доброму).
+Без морализаторства. Живой русский, можно эмодзи.`,
+    },
+    { role: 'user', content: `Данные о плаче: ${facts}. Поставь диагноз.` },
+  ]);
+  return {
+    verdict: typeof parsed.verdict === 'string' ? parsed.verdict : null,
+    recommendation: typeof parsed.recommendation === 'string' ? parsed.recommendation : null,
+  };
+}
+
 /** Транскрибация голоса через Whisper */
 export async function transcribeAudio(buffer, filename = 'audio.m4a', mime = 'audio/m4a') {
   const form = new FormData();

@@ -3,7 +3,7 @@
     "name": "Arra",
     "slug": "aura",
     "owner": "arratima",
-    "version": "1.4.3",
+    "version": "1.4.4",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "aura",
@@ -20,9 +20,9 @@
         "UIBackgroundModes": [
           "audio"
         ],
-        "NSCameraUsageDescription": "Aura использует камеру, чтобы быстро снимать чеки и фото для переноса на компьютер.",
-        "NSMicrophoneUsageDescription": "Aura использует микрофон для голосового ввода трат.",
-        "NSPhotoLibraryUsageDescription": "Aura добавляет фото и скриншоты из галереи для распознавания трат и переноса файлов."
+        "NSCameraUsageDescription": "Arra использует камеру, чтобы быстро снимать чеки и фото для переноса на компьютер.",
+        "NSMicrophoneUsageDescription": "Arra использует микрофон для голосового ввода трат.",
+        "NSPhotoLibraryUsageDescription": "Arra добавляет фото и скриншоты из галереи для распознавания трат и переноса файлов."
       }
     },
     "android": {

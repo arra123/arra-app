@@ -1,9 +1,13 @@
+import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
-import { type ReactNode, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import {
+  Dimensions,
+  Modal,
   PanResponder,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -13,6 +17,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
+import { STK } from './assets';
 import { U, UG, UR, US } from './theme';
 
 export const tap = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -212,14 +217,18 @@ export function Slider({
 }) {
   const [w, setW] = useState(0);
   const widthRef = useRef(0);
+  const leftRef = useRef(0); // абсолютная X-координата левого края трека (в окне)
+  const containerRef = useRef<View>(null);
   const lastVal = useRef(value);
 
   const pct = (value - min) / (max - min);
 
-  const setFromX = (x: number) => {
+  // pageX — абсолютная координата касания; вычитаем левый край трека.
+  // Так перетаскивание работает, даже когда палец оказывается над «бегунком».
+  const setFromX = (pageX: number) => {
     const width = widthRef.current;
     if (width <= 0) return;
-    const ratio = Math.max(0, Math.min(1, x / width));
+    const ratio = Math.max(0, Math.min(1, (pageX - leftRef.current) / width));
     const raw = min + ratio * (max - min);
     const snapped = Math.round(raw / step) * step;
     const clamped = Math.max(min, Math.min(max, snapped));
@@ -231,28 +240,35 @@ export function Slider({
     }
   };
 
+  const measure = () => {
+    containerRef.current?.measureInWindow((x, _y, width) => {
+      leftRef.current = x;
+      widthRef.current = width;
+      setW(width);
+    });
+  };
+
   const pan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: (e) => setFromX(e.nativeEvent.locationX),
-      onPanResponderMove: (e) => setFromX(e.nativeEvent.locationX),
+      onPanResponderTerminationRequest: () => false, // не отдаём жест скроллу
+      onPanResponderGrant: (e) => setFromX(e.nativeEvent.pageX),
+      onPanResponderMove: (e) => setFromX(e.nativeEvent.pageX),
     }),
   ).current;
 
   return (
     <View
+      ref={containerRef}
       {...pan.panHandlers}
-      onLayout={(e) => {
-        const width = e.nativeEvent.layout.width;
-        widthRef.current = width;
-        setW(width);
-      }}
+      onLayout={measure}
       style={styles.sliderTouch}>
-      <View style={styles.sliderTrack}>
+      <View style={styles.sliderTrack} pointerEvents="none">
         <View style={{ width: Math.max(0, pct * w), height: '100%', backgroundColor: tint, borderRadius: UR.pill }} />
       </View>
       <View
+        pointerEvents="none"
         style={[
           styles.sliderThumb,
           { left: Math.max(0, Math.min(w - 28, pct * w - 14)), borderColor: tint },
@@ -294,7 +310,133 @@ export function Stepper({
   );
 }
 
+// ---------- Аудиоплеер ----------
+function fmtTime(s: number) {
+  const m = Math.floor(s / 60);
+  const ss = Math.floor(s % 60).toString().padStart(2, '0');
+  return `${m}:${ss}`;
+}
+
+export function AudioPlayerBtn({
+  uri,
+  headers,
+  tint = U.blue,
+}: {
+  uri: string;
+  headers?: Record<string, string>;
+  tint?: string;
+}) {
+  const player = useAudioPlayer(headers ? ({ uri, headers } as any) : uri);
+  const status = useAudioPlayerStatus(player);
+  const playing = status.playing;
+  const dur = status.duration || 0;
+  const cur = status.currentTime || 0;
+  const pct = dur > 0 ? Math.min(1, cur / dur) : 0;
+
+  useEffect(() => {
+    if (status.didJustFinish) {
+      try { player.seekTo(0); player.pause(); } catch { /* ignore */ }
+    }
+  }, [status.didJustFinish]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggle = () => {
+    tap();
+    try {
+      if (playing) player.pause();
+      else {
+        if (status.didJustFinish || pct >= 0.999) player.seekTo(0);
+        player.play();
+      }
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <View style={styles.audioRow}>
+      <Pressable
+        onPress={toggle}
+        style={({ pressed }) => [styles.audioBtn, { backgroundColor: tint, transform: [{ scale: pressed ? 0.94 : 1 }] }]}>
+        <Sticker src={playing ? STK.pause : STK.play} size={22} />
+      </Pressable>
+      <View style={{ flex: 1 }}>
+        <View style={styles.audioTrack}>
+          <View style={{ width: `${pct * 100}%`, height: '100%', backgroundColor: tint, borderRadius: UR.pill }} />
+        </View>
+        <Text style={styles.audioTime}>{fmtTime(cur)} / {dur ? fmtTime(dur) : '—'}</Text>
+      </View>
+    </View>
+  );
+}
+
+// ---------- Полноэкранный просмотр медиа (фото с зумом / аудио / видео-заглушка) ----------
+export function MediaViewer({
+  visible,
+  onClose,
+  kind,
+  uri,
+  headers,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  kind: 'image' | 'audio' | 'video' | 'file' | null;
+  uri: string | null;
+  headers?: Record<string, string>;
+}) {
+  const { width, height } = Dimensions.get('window');
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.viewerRoot}>
+        <Pressable style={styles.viewerClose} onPress={() => { tap(); onClose(); }} hitSlop={14}>
+          <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800' }}>✕</Text>
+        </Pressable>
+
+        {kind === 'image' && uri ? (
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center' }}
+            maximumZoomScale={4}
+            minimumZoomScale={1}
+            centerContent
+            showsHorizontalScrollIndicator={false}
+            showsVerticalScrollIndicator={false}>
+            <Image
+              source={headers ? { uri, headers } : uri}
+              style={{ width, height: height * 0.82 }}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+            />
+          </ScrollView>
+        ) : kind === 'audio' && uri ? (
+          <View style={styles.viewerCenter}>
+            <Sticker src={STK.sob} size={120} />
+            <View style={{ height: US.lg }} />
+            <View style={{ alignSelf: 'stretch', paddingHorizontal: US.xl }}>
+              <AudioPlayerBtn uri={uri} headers={headers} />
+            </View>
+          </View>
+        ) : (
+          <View style={styles.viewerCenter}>
+            <Sticker src={STK.tv} size={120} />
+            <Text style={{ color: '#fff', fontSize: 16, marginTop: US.md, textAlign: 'center', paddingHorizontal: US.xl }}>
+              Видео откроется после сохранения в галерею.
+            </Text>
+          </View>
+        )}
+      </View>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
+  audioRow: { flexDirection: 'row', alignItems: 'center', gap: US.sm },
+  audioBtn: {
+    width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 3,
+  },
+  audioTrack: { height: 8, borderRadius: UR.pill, backgroundColor: 'rgba(255,255,255,0.14)', overflow: 'hidden' },
+  audioTime: { color: U.textDim, fontSize: 12, fontWeight: '600', marginTop: 5 },
+  viewerRoot: { flex: 1, backgroundColor: 'rgba(0,0,0,0.94)' },
+  viewerClose: { position: 'absolute', top: 54, right: 22, zIndex: 10, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  viewerCenter: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   btn: {
     height: 58, flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: US.lg,
     shadowColor: U.pink, shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 6,

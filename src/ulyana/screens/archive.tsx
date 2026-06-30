@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { getToken } from '@/lib/api';
@@ -12,7 +12,7 @@ import {
   type Cry, type CryStats, type PingMatch,
 } from '../api';
 import { U, UG, UR, US } from '../theme';
-import { Card, Gradient, Sticker, T, tap } from '../ui';
+import { Card, Gradient, MediaViewer, Sticker, T, tap } from '../ui';
 
 type Tab = 'tears' | 'ping';
 
@@ -25,6 +25,8 @@ export function ArchiveScreen() {
   const [matches, setMatches] = useState<PingMatch[]>([]);
   const [token, setTokenState] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [viewCry, setViewCry] = useState<Cry | null>(null);
+  const [detail, setDetail] = useState<PingMatch | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -55,6 +57,7 @@ export function ArchiveScreen() {
   }
 
   return (
+    <>
     <ScrollView
       style={{ flex: 1 }}
       contentContainerStyle={{ padding: US.md, paddingTop: insets.top + US.sm, paddingBottom: 140, gap: US.md }}
@@ -99,7 +102,10 @@ export function ArchiveScreen() {
           <Empty icon={STK.smileTear} text="Пока ни одной слезинки. Сходи в Слёзометр." />
         ) : (
           cries.map((c) => (
-            <Pressable key={c.id} onLongPress={() => removeCry(c.id)}>
+            <Pressable
+              key={c.id}
+              onPress={() => { if (c.has_media) { tap(); setViewCry(c); } }}
+              onLongPress={() => removeCry(c.id)}>
               <Card>
                 <View style={styles.cryTop}>
                   <Sticker src={scoreSticker(c.score)} size={40} />
@@ -135,7 +141,10 @@ export function ArchiveScreen() {
           matches.map((m) => {
             const aWon = m.winner === 'a';
             return (
-              <Pressable key={m.id} onLongPress={() => removeMatch(m.id)}>
+              <Pressable
+                key={m.id}
+                onPress={() => { tap(); setDetail(m); }}
+                onLongPress={() => removeMatch(m.id)}>
                 <Card>
                   <View style={styles.matchRow}>
                     <Sticker src={STK.trophy} size={32} />
@@ -163,9 +172,90 @@ export function ArchiveScreen() {
       )}
 
       <T kind="tiny" color={U.textFaint} style={{ textAlign: 'center', marginTop: US.sm }}>
-        долгий тап по карточке — удалить
+        тап — открыть · долгий тап — удалить
       </T>
     </ScrollView>
+
+    {/* Просмотр медиа записи (фото с зумом / аудио) */}
+    <MediaViewer
+      visible={!!viewCry}
+      onClose={() => setViewCry(null)}
+      kind={viewCry?.media_kind ?? null}
+      uri={viewCry ? cryMediaUrl(viewCry.id) : null}
+      headers={token ? { Authorization: `Bearer ${token}` } : undefined}
+    />
+
+    {/* Разбор партии */}
+    <MatchDetail match={detail} onClose={() => setDetail(null)} />
+    </>
+  );
+}
+
+function MatchDetail({ match, onClose }: { match: PingMatch | null; onClose: () => void }) {
+  if (!match) return null;
+  const sets = match.sets || [];
+  const aWon = match.winner === 'a';
+  const winnerName = aWon ? match.player_a : match.player_b;
+  const loserName = aWon ? match.player_b : match.player_a;
+  // Простая «оценка» партии
+  const tight = sets.filter((s) => Math.abs(s.a - s.b) <= 2).length;
+  const blowout = sets.some((s) => Math.abs(s.a - s.b) >= 7);
+  const verdict =
+    tight >= Math.ceil(sets.length / 2) ? 'Зарубa до последнего мяча 🔥'
+    : blowout ? 'Был разгром 😎'
+    : 'Уверенная победа 💪';
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+          <View style={styles.sheetHandle} />
+          <View style={styles.sheetHead}>
+            <Sticker src={STK.trophy} size={40} />
+            <View style={{ flex: 1 }}>
+              <T kind="h2">{winnerName} победил(а)</T>
+              <T kind="tiny" color={U.textFaint}>над {loserName} · {fmtDate(match.created_at)}</T>
+            </View>
+          </View>
+
+          <View style={styles.scoreBig}>
+            <T kind="huge" color={aWon ? U.pink : U.textDim}>{match.sets_a}</T>
+            <T kind="h1" color={U.textFaint}>:</T>
+            <T kind="huge" color={!aWon ? U.blue : U.textDim}>{match.sets_b}</T>
+          </View>
+          <T kind="tiny" color={U.textFaint} style={{ textAlign: 'center', marginTop: -6 }}>
+            {match.player_a}  ·  до {match.best_of} побед  ·  {match.player_b}
+          </T>
+
+          <View style={styles.divider} />
+          <T kind="h3" style={{ marginBottom: US.sm }}>По партиям</T>
+          {sets.length === 0 ? (
+            <T kind="body" color={U.textFaint}>Нет данных по партиям.</T>
+          ) : (
+            sets.map((s, i) => {
+              const aw = s.a > s.b;
+              return (
+                <View key={i} style={styles.setLine}>
+                  <T kind="body" color={U.textDim} style={{ width: 70 }}>Партия {i + 1}</T>
+                  <T kind="h3" color={aw ? U.pink : U.text} style={{ flex: 1, textAlign: 'right' }}>{s.a}</T>
+                  <T kind="h3" color={U.textFaint} style={{ width: 24, textAlign: 'center' }}>:</T>
+                  <T kind="h3" color={!aw ? U.blue : U.text} style={{ flex: 1 }}>{s.b}</T>
+                </View>
+              );
+            })
+          )}
+
+          <View style={styles.verdictBox}>
+            <Sticker src={STK.crystal} size={22} />
+            <T kind="body" color={U.text} style={{ flex: 1, fontWeight: '700' }}>{verdict}</T>
+          </View>
+
+          <Pressable onPress={() => { tap(); onClose(); }} style={styles.sheetClose}>
+            <T kind="label" color={U.textDim}>закрыть</T>
+          </Pressable>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -234,4 +324,24 @@ const styles = StyleSheet.create({
   matchRow: { flexDirection: 'row', alignItems: 'center', gap: US.sm },
   scoreLine: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
   empty: { alignItems: 'center', gap: US.md, paddingVertical: US.xl },
+  // Разбор партии (bottom sheet)
+  sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: U.cardSolid,
+    borderTopLeftRadius: UR.xl,
+    borderTopRightRadius: UR.xl,
+    padding: US.lg,
+    paddingBottom: US.xl,
+    gap: US.xs,
+  },
+  sheetHandle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: U.border, marginBottom: US.sm },
+  sheetHead: { flexDirection: 'row', alignItems: 'center', gap: US.sm },
+  scoreBig: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: US.md, marginTop: US.sm },
+  divider: { height: StyleSheet.hairlineWidth, backgroundColor: U.border, marginVertical: US.md },
+  setLine: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
+  verdictBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: US.md,
+    backgroundColor: U.card, borderRadius: UR.md, padding: US.md,
+  },
+  sheetClose: { alignSelf: 'center', marginTop: US.md, padding: US.sm },
 });

@@ -34,4 +34,22 @@ export const STK = {
   crystal: om('1F52E'),      // 🔮 «прогноз»
   star: om('2B50'),          // ⭐
   wave: om('1F44B'),         // 👋 выход
+  chat: om('1F4AC'),         // 💬 чат с Ульяной
+  send: om('1F680'),         // 🚀 отправить
+  play: om('25B6-FE0F'),     // ▶️ воспроизведение
+  pause: om('23F8-FE0F'),    // ⏸
+  zoom: om('1F50D'),         // 🔍
+
+  // Доп. причины плача
+  music: om('1F3B5'),        // 🎵 песня
+  angry: om('1F620'),        // 😠 обида/злость
+  briefcase: om('1F4BC'),    // 💼 работа/начальник
+  book: om('1F4DA'),         // 📚 учёба/дедлайн
+  sleepy: om('1F634'),       // 😴 недосып
+  newspaper: om('1F4F0'),    // 📰 новости
+  heartEyes: om('1F60D'),    // 😍 от счастья
+  paw: om('1F43E'),          // 🐾 питомец
+  collision: om('1F4A5'),    // 💥 «избили» (рофл)
+  hug: om('1FAC2'),          // 🫂 поддержка
+  pencil: om('270F-FE0F'),   // ✏️ своё
 } as const;
