@@ -650,6 +650,64 @@ body:not([data-theme="dark"]) .sync-device.server { background: #EEF3EB; }
 .sync-v3 .sync-live { padding:14px 16px 0; margin:0; }
 .sync-v3 .synclog { display:block; min-height:240px; max-height:none; margin:0; padding:16px; border:0; border-radius:0; background:transparent; color:var(--text-2); font:10.5px/1.55 ui-monospace,Consolas,monospace; }
 
+/* Передача v4: одно действие слева, понятный путь справа. */
+.sync-v3 .sync-workbench { grid-template-columns:minmax(320px,360px) minmax(440px,1fr); min-height:560px; }
+.sync-v3 .sync-command { padding:22px; }
+.sync-v3 .sync-transfer-list { display:grid; gap:10px; border:0; }
+.sync-transfer-choice { width:100%; min-height:84px; display:flex; align-items:center; justify-content:space-between; gap:18px; padding:0 18px; border:1px solid color-mix(in srgb,var(--tint) 52%,var(--hair)); border-radius:11px; background:var(--tint); color:#fff; cursor:pointer; transition:transform .16s ease,filter .16s ease,border-color .16s ease; }
+.sync-transfer-choice:hover { filter:brightness(1.07); transform:translateY(-1px); }
+.sync-transfer-choice:active { transform:translateY(1px) scale(.995); }
+.sync-transfer-choice:focus-visible { outline:2px solid color-mix(in srgb,var(--tint) 70%,white); outline-offset:3px; }
+.sync-transfer-choice:disabled { opacity:.45; cursor:default; transform:none; filter:none; }
+.sync-transfer-choice.secondary { background:var(--surface-3); color:var(--text); border-color:var(--hair); }
+.sync-transfer-choice b { font-size:18px; letter-spacing:-.025em; }
+.sync-transfer-choice span { color:currentColor; opacity:.72; font:650 11px/1 ui-monospace,Consolas,monospace; }
+.sync-v3 .sync-runtime-strip { margin-top:16px; }
+.sync-v3 .sync-summary-strip:empty { display:none; }
+.sync-journey-panel { padding:28px 30px; overflow:auto; }
+.sync-journey-head { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding-bottom:22px; border-bottom:1px solid var(--hair); }
+.sync-journey-head > div { min-width:0; }
+.sync-journey-head b { display:block; font-size:22px; line-height:1.15; letter-spacing:-.035em; }
+.sync-journey-head span { display:block; max-width:64ch; margin-top:7px; color:var(--muted); font-size:11px; line-height:1.45; overflow-wrap:anywhere; }
+.sync-journey-head time { flex:none; color:var(--muted); font:600 10px/1.4 ui-monospace,Consolas,monospace; }
+.sync-journey { display:grid; margin:24px 0 0; }
+.sync-journey-step { position:relative; min-height:68px; display:grid; grid-template-columns:34px minmax(0,1fr) auto; align-items:start; gap:13px; padding-bottom:18px; }
+.sync-journey-step:not(:last-child)::after { content:""; position:absolute; left:16px; top:34px; bottom:0; width:1px; background:var(--hair); }
+.sync-journey-step i { position:relative; z-index:1; width:34px; height:34px; display:grid; place-items:center; border:1px solid var(--hair); border-radius:50%; background:var(--surface-2); color:var(--muted); font:700 11px/1 ui-monospace,Consolas,monospace; font-style:normal; }
+.sync-journey-step b { padding-top:8px; font-size:13px; }
+.sync-journey-step span { padding-top:9px; color:var(--muted); font-size:10px; }
+.sync-journey-step.done i { border-color:color-mix(in srgb,var(--tint) 48%,var(--hair)); background:color-mix(in srgb,var(--tint) 15%,var(--surface)); color:var(--tint); }
+.sync-journey-step.done:not(:last-child)::after { background:color-mix(in srgb,var(--tint) 45%,var(--hair)); }
+.sync-journey-step.active i { border-color:var(--tint); background:var(--tint); color:#fff; box-shadow:0 0 0 5px color-mix(in srgb,var(--tint) 12%,transparent); }
+.sync-journey-step.active span { color:var(--tint); }
+.sync-journey-step.blocked i,.sync-journey-step.error i { border-color:var(--red); background:var(--red-soft); color:var(--red); }
+.sync-journey-step.blocked span,.sync-journey-step.error span { color:var(--red); }
+.sync-blocker-panel { margin-top:4px; padding:16px; border:1px solid color-mix(in srgb,var(--red) 38%,var(--hair)); border-radius:11px; background:color-mix(in srgb,var(--red) 7%,var(--surface)); }
+.sync-blocker-panel[hidden] { display:none; }
+.sync-blocker-title,.sync-errors-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.sync-blocker-title b,.sync-errors-head b { font-size:12px; }
+.sync-blocker-title span,.sync-errors-head span { color:var(--red); font:700 10px/1 ui-monospace,Consolas,monospace; }
+.sync-blocked-files,.sync-blocked-apps { display:grid; gap:5px; margin-top:10px; }
+.sync-blocked-files span { color:var(--text-2); font:10px/1.35 ui-monospace,Consolas,monospace; overflow-wrap:anywhere; }
+.sync-blocked-apps { display:flex; flex-wrap:wrap; gap:6px; }
+.sync-blocked-apps span { padding:4px 7px; border-radius:6px; background:var(--surface-3); color:var(--muted); font-size:9px; }
+.sync-blocker-action { width:100%; margin-top:13px; }
+.sync-live-compact { margin-top:14px; }
+.sync-live-compact[hidden] { display:none; }
+.sync-current-compact,.sync-verify-compact { position:relative; display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 14px; padding:14px; border:1px solid var(--hair); border-radius:10px; background:var(--surface-2); }
+.sync-current-compact b,.sync-verify-compact b { font-size:11px; }
+.sync-current-compact > span,.sync-verify-compact span { grid-column:1 / -1; color:var(--muted); font:9.5px/1.4 ui-monospace,Consolas,monospace; overflow-wrap:anywhere; }
+.sync-current-compact > div { grid-column:1 / -1; height:5px; overflow:hidden; border-radius:5px; background:var(--surface-3); }
+.sync-current-compact > div i { display:block; height:100%; border-radius:inherit; background:var(--tint); }
+.sync-current-compact small { position:absolute; top:14px; right:14px; color:var(--muted); font:600 9px/1 ui-monospace,Consolas,monospace; }
+.sync-errors-panel { margin-top:14px; padding:14px; border:1px solid var(--hair); border-radius:10px; }
+.sync-errors-panel[hidden] { display:none; }
+#sync-error-list { display:grid; gap:8px; margin-top:10px; }
+#sync-error-list div { min-width:0; }
+#sync-error-list b { display:block; font-size:9.5px; }
+#sync-error-list span { display:block; margin-top:2px; color:var(--red); font-size:9px; line-height:1.35; overflow-wrap:anywhere; }
+.sync-errors-panel button { margin-top:11px; padding:6px 9px; border:1px solid var(--hair); border-radius:7px; background:transparent; color:var(--text-2); font:650 9.5px/1 inherit; cursor:pointer; }
+
 /* Удалённый ПК — рабочее полотно без декоративного шума: экран остаётся
    главным объектом, управление занимает одну компактную строку. */
 .remote-page { height:100%; min-height:0; display:flex; flex-direction:column; padding:22px 24px 24px; }

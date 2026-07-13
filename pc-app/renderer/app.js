@@ -1349,6 +1349,7 @@ const sync = {
   lastDone: localStorage.getItem('arra-sync-last') || '',
   speed: 0, eta: null, lastProgressAt: 0, current: null,
   liveProjects: {}, recentFiles: [], blockedFiles: [], verify: null,
+  step: 'idle', failedStep: 'scan', stepError: '', errors: [],
   panelTab: localStorage.getItem('noda-sync-panel') || 'tree',
   blockers: [], blockersChecked: false, blockersBusy: false, closeResult: null,
   remote: {}, showAll: false,
@@ -1366,6 +1367,13 @@ function fmtDuration(seconds) {
   if (s < 60) return `${s} сек`;
   if (s < 3600) return `${Math.floor(s / 60)} мин ${String(s % 60).padStart(2, '0')} сек`;
   return `${Math.floor(s / 3600)} ч ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')} мин`;
+}
+function fileCount(value) {
+  const n = Math.max(0, Number(value) || 0);
+  const mod100 = n % 100;
+  const mod10 = n % 10;
+  const word = mod100 >= 11 && mod100 <= 14 ? 'файлов' : (mod10 === 1 ? 'файл' : (mod10 >= 2 && mod10 <= 4 ? 'файла' : 'файлов'));
+  return `${n} ${word}`;
 }
 function syncElapsed() { return sync.startedAt ? (Date.now() - sync.startedAt) / 1000 : 0; }
 function syncEta(bytes, totalBytes, speed) {
@@ -1391,9 +1399,11 @@ function wireSyncEvents() {
     if (o.type === 'phase') {
       syncLog(o.msg || 'Подготовка переноса');
       sync.busy = true; sync.phase = o.msg || 'Подготовка…'; sync.detail = o.detail || '';
+      sync.step = 'scan'; sync.stepError = '';
       sync.indeterminate = true; updateSyncStage();
     } else if (o.type === 'scan') {
       sync.busy = true; sync.indeterminate = true;
+      sync.step = 'scan';
       sync.phase = o.msg || `Сканирую ${o.side === 'remote' ? 'сервер' : 'этот компьютер'}…`;
       sync.detail = [o.scope, o.files != null ? `${o.files} файлов` : '', o.dirs != null ? `${o.dirs} папок` : ''].filter(Boolean).join(' · ');
       updateSyncStage();
@@ -1402,12 +1412,13 @@ function wireSyncEvents() {
       syncLog(`Проверка завершена: ${o.localFiles || 0} здесь, ${o.remoteFiles || 0} на сервере, ${o.upload || 0} отправить, ${o.download || 0} забрать`);
       sync.busy = false; sync.info = o; sync.projects = o.projects || [];
       sync.lastCheckSeconds = Number(o.elapsed) || Math.round(syncElapsed());
+      if (!sync.lastRequest) sync.step = 'idle';
       sync.phase = (o.upload || o.download || o.conflicts) ? 'Состояние устройств проверено' : 'Это устройство соответствует серверу';
       sync.detail = `${o.localFiles || 0} файлов здесь · ${o.remoteFiles || 0} файлов на сервере · проверка ${fmtDuration(o.elapsed)}`;
       sync.pct = 0; sync.indeterminate = false; renderSyncViewBody(); updateSyncStage();
     } else if (o.type === 'plan') {
-      sync.panelTab = 'log'; localStorage.setItem('noda-sync-panel', 'log');
       syncLog(`${o.direction === 'push' ? 'Отправка на сервер' : 'Получение с сервера'}: ${o.files || 0} файлов, ${fmtB(o.bytes || 0)}`);
+      sync.step = 'files'; sync.stepError = '';
       sync.phase = o.direction === 'push' ? 'Отправляю работу на сервер' : 'Забираю работу с сервера';
       sync.detail = `${o.files || 0} файлов · ${fmtB(o.bytes || 0)}${o.only ? ' · ' + o.only : ''}`;
       sync.indeterminate = !(o.files > 0);
@@ -1415,6 +1426,7 @@ function wireSyncEvents() {
       sync.liveProjects = Object.fromEntries((o.projects || []).map((p) => [p.name, { ...p, done: 0, doneBytes: 0 }]));
       updateSyncStage(); updateSyncLive();
     } else if (o.type === 'preflight') {
+      sync.step = 'files';
       sync.phase = 'Проверяю, не заняты ли файлы';
       sync.detail = `${o.checked || 0} из ${o.total || 0}${o.blocked ? ` · занято ${o.blocked}` : ''}${o.file ? ` · ${syncShortPath(o.file)}` : ''}`;
       sync.pct = o.total ? Math.round((o.checked || 0) / o.total * 100) : 0;
@@ -1422,11 +1434,13 @@ function wireSyncEvents() {
       setSyncProgress(sync.pct, sync.detail); updateSyncStage(); updateSyncLive();
     } else if (o.type === 'blocked') {
       sync.busy = false; sync.indeterminate = false; sync.blockedFiles = o.files || [];
-      sync.phase = `Передача не начата: занято ${o.count || 0} файлов`;
-      sync.detail = 'Закрой отмеченные сессии кнопками ниже. Noda проверит их завершение и повторит передачу один раз.';
+      sync.step = 'blocked'; sync.phase = `${Number(o.count) === 1 ? 'Занят' : 'Занято'} ${fileCount(o.count)}`;
+      sync.detail = 'Нажми «Закрыть и продолжить» — передача возобновится сама.';
       sync.pct = 0; setSyncProgress(0, sync.detail); updateSyncStage(); updateSyncLive(); renderSyncV2Body();
-      toast('Файлы заняты', `${o.count || 0} файлов нужно освободить`, 'warn', 6000);
+      refreshSyncBlockers();
+      toast('Файлы заняты', `${fileCount(o.count)} нужно освободить`, 'warn', 6000);
     } else if (o.type === 'progress') {
+      sync.step = 'transfer';
       const pct = o.totalBytes ? Math.round((o.bytes || 0) / o.totalBytes * 100) : (o.total ? Math.round(o.done / o.total * 100) : 0);
       const eta = o.eta != null ? fmtDuration(o.eta) : syncEta(o.bytes, o.totalBytes, o.speed);
       sync.phase = o.direction === 'pull' ? 'Обновляю это устройство с сервера' : 'Сохраняю актуальную работу на сервере';
@@ -1445,18 +1459,21 @@ function wireSyncEvents() {
       }
       setSyncProgress(pct, sync.detail); updateSyncStage(); updateSyncLive();
     } else if (o.type === 'retry') {
+      sync.step = 'transfer';
       sync.lastProgressAt = Date.now();
       syncLog(`↻ попытка ${o.attempt}/4 · ${o.file}: ${o.error}`);
       sync.phase = 'Повторяю файл после ошибки';
       sync.detail = `${syncShortPath(o.file)} · ${o.error}`;
       updateSyncStage(); updateSyncLive();
     } else if (o.type === 'verify') {
+      sync.step = 'verify';
       sync.verify = { done: o.done || 0, total: o.total || 0, verified: 0, errors: 0 };
       sync.phase = 'Проверяю, что все файлы дошли';
       sync.detail = `0 из ${o.total || 0} подтверждено на стороне назначения`;
       sync.pct = 0; sync.indeterminate = !(o.total > 0); sync.lastProgressAt = Date.now();
       setSyncProgress(0, sync.detail); updateSyncStage(); updateSyncLive();
     } else if (o.type === 'verify_progress') {
+      sync.step = 'verify';
       sync.verify = { done: o.done || 0, total: o.total || 0, verified: o.verified || 0, errors: o.errors || 0, file: o.file };
       sync.phase = 'Проверяю, что все файлы дошли';
       sync.detail = `${o.verified || 0} подтверждено из ${o.total || 0}${o.errors ? ` · ошибок ${o.errors}` : ''} · ${syncShortPath(o.file)}`;
@@ -1465,18 +1482,21 @@ function wireSyncEvents() {
       setSyncProgress(sync.pct, sync.detail); updateSyncStage(); updateSyncLive();
     } else if (o.type === 'fileerror') {
       syncLog(`⚠ ${o.file}: ${o.error}`);
+      sync.errors.push({ file: o.file || 'Файл', error: o.error || 'Ошибка' });
+      sync.errors = sync.errors.slice(-50);
+      renderSyncJourney();
     } else if (o.type === 'done') {
       const verb = o.direction === 'push' ? 'Отправлено на сервер' : 'Забрано с сервера';
       sync.pct = 100; sync.indeterminate = false;
-      sync.phase = `${verb}: ${o.transferred || 0} файлов`;
+      sync.phase = `${verb}: ${fileCount(o.transferred)}`;
       sync.detail = `${fmtB(o.bytes || 0)} · проверено ${o.verified ?? o.transferred ?? 0}${o.errors ? ` · ошибок ${o.errors}` : ''}${o.skipped ? ` · пропущено ${o.skipped}` : ''}`;
       sync.lastDone = new Date().toISOString(); localStorage.setItem('arra-sync-last', sync.lastDone);
+      sync.step = o.errors ? 'error' : 'done'; sync.stepError = o.errors ? `${o.errors} ошибок` : '';
       sync.current = null; sync.speed = 0; sync.eta = null;
+      sync.verify = null;
       syncLog(`${verb}: ${o.transferred || 0} файлов, ${fmtB(o.bytes || 0)}, ошибок ${o.errors || 0}`);
       setSyncProgress(100, sync.detail); updateSyncStage(); updateSyncLive();
-      toast('Передача', `${verb}: ${o.transferred || 0} файлов${o.errors ? `, ошибок ${o.errors}` : ''}`, o.errors ? 'warn' : 'ok');
-      // обновим статус после операции
-      setTimeout(() => { if (state.section === 'sync') startSyncStatus(); }, 900);
+      toast('Передача', `${verb}: ${fileCount(o.transferred)}${o.errors ? `, ошибок ${o.errors}` : ''}`, o.errors ? 'warn' : 'ok');
     } else if (o.type === 'error') {
       const transient = /timed out|timeout|etimedout|econnreset|socket|сервер.*не ответил/i.test(String(o.error || ''));
       if (transient && sync.lastRequest && sync.networkRetries < 2) {
@@ -1487,11 +1507,13 @@ function wireSyncEvents() {
         setTimeout(() => runSyncOp(request.mode, request.only, true), 1400 * sync.networkRetries);
         return;
       }
-      sync.panelTab = 'log'; localStorage.setItem('noda-sync-panel', 'log'); syncLog('ОШИБКА: ' + (o.error || 'Неизвестная ошибка'));
+      syncLog('ОШИБКА: ' + (o.error || 'Неизвестная ошибка'));
       sync.busy = false; sync.indeterminate = false; sync.phase = 'Передача остановлена'; sync.detail = o.error || 'Неизвестная ошибка';
+      sync.failedStep = ['scan', 'files', 'transfer', 'verify'].includes(sync.step) ? sync.step : 'scan';
+      sync.step = 'error'; sync.stepError = sync.detail; sync.errors.push({ file: 'Передача', error: sync.detail });
       updateSyncStage(); updateSyncLive(); toast('Передача', o.error, 'warn'); renderSyncViewBody();
     } else if (o.type === 'stderr') {
-      sync.panelTab = 'log'; localStorage.setItem('noda-sync-panel', 'log'); syncLog(o.msg || 'Ошибка Python');
+      syncLog(o.msg || 'Ошибка Python'); sync.errors.push({ file: 'Движок', error: o.msg || 'Ошибка Python' });
       renderSyncViewBody();
     } else if (o.type === 'closed') {
       sync.busy = false; sync.indeterminate = false; renderSyncViewBody(); updateSyncStage(); updateSyncLive();
@@ -1547,6 +1569,7 @@ function updateSyncStage() {
   const speed = document.getElementById('sync-speed-value'); if (speed) speed.textContent = sync.speed ? `${fmtB(sync.speed)}/с` : '—';
   const eta = document.getElementById('sync-eta-value'); if (eta) eta.textContent = sync.eta != null ? fmtDuration(sync.eta) : '—';
   const pct = document.getElementById('sync-pct-value'); if (pct) pct.textContent = `${sync.pct || 0}%`;
+  renderSyncJourney();
 }
 function updateSyncLive() {
   const box = document.getElementById('sync-live');
@@ -1591,6 +1614,7 @@ function updateSyncLive() {
 setInterval(() => { if (sync.busy && state.section === 'sync') { updateSyncStage(); updateSyncLive(); } }, 1000);
 function startSyncStatus() {
   if (sync.busy) return;
+  sync.lastRequest = null; sync.step = 'scan'; sync.stepError = ''; sync.errors = [];
   sync.busy = true; sync.startedAt = Date.now(); sync.phase = 'Подключаюсь к серверу…'; sync.detail = 'Подготавливаю безопасное сравнение'; sync.pct = 0; sync.indeterminate = true;
   sync.lastProgressAt = Date.now(); sync.current = null; sync.speed = 0; sync.eta = null;
   sync.liveProjects = {}; sync.recentFiles = []; sync.blockedFiles = []; sync.verify = null;
@@ -1602,6 +1626,7 @@ function runSyncOp(mode, only, automaticRetry = false) {
   if (sync.busy) { toast('Перенос', 'Идёт операция, подожди', 'info'); return; }
   if (!automaticRetry) sync.networkRetries = 0;
   sync.lastRequest = { mode, only: only || null };
+  sync.step = 'scan'; sync.stepError = ''; sync.errors = [];
   sync.busy = true; sync.startedAt = Date.now(); sync.pct = 0; sync.indeterminate = true;
   sync.lastProgressAt = Date.now(); sync.current = null; sync.speed = 0; sync.eta = null;
   sync.liveProjects = {}; sync.recentFiles = []; sync.blockedFiles = []; sync.verify = null;
@@ -1628,7 +1653,10 @@ async function refreshSyncBlockers() {
 function renderBlockerPanel() {
   const box = document.getElementById('sync-blocker-panel');
   if (!box) return;
-  const grouped = [...sync.blockers.reduce((map, item) => {
+  box.hidden = !sync.blockedFiles.length;
+  if (!sync.blockedFiles.length) { box.innerHTML = ''; return; }
+  const useful = sync.blockers.filter((item) => !/^(codex|chatgpt)$/i.test(String(item.name || '')));
+  const grouped = [...useful.reduce((map, item) => {
     const key = `${item.type}:${String(item.name || '').toLowerCase()}`;
     const row = map.get(key) || { ...item, count: 0 };
     row.count += 1;
@@ -1636,24 +1664,25 @@ function renderBlockerPanel() {
     map.set(key, row);
     return map;
   }, new Map()).values()];
-  const rows = grouped.slice(0, 6);
+  const rows = grouped.slice(0, 4);
   const remaining = sync.closeResult?.remaining || [];
   const closeWarning = remaining.length ? `<div class="sync-close-warning">
     <b>Не закрылись: ${esc(remaining.map((item) => item.title || item.name || `PID ${item.pid}`).join(', '))}</b>
-    <span>Сохрани изменения и закрой вручную либо используй принудительное закрытие — несохранённый текст будет потерян.</span>
+    <span>Можно закрыть принудительно, но несохранённые изменения пропадут.</span>
     <button id="sync-force-close" data-force-pids="${remaining.map((item) => item.pid).filter(Boolean).join(',')}">Закрыть принудительно</button>
   </div>` : '';
   box.innerHTML = `
-    <div class="sync-utility-head"><b>Открытые сессии</b><div class="sync-utility-actions">${rows.length ? '<button id="sync-close-all">Закрыть все</button>' : ''}<button id="sync-check-blockers">${sync.blockersBusy ? 'Проверяю…' : 'Проверить'}</button></div></div>
+    <div class="sync-blocker-title"><b>Нужно действие</b><span>${sync.blockedFiles.length}</span></div>
     ${closeWarning}
-    ${!sync.blockersChecked ? '<div class="sync-utility-empty">Редакторы и терминалы, которые могут держать файлы.</div>' :
-      (!rows.length ? '<div class="sync-utility-ok">Ничего мешающего не найдено</div>' : rows.map((item) => { const pids = sync.blockers.filter((source) => source.type === item.type && String(source.name || '').toLowerCase() === String(item.name || '').toLowerCase()).map((source) => source.pid).filter(Boolean); return `<div class="sync-process-row"><span class="dot warn"></span><div><b>${esc(item.name)}${item.count > 1 ? ` · ${item.count}` : ''}</b><small>${esc(item.title || (item.pid ? `PID ${item.pid}` : 'активная сессия'))}</small></div><button data-close-pids="${pids.join(',')}">Закрыть</button></div>`; }).join(''))}
-    ${grouped.length > rows.length ? `<div class="sync-utility-more">ещё ${grouped.length - rows.length}</div>` : ''}`;
-  const button = document.getElementById('sync-check-blockers');
-  if (button) { button.disabled = sync.blockersBusy; button.onclick = refreshSyncBlockers; }
-  box.querySelectorAll('[data-close-pids]').forEach((close) => { close.onclick = () => closeSyncSessions(String(close.dataset.closePids || '').split(',').map(Number).filter(Boolean)); });
-  const closeAll = document.getElementById('sync-close-all');
-  if (closeAll) closeAll.onclick = () => closeSyncSessions(sync.blockers.map((item) => item.pid).filter(Boolean));
+    <div class="sync-blocked-files">${sync.blockedFiles.slice(0, 4).map((file) => `<span>${esc(syncShortPath(file.file || file.project))}</span>`).join('')}</div>
+    ${rows.length ? `<div class="sync-blocked-apps">${rows.map((item) => `<span>${esc(item.name)}${item.count > 1 ? ` · ${item.count}` : ''}</span>`).join('')}</div>` : ''}
+    <button class="btn sync-blocker-action" id="sync-close-and-retry" ${sync.blockersBusy ? 'disabled' : ''}>${sync.blockersBusy ? 'Проверяю…' : (rows.length ? 'Закрыть и продолжить' : 'Повторить')}</button>`;
+  const continueButton = document.getElementById('sync-close-and-retry');
+  if (continueButton) continueButton.onclick = () => {
+    const pids = useful.map((item) => item.pid).filter(Boolean);
+    if (pids.length) closeSyncSessions(pids);
+    else if (sync.lastRequest) { sync.blockedFiles = []; runSyncOp(sync.lastRequest.mode, sync.lastRequest.only); }
+  };
   const force = document.getElementById('sync-force-close');
   if (force) force.onclick = () => forceCloseSyncSessions(String(force.dataset.forcePids || '').split(',').map(Number).filter(Boolean));
 }
@@ -1671,19 +1700,20 @@ async function finishBlockerClose(result, retryRequest) {
     return;
   }
   sync.closeResult = null;
-  await refreshSyncBlockers();
-  if (retryRequest && !sync.blockers.length && !sync.busy) {
+  if (retryRequest && !sync.busy) {
+    sync.blockers = []; sync.blockersChecked = false;
     sync.blockedFiles = [];
-    toast('Сессии закрыты', 'Файлы освобождены — повторяю передачу', 'ok', 3500);
+    toast('Продолжаю', 'Повторяю передачу', 'ok', 2500);
     setTimeout(() => runSyncOp(retryRequest.mode, retryRequest.only, false), 350);
   } else {
+    await refreshSyncBlockers();
     toast('Сессии закрыты', `${result?.closed || 0} процессов завершено`, 'ok', 3000);
   }
 }
 
 async function closeSyncSessions(pids) {
   if (!pids.length) return;
-  if (!confirm('Закрыть выбранные редакторы и терминалы? Если в них есть несохранённые файлы, Windows покажет запрос на сохранение.')) return;
+  if (!confirm('Закрыть найденные программы и продолжить передачу?')) return;
   const retryRequest = sync.blockedFiles.length && sync.lastRequest ? { ...sync.lastRequest } : null;
   sync.blockersBusy = true; sync.closeResult = null; renderBlockerPanel();
   toast('Сессии', 'Закрываю и проверяю завершение процессов…', 'info', 3000);
@@ -1883,6 +1913,48 @@ function openTransferConfirm(mode, only) {
   document.getElementById('sync-confirm-go').onclick = () => { close(); runSyncOp(mode, only || null); };
 }
 
+function renderSyncJourney() {
+  const box = document.getElementById('sync-journey');
+  if (!box) return;
+  const order = ['scan', 'files', 'transfer', 'verify'];
+  const labels = ['Проверка', 'Файлы', 'Передача', 'Подтверждение'];
+  const currentKey = sync.step === 'blocked' ? 'files' : (sync.step === 'error' ? sync.failedStep : sync.step);
+  const activeIndex = sync.step === 'done' ? order.length : Math.max(0, order.indexOf(currentKey));
+  box.innerHTML = order.map((key, index) => {
+    let stateName = 'pending';
+    let stateLabel = 'ждёт';
+    if (sync.step === 'done' || index < activeIndex) { stateName = 'done'; stateLabel = 'готово'; }
+    else if (sync.step === 'error' && index === activeIndex) { stateName = 'error'; stateLabel = 'ошибка'; }
+    else if (sync.step === 'blocked' && key === 'files') { stateName = 'blocked'; stateLabel = 'нужно действие'; }
+    else if (key === currentKey) { stateName = 'active'; stateLabel = 'идёт'; }
+    return `<div class="sync-journey-step ${stateName}"><i>${stateName === 'done' ? '✓' : index + 1}</i><b>${labels[index]}</b><span>${stateLabel}</span></div>`;
+  }).join('');
+  const title = document.getElementById('sync-journey-title'); if (title) title.textContent = sync.phase || 'Готово';
+  const detail = document.getElementById('sync-journey-detail'); if (detail) detail.textContent = sync.detail || '';
+  const errors = document.getElementById('sync-errors-panel');
+  if (errors) {
+    errors.hidden = !sync.errors.length;
+    const list = document.getElementById('sync-error-list');
+    if (list) list.innerHTML = sync.errors.slice(-5).map((item) => `<div><b>${esc(item.file)}</b><span>${esc(item.error)}</span></div>`).join('');
+    const count = document.getElementById('sync-error-count'); if (count) count.textContent = String(sync.errors.length);
+  }
+}
+
+function updateSyncLive() {
+  const box = document.getElementById('sync-live');
+  if (!box) return;
+  const current = sync.current;
+  const show = !!current || !!sync.verify;
+  box.hidden = !show;
+  if (!show) { box.innerHTML = ''; return; }
+  if (current) {
+    const pct = current.fileTotal ? Math.round((current.fileBytes || 0) / current.fileTotal * 100) : 0;
+    box.innerHTML = `<div class="sync-current-compact"><b>${esc(current.project || current.scope || 'Файл')}</b><span>${esc(syncShortPath(current.file))}</span><div><i style="width:${Math.max(0, Math.min(100, pct))}%"></i></div><small>${current.done || 0}/${current.total || 0}</small></div>`;
+  } else {
+    box.innerHTML = `<div class="sync-verify-compact"><b>Подтверждено</b><span>${sync.verify?.verified || 0} из ${sync.verify?.total || 0}</span></div>`;
+  }
+}
+
 async function renderSyncV2() {
   wireSyncEvents();
   if (sync.panelTab === 'log' && !sync.log.length && !sync.busy) sync.panelTab = 'tree';
@@ -1897,12 +1969,10 @@ async function renderSyncV2() {
     <div class="syncwrap sync-v3">
       <header class="sync-v3-head">
         <div class="synctitle">Передача</div>
-        <div class="sync-head-actions"><button class="sync-refresh-link" id="sync-open-logs">Логи ошибок</button><button class="sync-refresh-link" id="sync-refresh">Проверить</button></div>
       </header>
 
       <div class="sync-workbench">
         <section class="sync-command" aria-label="Управление переносом">
-          <div id="sync-route" class="sync-route-summary"></div>
           <div id="sync-actions" class="sync-transfer-list"></div>
 
           <div class="sync-runtime-strip">
@@ -1911,45 +1981,27 @@ async function renderSyncV2() {
             <div><span>Прогресс</span><b id="sync-pct-value">0%</b></div>
           </div>
 
-          <div class="syncstage sync-v3-stage">
-            <div class="syncstage-top">
-              <div class="syncstage-icon" id="sync-stage-icon"><svg viewBox="0 0 24 24"><path d="M20 7h-5V2M4 17h5v5M20 7a8 8 0 0 0-14.5-2M4 17a8 8 0 0 0 14.5 2"/></svg></div>
-              <div class="syncstage-copy"><div class="syncstage-title" id="sync-status">Готов</div><div class="syncstage-detail" id="sync-detail"></div></div>
-              <div class="syncstage-time" id="sync-time"></div>
-            </div>
-            <div class="syncprogwrap"><div class="syncprogtrack" id="sync-track"><div class="syncprogbar" id="sync-bar"></div></div><div class="dim" id="sync-prog"></div></div>
-            <button class="sync-stop-link" id="sync-cancel" hidden>Прервать передачу</button>
-          </div>
+          <button class="sync-stop-link" id="sync-cancel" hidden>Прервать</button>
           <div id="sync-metrics" class="sync-summary-strip"></div>
-          <div id="sync-blocker-panel" class="sync-utility-panel"></div>
-          <div id="sync-remote-devices" class="sync-utility-panel"></div>
         </section>
 
-        <section class="sync-inspector" aria-label="Детали переноса">
-          <div class="sync-inspector-head">
-            <div class="sync-tabs" role="tablist">
-              <button role="tab" data-sync-tab="tree" class="${sync.panelTab === 'tree' ? 'active' : ''}">Иерархия</button>
-              <button role="tab" data-sync-tab="log" class="${sync.panelTab === 'log' ? 'active' : ''}">Журнал <span id="sync-log-count"></span></button>
-            </div>
-            <div class="sync-inspector-actions"><button id="sync-filter-projects">${sync.showAll ? 'Только изменения' : 'Все проекты'}</button><span id="sync-project-count"></span></div>
+        <section class="sync-inspector sync-journey-panel" aria-label="Путь передачи">
+          <div class="sync-journey-head">
+            <div><b id="sync-journey-title">Готово</b><span id="sync-journey-detail"></span></div>
+            <time id="sync-time"></time>
           </div>
-
-          <div class="sync-inspector-panel ${sync.panelTab === 'tree' ? 'active' : ''}" data-sync-panel="tree">
-            <div class="sync-tree-section"><div class="sync-tree-title"><b>Проекты</b><span>раскрой проект, чтобы увидеть файлы</span></div><div id="sync-projects" class="sync-table"></div></div>
-            <div class="sync-tree-section"><div class="sync-tree-title"><b>Память помощников</b><span>Claude Code и Codex</span></div><div id="sync-memory" class="sync-table"></div></div>
-            <details id="sync-system-wrap" class="sync-system-wrap"><summary>Служебные папки <span id="sync-system-count"></span></summary><div id="sync-system" class="sync-table"></div></details>
-          </div>
-
-          <div class="sync-inspector-panel ${sync.panelTab === 'log' ? 'active' : ''}" data-sync-panel="log">
-            <div id="sync-live" class="sync-live" hidden></div>
-            <pre id="sync-log" class="synclog">${esc(sync.log.join('\n'))}</pre>
-            <div class="sync-log-empty" ${sync.log.length ? 'hidden' : ''}>Журнал появится здесь после проверки или передачи файлов.</div>
+          <div id="sync-journey" class="sync-journey"></div>
+          <div id="sync-blocker-panel" class="sync-blocker-panel" hidden></div>
+          <div id="sync-live" class="sync-live-compact" hidden></div>
+          <div id="sync-errors-panel" class="sync-errors-panel" hidden>
+            <div class="sync-errors-head"><b>Ошибки</b><span id="sync-error-count"></span></div>
+            <div id="sync-error-list"></div>
+            <button id="sync-open-logs">Открыть журнал</button>
           </div>
         </section>
       </div>
 
     </div>`;
-  document.getElementById('sync-refresh').onclick = startSyncStatus;
   document.getElementById('sync-open-logs').onclick = async () => {
     const result = await window.arra.openLogs();
     if (!result?.ok) { reportError('logs.open', new Error(result?.error || 'Не удалось открыть логи')); toast('Логи ошибок', result?.error || 'Не удалось открыть папку', 'warn'); }
@@ -1958,11 +2010,7 @@ async function renderSyncV2() {
     await window.arra.syncCancel(); sync.busy = false; sync.indeterminate = false;
     sync.phase = 'Передача прервана'; sync.detail = 'Уже переданные файлы сохранены'; updateSyncStage(); renderSyncV2Body();
   };
-  document.getElementById('sync-filter-projects').onclick = () => { sync.showAll = !sync.showAll; renderSyncV2(); };
-  app.querySelectorAll('[data-sync-tab]').forEach((button) => {
-    button.onclick = () => { sync.panelTab = button.dataset.syncTab; localStorage.setItem('noda-sync-panel', sync.panelTab); renderSyncV2(); };
-  });
-  renderSyncV2Body(); renderBlockerPanel(); renderRemoteDevices(); updateSyncStage(); updateSyncLive();
+  renderSyncV2Body(); renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney();
 }
 
 function syncDeviceGlyph(kind) {
@@ -1972,84 +2020,24 @@ function syncDeviceGlyph(kind) {
 }
 
 function renderSyncV2Body() {
-  const projectsBox = document.getElementById('sync-projects');
-  const memoryBox = document.getElementById('sync-memory');
-  if (!projectsBox || !memoryBox) return;
   const i = sync.info || {};
-  const stateInfo = i.serverState || {};
-  const lastPush = stateInfo.lastPush || null;
-  const route = document.getElementById('sync-route');
-  if (route) route.innerHTML = `
-    <i class="device-icon">${syncDeviceGlyph('server')}</i>
-    <div><span>СЕРВЕР</span><b>${!sync.info ? 'статус не проверен' : (lastPush ? fmtSyncDate(lastPush.at) : (i.remoteFiles ? `${fmt(i.remoteFiles)} файлов` : 'копии пока нет'))}</b>${lastPush ? `<small>${esc(lastPush.device || '')}</small>` : ''}</div>`;
-
   const uploadBytes = sync.projects.reduce((n, p) => n + Number(p.uploadBytes || 0), 0);
   const downloadBytes = sync.projects.reduce((n, p) => n + Number(p.downloadBytes || 0), 0);
   const hasCheck = !!sync.info;
   const actions = document.getElementById('sync-actions');
   if (actions) actions.innerHTML = `
-    <div class="sync-transfer-row push-action">
-      <div class="sync-transfer-direction"><span>ЭТО УСТРОЙСТВО</span><i>→</i><span>СЕРВЕР</span></div>
-      <div class="sync-transfer-copy"><b>Отправить</b></div>
-      <div class="sync-transfer-data"><b>${hasCheck ? fmt(i.upload || 0) : '—'}</b><span>${hasCheck ? fmtB(uploadBytes) : 'проверит при запуске'}</span></div>
-      <button class="btn sync-action-btn" id="sync-push-all">Отправить</button>
-    </div>
-    <div class="sync-transfer-row pull-action">
-      <div class="sync-transfer-direction"><span>СЕРВЕР</span><i>→</i><span>ЭТО УСТРОЙСТВО</span></div>
-      <div class="sync-transfer-copy"><b>Забрать</b></div>
-      <div class="sync-transfer-data"><b>${hasCheck ? fmt(i.download || 0) : '—'}</b><span>${hasCheck ? fmtB(downloadBytes) : 'проверит при запуске'}</span></div>
-      <button class="btn sync-action-btn secondary" id="sync-pull-all">Забрать</button>
-    </div>`;
+    <button class="sync-transfer-choice" id="sync-push-all">
+      <b>Отправить</b>${hasCheck ? `<span>${fmt(i.upload || 0)} · ${fmtB(uploadBytes)}</span>` : ''}
+    </button>
+    <button class="sync-transfer-choice secondary" id="sync-pull-all">
+      <b>Забрать</b>${hasCheck ? `<span>${fmt(i.download || 0)} · ${fmtB(downloadBytes)}</span>` : ''}
+    </button>`;
   document.getElementById('sync-push-all').onclick = () => runSyncOp('push', null);
   document.getElementById('sync-pull-all').onclick = () => runSyncOp('pull', null);
 
   const metrics = document.getElementById('sync-metrics');
-  if (metrics) metrics.innerHTML = hasCheck ? `
-    <span><b>${fmt(i.localFiles || 0)}</b> здесь</span>
-    <span><b>${fmt(i.remoteFiles || 0)}</b> на сервере</span>
-    <span class="${i.conflicts ? 'warn' : ''}"><b>${fmt(i.conflicts || 0)}</b> конфликтов</span>` : '';
-
-  const renderRows = (rows) => {
-    if (!rows.length) return `<div class="sync-empty">${sync.busy ? 'Считаю файлы…' : 'Нет данных'}</div>`;
-    return `<div class="sync-table-head"><span>Проект / папки</span><span>Здесь</span><span>Сервер</span><span>Что изменилось</span><span></span></div>` + rows.map((p) => {
-      const current = !(p.upload || p.download || p.conflicts);
-      const changes = p.changes || [];
-      const byFolder = {};
-      changes.forEach((change) => { const parts = String(change.path || '').split('/'); const folder = parts.length > 1 ? parts[0] : '(корень)'; (byFolder[folder] ||= []).push(change); });
-      const tree = Object.entries(byFolder).sort((a, b) => a[0].localeCompare(b[0], 'ru')).map(([folder, files]) => `
-        <div class="sync-folder-group">
-          <div class="sync-folder-head">${FOLDER_BADGE}<b>${esc(folder)}</b><span>${files.length} файлов · ${fmtB(files.reduce((n, f) => n + Number(f.bytes || 0), 0))}</span></div>
-          ${files.map((f) => { const name = String(f.path || '').split('/').pop() || f.path; const dir = f.direction === 'upload' ? '↑' : f.direction === 'download' ? '↓' : '!'; return `<div class="sync-tree-file ${f.blocked ? 'blocked' : ''}">${fileBadge(name)}<div><b>${esc(name)}</b><span>${esc(f.path)}</span>${f.reason ? `<small>${esc(f.reason)}</small>` : ''}</div><em class="${f.direction}">${dir}</em><strong>${fmtB(f.bytes || 0)}</strong></div>`; }).join('')}
-        </div>`).join('');
-      return `<details class="sync-project-group" ${p.blocked ? 'open' : ''}>
-        <summary class="sync-row">
-          <div class="sync-row-name"><b>${esc(p.label || p.name)}</b><span>${esc(p.name)}${p.folders?.length ? ` · ${p.folders.length} папок с изменениями` : ''}</span></div>
-          <div class="sync-count"><b>${fmt(p.localFiles || 0)}</b><span>файлов</span></div>
-          <div class="sync-count"><b>${fmt(p.remoteFiles || 0)}</b><span>файлов</span></div>
-          <div class="sync-row-status">${current ? '<span class="sync-ok">актуально</span>' : ''}${p.upload ? `<span class="badge up">↑ ${fmt(p.upload)} · ${fmtB(p.uploadBytes)}</span>` : ''}${p.download ? `<span class="badge down">↓ ${fmt(p.download)} · ${fmtB(p.downloadBytes)}</span>` : ''}${p.conflicts ? `<span class="badge conflict">${fmt(p.conflicts)} конфликтов</span>` : ''}${p.blocked ? `<span class="badge conflict">занято ${fmt(p.blocked)}</span>` : ''}</div>
-          <div class="sync-row-actions">${p.upload ? `<button data-push="${esc(p.name)}">На сервер</button>` : ''}${p.download ? `<button data-pull="${esc(p.name)}">С сервера</button>` : ''}<i class="sync-expand">⌄</i></div>
-        </summary>
-        <div class="sync-tree">${tree || '<div class="sync-empty">Изменённых файлов нет</div>'}${changes.length >= 120 ? '<div class="sync-more">Показаны первые 120 изменений</div>' : ''}</div>
-      </details>`;
-    }).join('');
-  };
-  const isSystem = (p) => p.scope === 'projects' && (/^(_sync|_setup|_temp|sync-(push|pull)\.bat)$/i.test(p.name) || /(^|\/)\_archive/i.test(p.name));
-  const changed = (p) => (p.upload || 0) + (p.download || 0) + (p.conflicts || 0) + (p.blocked || 0) > 0;
-  const normalProjects = sync.projects.filter((p) => p.scope === 'projects' && !isSystem(p) && (sync.showAll || changed(p)));
-  const systemProjects = sync.projects.filter(isSystem);
-  projectsBox.innerHTML = renderRows(normalProjects);
-  memoryBox.innerHTML = renderRows(sync.projects.filter((p) => p.scope !== 'projects' && (sync.showAll || changed(p))));
-  const systemBox = document.getElementById('sync-system');
-  const systemWrap = document.getElementById('sync-system-wrap');
-  if (systemBox) systemBox.innerHTML = renderRows(systemProjects);
-  if (systemWrap) systemWrap.hidden = !systemProjects.length;
-  const systemCount = document.getElementById('sync-system-count'); if (systemCount) systemCount.textContent = `· ${systemProjects.length}`;
-  const changedCount = sync.projects.filter((p) => (p.upload || 0) + (p.download || 0) + (p.conflicts || 0) > 0).length;
-  const projectCount = document.getElementById('sync-project-count'); if (projectCount) projectCount.textContent = changedCount ? `${changedCount} требуют внимания` : 'всё актуально';
-  const logCount = document.getElementById('sync-log-count'); if (logCount) logCount.textContent = sync.log.length ? String(sync.log.length) : '';
-  app.querySelectorAll('[data-push]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openTransferConfirm('push', b.dataset.push); }));
-  app.querySelectorAll('[data-pull]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openTransferConfirm('pull', b.dataset.pull); }));
-  renderRemoteDevices(); updateSyncStage(); updateSyncLive();
+  if (metrics) metrics.innerHTML = hasCheck && i.conflicts ? `<span class="warn"><b>${fmt(i.conflicts)}</b> конфликтов</span>` : '';
+  renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney();
 }
 
 // Иконка + цвет по типу файла (своя ФОРМА для pdf, md, фото, кода, архива и т.д. — как в VS Code)

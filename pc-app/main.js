@@ -1394,11 +1394,29 @@ function readEnvFile(file) {
     return values;
   } catch { return {}; }
 }
+function readLegacySyncConnection(root) {
+  try {
+    const file = path.join(root, '_sync', 'sync_common.py');
+    const source = fs.readFileSync(file, 'utf8');
+    const value = (name) => {
+      const match = source.match(new RegExp(`^\\s*${name}\\s*=\\s*["']([^"']+)["']`, 'm'));
+      return match ? match[1] : '';
+    };
+    const password = value('PASSWORD');
+    if (!password) return null;
+    return {
+      host: value('SERVER') || '186.246.2.140',
+      user: value('USER') || 'tima',
+      password,
+      source: file,
+    };
+  } catch { return null; }
+}
 function syncConnectionEnv() {
   const direct = {
-    host: process.env.NODA_SYNC_HOST || process.env.APP_SERVER_HOST || '',
-    user: process.env.NODA_SYNC_USER || process.env.APP_SERVER_USER || '',
-    password: process.env.NODA_SYNC_PASSWORD || process.env.APP_SERVER_PASSWORD || '',
+    host: process.env.NODA_SYNC_HOST || '',
+    user: process.env.NODA_SYNC_USER || '',
+    password: process.env.NODA_SYNC_PASSWORD || '',
     source: 'process-env',
   };
   if (direct.password) return direct;
@@ -1411,20 +1429,20 @@ function syncConnectionEnv() {
   ];
   for (const file of [...new Set(candidates)]) {
     const values = readEnvFile(file);
-    const password = values.NODA_SYNC_PASSWORD || values.APP_SERVER_PASSWORD || '';
+    const password = values.NODA_SYNC_PASSWORD || '';
     if (password) return {
-      host: values.NODA_SYNC_HOST || values.APP_SERVER_HOST || '',
-      user: values.NODA_SYNC_USER || values.APP_SERVER_USER || '',
+      host: values.NODA_SYNC_HOST || '',
+      user: values.NODA_SYNC_USER || '',
       password,
       source: file,
     };
   }
-  return direct;
+  return readLegacySyncConnection(codeRoot()) || direct;
 }
 function runSyncProc(mode, only, role, remoteEmit = null) {
   const emit = (event) => {
     rememberSyncEvent(mode, event);
-    if (event?.type === 'error' || event?.type === 'stderr' || event?.type === 'fileerror') writeLog('error', `sync.${event.type}`, { mode, only, event });
+    if (event?.error || event?.type === 'error' || event?.type === 'stderr' || event?.type === 'fileerror') writeLog('error', `sync.${event.type || 'event'}`, { mode, only, event });
     else if (event?.type === 'retry' || event?.type === 'blocked') writeLog('warn', `sync.${event.type}`, { mode, only, event });
     else if (event?.type === 'done') writeLog(event.errors ? 'warn' : 'info', 'sync.done', { mode, only, event });
     winSend('sync-event', event);

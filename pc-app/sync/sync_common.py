@@ -46,7 +46,7 @@ REMOTE_CODEX_MEM = "/home/tima/sync/codex-memory"
 # Папки, которые НЕ синхронизируем (ни push, ни pull).
 SKIP_DIRS = {
     # сборки/зависимости
-    "node_modules", ".next", ".git", "__pycache__", ".venv", "venv",
+    "node_modules", ".next", ".git", ".expo", "__pycache__", ".venv", "venv",
     "dist", "build", ".turbo", ".cache", ".npm", ".nvm",
     "target",
     # claude code runtime (большие, бесполезные на другой машине)
@@ -62,6 +62,7 @@ SKIP_DIRS = {
 }
 SKIP_DIR_PREFIXES = (
     ".chrome-design-",  # временные профили Chrome: кэш, cookies и заблокированные SQLite-файлы
+    ".chrome-debug-profile",  # профили браузерных тестов: только кэш и машинное состояние
 )
 
 # Корневые папки внутри C:\Claude, которые исключаем только при push
@@ -255,7 +256,7 @@ def is_protected_on_pull(rel):
 # ===== сканирование =====
 
 def scan_local(base, is_push, label="local", progress=None, extra_skip_dirs=None, extra_skip_files=None,
-               include_roots=None):
+               include_roots=None, allow_large=False):
     """Возвращает dict: relpath → (size, mtime_int).
     Ручной DFS, чтобы НЕ заходить в SKIP_DIRS (node_modules, .git и т.п.).
     rglob идёт во все папки и фильтрует постфактум — это убивало 10+ минут на скан."""
@@ -283,6 +284,14 @@ def scan_local(base, is_push, label="local", progress=None, extra_skip_dirs=None
                 if e.is_dir(follow_symlinks=False):
                     if e.name in skip_dirs or any(e.name.startswith(prefix) for prefix in SKIP_DIR_PREFIXES):
                         continue
+                    # Linked Git worktrees are temporary parallel agent checkouts. The
+                    # canonical project is already synced; copying every worktree would
+                    # duplicate hundreds of megabytes and later restore stale branches.
+                    try:
+                        if (Path(e.path) / ".git").is_file():
+                            continue
+                    except OSError:
+                        pass
                     if base == LOCAL_PROJECTS and d == base and e.name in SKIP_ROOT_DIRS:
                         continue
                     stack.append(Path(e.path))
@@ -293,7 +302,7 @@ def scan_local(base, is_push, label="local", progress=None, extra_skip_dirs=None
                         continue
                     try:
                         st = e.stat()
-                        if is_push and st.st_size > MAX_FILE_SIZE:
+                        if is_push and not allow_large and st.st_size > MAX_FILE_SIZE:
                             continue
                         rel = str(Path(e.path).relative_to(base)).replace("\\", "/")
                         files[rel] = (st.st_size, int(st.st_mtime))
