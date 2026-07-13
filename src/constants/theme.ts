@@ -96,5 +96,5 @@ export const Spacing = {
 export const BottomTabInset = Platform.select({ ios: 50, android: 80, web: 64 }) ?? 0;
 export const MaxContentWidth = 800;
 
-/** Номер сборки JS — показывается в углу экрана. Увеличивать при каждом выкате OTA. */
-export const APP_BUILD = 70;
+/** Пользовательская версия Noda. Меняется только вместе с нативной TestFlight-сборкой. */
+export const APP_BUILD = 71;

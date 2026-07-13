@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/refs -- large note bodies intentionally live in refs to avoid rerendering every keystroke */
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {

@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/refs, react-hooks/purity, react-hooks/set-state-in-effect -- gesture lifecycle and live meter are synchronized through native recorder refs */
+/* eslint-disable react-hooks/purity -- gesture lifecycle and live meter are synchronized through native recorder refs */
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
@@ -159,8 +159,10 @@ export function VoiceRecorder({ onTranscript, disabled = false }: Props) {
 
   const pan = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      // Новый жест захватываем только на спокойной кнопке микрофона. Уже идущий
+      // жест остаётся у этого же корневого View при переходе preparing → recording.
+      onStartShouldSetPanResponder: () => phaseRef.current === 'idle',
+      onMoveShouldSetPanResponder: () => phaseRef.current === 'idle',
       onPanResponderGrant: () => { begin(); },
       onPanResponderMove: (_event, gesture) => {
         if (gesture.dy < -66 && !lockedRef.current) {
@@ -183,22 +185,25 @@ export function VoiceRecorder({ onTranscript, disabled = false }: Props) {
   const active = phase === 'preparing' || phase === 'recording';
   const duration = phase === 'recording' ? recorderState.durationMillis : 0;
 
-  if (phase === 'transcribing') {
-    return (
-      <View style={[styles.composerOverlay, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
+  return (
+    <View
+      {...pan.panHandlers}
+      style={phase === 'transcribing'
+        ? [styles.composerOverlay, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]
+        : active
+          ? [styles.composerOverlay, styles.activeBar, { backgroundColor: theme.backgroundElement, borderColor: theme.tint }]
+          : styles.idleRoot}>
+      {phase === 'transcribing' ? (
+        <>
         <ActivityIndicator size="small" color={theme.tint} />
         <View style={styles.transcribingWave}>
           {[0.35, 0.7, 1, 0.58, 0.28].map((height, index) => (
             <View key={index} style={[styles.transcribingBar, { height: 7 + height * 17, backgroundColor: theme.tint }]} />
           ))}
         </View>
-      </View>
-    );
-  }
-
-  if (active) {
-    return (
-      <View style={[styles.composerOverlay, styles.activeBar, { backgroundColor: theme.backgroundElement, borderColor: theme.tint }]}>
+        </>
+      ) : active ? (
+        <>
         <Pressable onPress={() => finish(false)} hitSlop={10} style={styles.cancelButton}>
           <SymbolView name="xmark" tintColor={theme.danger} size={17} />
         </Pressable>
@@ -212,33 +217,29 @@ export function VoiceRecorder({ onTranscript, disabled = false }: Props) {
         </View>
         <ThemedText type="smallBold" style={styles.timer}>{phase === 'preparing' ? '…' : mmss(duration)}</ThemedText>
         {locked && <SymbolView name="lock.fill" tintColor={theme.tint} size={15} />}
-        <View {...pan.panHandlers}>
-          <Pressable
-            onPress={locked ? () => finish(true) : undefined}
-            style={[styles.mic, { backgroundColor: locked ? theme.tint : theme.danger }]}>
-            <SymbolView name={locked ? 'arrow.up' : 'mic.fill'} tintColor="#FFFFFF" size={21} />
-          </Pressable>
-        </View>
+        <Pressable
+          onPress={locked ? () => finish(true) : undefined}
+          style={[styles.mic, { backgroundColor: locked ? theme.tint : theme.danger }]}>
+          <SymbolView name={locked ? 'arrow.up' : 'mic.fill'} tintColor="#FFFFFF" size={21} />
+        </Pressable>
         {!locked && (
           <View style={styles.lockHint} pointerEvents="none">
             <SymbolView name="lock.fill" tintColor={theme.textSecondary} size={13} />
             <SymbolView name="chevron.up" tintColor={theme.textSecondary} size={10} />
           </View>
         )}
-      </View>
-    );
-  }
-
-  return (
-    <View {...pan.panHandlers}>
+        </>
+      ) : (
       <Pressable accessibilityLabel="Записать голос" disabled={disabled} style={[styles.mic, { backgroundColor: theme.tint, opacity: disabled ? 0.45 : 1 }]}>
         <SymbolView name="mic.fill" tintColor="#FFFFFF" size={21} />
       </Pressable>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  idleRoot: { width: 40, height: 40 },
   composerOverlay: {
     position: 'absolute',
     left: 4,

@@ -174,6 +174,14 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
     inlineWeb.current?.injectJavaScript('window.__reset&&window.__reset();true;');
     fsWeb.current?.injectJavaScript('window.__reset&&window.__reset();true;');
   }
+  function openKeyboard(inFull: boolean) {
+    const input = inFull ? fsKbInput : kbInput;
+    input.current?.focus();
+    // После открытия полноэкранного Modal iOS иногда игнорирует первый focus.
+    // Повтор в следующем кадре не меняет жест пользователя, но гарантирует клавиатуру.
+    requestAnimationFrame(() => input.current?.focus());
+    setMenu(false);
+  }
   const key = (k: string) => { haptic.tap(); send({ type: 'screen_input', action: 'key', key: k }); };
   function onKbChange(t: string) {
     if (t.length > kbVal.length) send({ type: 'screen_input', action: 'key', text: t.slice(kbVal.length) });
@@ -213,7 +221,7 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
       {/* раскрытая панель */}
       {menu && (
         <Animated.View entering={FadeIn.duration(140)} exiting={FadeOut.duration(120)} style={[styles.panel, { top: (inFull ? 44 : 8) + 50, backgroundColor: 'rgba(18,20,26,0.92)' }]}>
-          <TouchableOpacity style={styles.row} onPress={() => { (inFull ? fsKbInput : kbInput).current?.focus(); }}>
+          <TouchableOpacity style={styles.row} onPress={() => openKeyboard(inFull)}>
             <SymbolView name="keyboard" tintColor="#fff" size={16} />
             <ThemedText type="smallBold" style={styles.rowTxt}>Клавиатура</ThemedText>
           </TouchableOpacity>
@@ -317,5 +325,5 @@ const styles = StyleSheet.create({
   monBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: Radius.sm },
   keysRow: { flexDirection: 'row', gap: 6, paddingHorizontal: Spacing.two, paddingVertical: 3 },
   keyBtn: { flex: 1, alignItems: 'center', paddingVertical: 9, borderRadius: Radius.sm, backgroundColor: 'rgba(255,255,255,0.1)' },
-  hidden: { position: 'absolute', width: 1, height: 1, opacity: 0, top: -100 },
+  hidden: { position: 'absolute', width: 2, height: 2, opacity: 0.01, left: -8, bottom: 0 },
 });

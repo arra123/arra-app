@@ -44,7 +44,7 @@ export function ChatScreen() {
     try {
       const reply = await aiChat(next.filter((m) => m !== GREETING));
       setMessages((cur) => [...cur, { role: 'assistant', content: reply }]);
-    } catch (e: any) {
+    } catch {
       setMessages((cur) => [...cur, { role: 'assistant', content: 'Связь упала 📵 Попробуй ещё раз.' }]);
     } finally {
       setSending(false);
