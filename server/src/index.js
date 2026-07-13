@@ -20,6 +20,31 @@ import ulyanaRoutes from './routes/ulyana.js';
 
 const app = Fastify({ logger: true, bodyLimit: 25 * 1024 * 1024 });
 
+app.setErrorHandler((error, request, reply) => {
+  // Всегда сохраняем исходную ошибку, URL и reqId в journalctl. Клиенту при
+  // этом отдаём короткое объяснение вместо бесполезного Internal Server Error.
+  request.log.error({ err: error }, 'request failed');
+  const message = String(error?.message || '');
+  const isAiUpstream = /^(AI|Whisper)\s+\d+:/i.test(message);
+  if (isAiUpstream) {
+    const noBalance = /\b402\b|insufficient balance/i.test(message);
+    return reply.code(503).send({
+      error: noBalance
+        ? 'На AI-сервисе закончился баланс. Нужен другой ключ или пополнение.'
+        : 'AI-сервис сейчас не отвечает. Попробуйте ещё раз чуть позже.',
+      code: noBalance ? 'AI_BALANCE_EMPTY' : 'AI_UPSTREAM_ERROR',
+    });
+  }
+
+  const statusCode = Number(error?.statusCode) >= 400 && Number(error?.statusCode) < 500
+    ? Number(error.statusCode)
+    : 500;
+  return reply.code(statusCode).send({
+    error: statusCode < 500 && message ? message : 'Внутренняя ошибка сервера',
+    code: statusCode < 500 ? 'REQUEST_ERROR' : 'INTERNAL_ERROR',
+  });
+});
+
 await app.register(cors, { origin: true });
 await app.register(jwt, { secret: config.jwtSecret });
 // Файлы (в т.ч. видео с телефона) — до 1 ГБ; сохраняются стримом, память не раздувают
