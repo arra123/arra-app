@@ -1,15 +1,13 @@
-import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
-import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
 import { useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Animated,
-  AppState,
+  Image,
   Keyboard,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   TextInput,
@@ -20,288 +18,231 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Radius, Spacing } from '@/constants/theme';
+import { VoiceRecorder } from '@/components/voice-recorder';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, API_URL, getToken } from '@/lib/api';
+import { api } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
 
 type Msg = { id: string; role: 'user' | 'assistant'; content: string; created_at?: string };
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-const hhmm = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '');
+type Attachment = { uri: string; data: string };
+
+const hhmm = (iso?: string) => iso
+  ? new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+  : '';
+
+const STARTERS = [
+  'Помоги распланировать день',
+  'Создай заметку из моих мыслей',
+  'Объясни сложное простыми словами',
+];
 
 export function Assistant() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [sending, setSending] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [recSecs, setRecSecs] = useState(0);
-  const recTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const recStart = useRef(0); // момент старта записи (реальные часы) — переживает сворачивание
+  const [error, setError] = useState('');
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
   const inputRef = useRef<TextInput>(null);
-  const pulse = useRef(new Animated.Value(1)).current;
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-
-  const [kbHeight, setKbHeight] = useState(0);
 
   const scrollEnd = useCallback((animated = true) => {
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated }));
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      inputRef.current?.blur();
-      Keyboard.dismiss();
-      return () => { inputRef.current?.blur(); Keyboard.dismiss(); };
-    }, []),
-  );
+  useFocusEffect(useCallback(() => {
+    inputRef.current?.blur();
+    Keyboard.dismiss();
+    return () => { inputRef.current?.blur(); Keyboard.dismiss(); };
+  }, []));
 
-  // Единый механизм подъёма над клавиатурой: слушаем высоту клавиатуры и поднимаем
-  // только док. БЕЗ KeyboardAvoidingView — иначе два механизма дёргали поле «туда-сюда».
   useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const show = Keyboard.addListener(showEvt, (e) => { setKbHeight(e.endCoordinates?.height || 0); scrollEnd(false); });
-    const hide = Keyboard.addListener(hideEvt, () => setKbHeight(0));
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates?.height || 0);
+      scrollEnd(false);
+    });
+    const hide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
     return () => { show.remove(); hide.remove(); };
   }, [scrollEnd]);
 
-  // Запись на iOS продолжается в фоне (UIBackgroundModes: audio + shouldPlayInBackground).
-  // JS-таймеры замирают при сворачивании, поэтому счётчик считаем от реального времени старта,
-  // а при возврате в приложение сразу подтягиваем актуальную длительность.
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (s) => {
-      if (s === 'active' && recording && recStart.current) {
-        setRecSecs(Math.floor((Date.now() - recStart.current) / 1000));
-      }
-    });
-    return () => sub.remove();
-  }, [recording]);
-
-  useEffect(() => {
-    if (!recording) return;
-    const anim = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.35, duration: 600, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
-      ]),
-    );
-    anim.start();
-    return () => anim.stop();
-  }, [recording, pulse]);
-
   const load = useCallback(async () => {
     try {
-      const r = await api<{ messages: Msg[] }>('/ai/messages');
-      setMsgs(r.messages);
+      const result = await api<{ messages: Msg[] }>('/ai/messages');
+      setMessages(result.messages || []);
     } catch {
-      /* ignore */
+      // История не блокирует сам экран: ошибка отправки будет показана отдельно.
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // История загружается после первого кадра, чтобы открытие вкладки не блокировалось сетью.
+    const timer = setTimeout(load, 0);
+    return () => clearTimeout(timer);
+  }, [load]);
 
-  async function undoLast() {
-    try {
-      const r = await api<{ ok: boolean; label?: string }>('/ai/undo', { method: 'POST' });
-      if (r.ok) {
-        await load();
-        Alert.alert('Отменено', r.label ? `Удалено: ${r.label}` : 'Последняя запись удалена');
-      } else {
-        Alert.alert('Нечего отменять', 'Помощник пока ничего не записывал.');
-      }
-    } catch (e: any) {
-      Alert.alert('Не получилось', e?.message || '');
-    }
-  }
-
-  async function send(text: string) {
-    const t = text.trim();
-    if (!t || sending) return;
-    haptic.tap();
+  async function send(value: string, forcedAttachment = attachment) {
+    const text = value.trim();
+    if ((!text && !forcedAttachment) || sending) return;
     Keyboard.dismiss();
     setInput('');
-    setMsgs((p) => [...p, { id: 'tmp-' + p.length, role: 'user', content: t }]);
+    setAttachment(null);
+    setError('');
+    const optimistic = forcedAttachment ? `📷 ${text || 'Фото'}` : text;
+    setMessages((current) => [...current, { id: `tmp-${Date.now()}`, role: 'user', content: optimistic }]);
     setSending(true);
+    haptic.tap();
     try {
-      await api('/ai/assistant', { body: { text: t } });
+      await api('/ai/assistant', { body: { text, image: forcedAttachment?.data } });
       await load();
       haptic.success();
-    } catch (e: any) {
+    } catch (sendError: any) {
       haptic.error();
-      Alert.alert('Не получилось', e?.message || '');
+      setError(sendError?.message || 'Не удалось получить ответ');
     } finally {
       setSending(false);
     }
   }
 
-  async function startVoice() {
-    if (sending || recording) return;
-    const perm = await requestRecordingPermissionsAsync();
-    if (!perm.granted) return Alert.alert('Нужен доступ к микрофону');
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: true });
-    await recorder.prepareToRecordAsync();
-    recorder.record();
-    haptic.press();
-    recStart.current = Date.now();
-    setRecSecs(0);
-    setRecording(true);
-    // Считаем от реального времени старта — счётчик верен даже после сворачивания
-    recTimer.current = setInterval(() => setRecSecs(Math.floor((Date.now() - recStart.current) / 1000)), 1000);
-  }
-  async function stopVoice(doSend: boolean) {
-    if (!recording) return;
-    haptic.tap();
-    if (recTimer.current) clearInterval(recTimer.current);
-    setRecording(false);
-    try { await recorder.stop(); } catch { /* ignore */ }
-    const uri = recorder.uri;
-    const elapsed = recStart.current ? (Date.now() - recStart.current) / 1000 : recSecs;
-    if (!doSend || !uri || elapsed < 1) return;
-    setSending(true);
-    try {
-      const token = await getToken();
-      const res = await uploadAsync(`${API_URL}/ai/transcribe`, uri, {
-        httpMethod: 'POST', uploadType: FileSystemUploadType.MULTIPART, fieldName: 'file',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
-      if (res.status >= 400) throw new Error('Ошибка ' + res.status);
-      const data = JSON.parse(res.body || '{}');
-      setSending(false);
-      if (data.text) setInput((prev) => (prev.trim() ? prev.trim() + ' ' : '') + data.text);
-    } catch (e: any) {
-      setSending(false);
-      Alert.alert('Не распознал голос', e?.message || '');
-    }
-  }
-
-  async function addByImage(fromCamera: boolean) {
+  async function chooseImage(fromCamera: boolean) {
     if (sending) return;
     const ImagePicker = await import('expo-image-picker');
     if (fromCamera) {
-      const p = await ImagePicker.requestCameraPermissionsAsync();
-      if (!p.granted) return Alert.alert('Нужен доступ к камере');
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) return Alert.alert('Нужен доступ к камере');
     }
-    const res = fromCamera
-      ? await ImagePicker.launchCameraAsync({ base64: true, quality: 0.5 })
-      : await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.5, mediaTypes: ['images'] });
-    if (res.canceled || !res.assets?.[0]?.base64) return;
-    const a = res.assets[0];
-    setMsgs((p) => [...p, { id: 'tmp-img-' + p.length, role: 'user', content: 'Скриншот' }]);
-    setSending(true);
-    try {
-      const r = await api<{ saved?: { transaction?: { amount: string; category: string; type: string } } }>('/ai/image', {
-        body: { image: `data:${a.mimeType || 'image/jpeg'};base64,${a.base64}` },
-      });
-      const tx = r.saved?.transaction;
-      setMsgs((p) => [...p, { id: 'tmp-r-' + p.length, role: 'assistant', content: tx ? `Записал со скриншота: ${tx.type === 'income' ? 'доход' : 'расход'} ${Math.round(Number(tx.amount))} ₽ · ${tx.category}` : 'Не нашёл операцию на скриншоте' }]);
-    } catch (e: any) {
-      Alert.alert('Не разобрал скриншот', e?.message || '');
-    } finally {
-      setSending(false);
-    }
+    const result = fromCamera
+      ? await ImagePicker.launchCameraAsync({ base64: true, quality: 0.55 })
+      : await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.55, mediaTypes: ['images'] });
+    const asset = result.canceled ? null : result.assets?.[0];
+    if (!asset?.base64) return;
+    setAttachment({ uri: asset.uri, data: `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}` });
   }
-  const pickImageSource = () =>
-    Alert.alert('Скриншот', 'Откуда взять?', [
-      { text: 'Камера', onPress: () => addByImage(true) },
-      { text: 'Галерея', onPress: () => addByImage(false) },
+
+  function pickImage() {
+    Alert.alert('Фото для Noda', '', [
+      { text: 'Снять', onPress: () => chooseImage(true) },
+      { text: 'Из галереи', onPress: () => chooseImage(false) },
       { text: 'Отмена', style: 'cancel' },
     ]);
+  }
+
+  function clearHistory() {
+    if (!messages.length) return;
+    Alert.alert('Очистить диалог?', 'Заметки и другие данные не удалятся.', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Очистить', style: 'destructive', onPress: async () => { await api('/ai/messages', { method: 'DELETE' }); setMessages([]); } },
+    ]);
+  }
 
   return (
-    <ThemedView style={{ flex: 1 }}>
-      <View style={{ flex: 1 }}>
-        <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
-          <ThemedText style={styles.title}>Помощник</ThemedText>
-          <TouchableOpacity onPress={undoLast} hitSlop={8} style={[styles.undoBtn, { borderColor: theme.separator }]}>
-            <SymbolView name="arrow.uturn.backward" tintColor={theme.textSecondary} size={14} />
-            <ThemedText type="small" themeColor="textSecondary">Отменить</ThemedText>
-          </TouchableOpacity>
+    <ThemedView style={styles.container}>
+      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+        <View>
+          <View style={styles.nameRow}>
+            <View style={[styles.liveDot, { backgroundColor: theme.tint }]} />
+            <ThemedText style={styles.title}>Noda</ThemedText>
+          </View>
+          <ThemedText type="small" themeColor="textSecondary">вопросы, фото и работа с заметками</ThemedText>
         </View>
+        <TouchableOpacity onPress={clearHistory} hitSlop={10} style={[styles.clearButton, { borderColor: theme.separator }]}>
+          <SymbolView name="trash" tintColor={theme.textSecondary} size={16} />
+        </TouchableOpacity>
+      </View>
 
-        <ScrollView
-          ref={scrollRef}
-          style={{ flex: 1 }}
-          contentContainerStyle={styles.feed}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => scrollEnd(false)}>
-          {msgs.length === 0 ? (
-            <View style={styles.emptyWrap}>
-              <SymbolView name="bubble.left.and.bubble.right" tintColor={theme.separator} size={44} />
+      <ScrollView
+        ref={scrollRef}
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.feed}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        showsVerticalScrollIndicator={false}
+        onContentSizeChange={() => scrollEnd(false)}>
+        {messages.length === 0 ? (
+          <View style={styles.empty}>
+            <View style={[styles.orb, { backgroundColor: `${theme.tint}1A`, borderColor: `${theme.tint}45` }]}>
+              <SymbolView name="sparkles" tintColor={theme.tint} size={30} />
             </View>
-          ) : (
-            msgs.map((m) =>
-              m.role === 'user' ? (
-                <View key={m.id} style={styles.userRow}>
-                  <View style={[styles.userBubble, { backgroundColor: theme.tint }]}>
-                    <ThemedText style={{ color: '#fff' }}>{m.content}</ThemedText>
-                  </View>
-                  {!!hhmm(m.created_at) && <ThemedText type="small" themeColor="textSecondary" style={styles.time}>{hhmm(m.created_at)}</ThemedText>}
-                </View>
-              ) : (
-                <View key={m.id} style={styles.aiRow}>
-                  <View style={[styles.aiBubble, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
-                    <ThemedText>{m.content}</ThemedText>
-                  </View>
-                  {!!hhmm(m.created_at) && <ThemedText type="small" themeColor="textSecondary" style={styles.time}>{hhmm(m.created_at)}</ThemedText>}
-                </View>
-              ),
-            )
-          )}
-          {sending && (
-            <View style={styles.typingRow}>
-              <ActivityIndicator size="small" color={theme.textSecondary} />
+            <ThemedText style={styles.emptyTitle}>Спросите что угодно</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
+              Noda может отвечать на обычные вопросы, разбирать фото, создавать и редактировать ваши заметки.
+            </ThemedText>
+            <View style={styles.starters}>
+              {STARTERS.map((starter) => (
+                <Pressable key={starter} onPress={() => setInput(starter)} style={[styles.starter, { backgroundColor: theme.backgroundElement }]}>
+                  <ThemedText type="small">{starter}</ThemedText>
+                  <SymbolView name="arrow.up.left" tintColor={theme.textSecondary} size={13} />
+                </Pressable>
+              ))}
             </View>
-          )}
-        </ScrollView>
+          </View>
+        ) : (
+          messages.map((message) => (
+            <View key={message.id} style={message.role === 'user' ? styles.userRow : styles.aiRow}>
+              {message.role === 'assistant' && (
+                <View style={[styles.aiMark, { backgroundColor: `${theme.tint}1F` }]}>
+                  <SymbolView name="sparkles" tintColor={theme.tint} size={14} />
+                </View>
+              )}
+              <View style={message.role === 'user'
+                ? [styles.userBubble, { backgroundColor: theme.tint }]
+                : [styles.aiBubble, { backgroundColor: theme.backgroundElement }]}>
+                <ThemedText style={message.role === 'user' ? { color: '#07120D' } : undefined}>{message.content}</ThemedText>
+                {!!hhmm(message.created_at) && (
+                  <ThemedText type="small" style={[styles.time, { color: message.role === 'user' ? 'rgba(7,18,13,0.55)' : theme.textSecondary }]}>{hhmm(message.created_at)}</ThemedText>
+                )}
+              </View>
+            </View>
+          ))
+        )}
+        {sending && (
+          <View style={styles.aiRow}>
+            <View style={[styles.aiMark, { backgroundColor: `${theme.tint}1F` }]}><SymbolView name="sparkles" tintColor={theme.tint} size={14} /></View>
+            <View style={[styles.typing, { backgroundColor: theme.backgroundElement }]}>
+              <ActivityIndicator size="small" color={theme.tint} /><ThemedText type="small" themeColor="textSecondary">Думаю…</ThemedText>
+            </View>
+          </View>
+        )}
+        {!!error && (
+          <Pressable onPress={() => send(input)} style={[styles.error, { borderColor: theme.danger }]}>
+            <SymbolView name="exclamationmark.triangle.fill" tintColor={theme.danger} size={16} />
+            <ThemedText type="small" style={{ color: theme.danger, flex: 1 }}>{error}</ThemedText>
+          </Pressable>
+        )}
+      </ScrollView>
 
-        <View style={[styles.dock, { paddingBottom: (kbHeight > 0 ? kbHeight : insets.bottom) + Spacing.two }]}>
-          {recording ? (
-            <View style={[styles.bar, { backgroundColor: theme.backgroundElement }]}>
-              {/* Кнопка «готово» там же, где была кнопка микрофона — слева начал, слева и закончил */}
-              <TouchableOpacity onPress={() => stopVoice(true)} activeOpacity={0.85}>
-                <View style={[styles.micBig, { backgroundColor: theme.tint }]}><SymbolView name="checkmark" tintColor="#fff" size={22} /></View>
-              </TouchableOpacity>
-              <Animated.View style={[styles.recDot, { backgroundColor: theme.danger, transform: [{ scale: pulse }] }]} />
-              <ThemedText style={{ flex: 1, color: theme.text, fontWeight: '600' }}>Слушаю… {mmss(recSecs)}</ThemedText>
-              <TouchableOpacity onPress={() => stopVoice(false)} hitSlop={8} style={styles.mini}>
-                <ThemedText type="smallBold" themeColor="textSecondary">Отмена</ThemedText>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={[styles.bar, { backgroundColor: theme.backgroundElement }]}>
-              <TouchableOpacity onPress={startVoice} activeOpacity={0.85}>
-                <View style={[styles.micBig, { backgroundColor: theme.tint }]}>
-                  <SymbolView name="mic.fill" tintColor="#fff" size={22} />
-                </View>
-              </TouchableOpacity>
-              <TextInput
-                ref={inputRef}
-                placeholder="Сообщение"
-                placeholderTextColor={theme.textSecondary}
-                value={input}
-                onChangeText={setInput}
-                onSubmitEditing={() => send(input)}
-                returnKeyType="send"
-                multiline
-                style={[styles.input, { color: theme.text }]}
-              />
-              <TouchableOpacity onPress={pickImageSource} hitSlop={10} style={styles.mini}>
-                <SymbolView name="camera.fill" tintColor={theme.textSecondary} size={24} />
-              </TouchableOpacity>
-              {input.trim() ? (
-                <TouchableOpacity onPress={() => send(input)} disabled={sending} activeOpacity={0.8}>
-                  <View style={[styles.send, { backgroundColor: theme.tint }]}>
-                    {sending ? <ActivityIndicator color="#fff" size="small" /> : <SymbolView name="arrow.up" tintColor="#fff" size={22} />}
-                  </View>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-          )}
+      <View style={[styles.dock, { paddingBottom: (keyboardHeight > 0 ? keyboardHeight : insets.bottom) + Spacing.two }]}>
+        <VoiceRecorder disabled={sending} hint="держите · вверх — зафиксировать · влево — отмена" onTranscript={(text) => send(text, null)} />
+        {!!attachment && (
+          <View style={[styles.attachment, { backgroundColor: theme.backgroundElement }]}>
+            <Image source={{ uri: attachment.uri }} style={styles.attachmentImage} />
+            <View style={{ flex: 1 }}><ThemedText type="smallBold">Фото прикреплено</ThemedText><ThemedText type="small" themeColor="textSecondary">Добавьте вопрос или отправьте сразу</ThemedText></View>
+            <TouchableOpacity onPress={() => setAttachment(null)}><SymbolView name="xmark.circle.fill" tintColor={theme.textSecondary} size={23} /></TouchableOpacity>
+          </View>
+        )}
+        <View style={[styles.composer, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
+          <TouchableOpacity onPress={pickImage} style={styles.iconButton}>
+            <SymbolView name="plus" tintColor={theme.textSecondary} size={22} />
+          </TouchableOpacity>
+          <TextInput
+            ref={inputRef}
+            value={input}
+            onChangeText={setInput}
+            placeholder="Сообщение Noda"
+            placeholderTextColor={theme.textSecondary}
+            multiline
+            returnKeyType="default"
+            style={[styles.input, { color: theme.text }]}
+          />
+          {(input.trim() || attachment) ? (
+            <TouchableOpacity disabled={sending} onPress={() => send(input)} style={[styles.sendButton, { backgroundColor: theme.tint }]}>
+              <SymbolView name="arrow.up" tintColor="#07120D" size={21} />
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
     </ThemedView>
@@ -309,22 +250,32 @@ export function Assistant() {
 }
 
 const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#0D100F' },
   header: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.two, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { fontSize: 34, fontWeight: '800', lineHeight: 40 },
-  undoBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth },
-  feed: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.three, gap: Spacing.two, flexGrow: 1 },
-  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.six },
-  time: { marginTop: 2, marginHorizontal: 6, fontSize: 11 },
-  userRow: { alignItems: 'flex-end' },
-  userBubble: { maxWidth: '85%', paddingVertical: Spacing.two, paddingHorizontal: Spacing.three, borderRadius: Radius.lg, borderBottomRightRadius: 6 },
-  aiRow: { alignItems: 'flex-start' },
-  aiBubble: { maxWidth: '90%', padding: Spacing.three, borderRadius: Radius.lg, borderBottomLeftRadius: 6, borderWidth: StyleSheet.hairlineWidth },
-  typingRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two, paddingHorizontal: 4 },
-  dock: { paddingHorizontal: Spacing.three, paddingTop: Spacing.one },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingLeft: 6, paddingRight: 6, paddingVertical: 5, minHeight: 52, borderRadius: 26, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.1)' },
-  input: { flex: 1, fontSize: 16, paddingVertical: Spacing.two, maxHeight: 100 },
-  mini: { padding: 6 },
-  micBig: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  send: { width: 40, height: 40, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
-  recDot: { width: 16, height: 16, borderRadius: 8, marginLeft: Spacing.two },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  liveDot: { width: 9, height: 9, borderRadius: 5 },
+  title: { fontSize: 34, lineHeight: 39, fontWeight: '800', letterSpacing: -1.1 },
+  clearButton: { width: 40, height: 40, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
+  feed: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two, paddingBottom: Spacing.four, gap: 10, flexGrow: 1 },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.five },
+  orb: { width: 72, height: 72, borderRadius: 26, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.three },
+  emptyTitle: { fontSize: 24, lineHeight: 30, fontWeight: '800' },
+  emptyText: { maxWidth: 310, textAlign: 'center', marginTop: 6 },
+  starters: { width: '100%', gap: 7, marginTop: Spacing.four },
+  starter: { minHeight: 46, paddingHorizontal: 14, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  userRow: { alignItems: 'flex-end', paddingLeft: 40 },
+  aiRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingRight: 30 },
+  aiMark: { width: 28, height: 28, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  userBubble: { maxWidth: '94%', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 18, borderBottomRightRadius: 6 },
+  aiBubble: { maxWidth: '94%', paddingVertical: 11, paddingHorizontal: 14, borderRadius: 18, borderBottomLeftRadius: 6 },
+  time: { fontSize: 10, lineHeight: 13, textAlign: 'right', marginTop: 3 },
+  typing: { minHeight: 44, borderRadius: 18, borderBottomLeftRadius: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  error: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, padding: 12, flexDirection: 'row', gap: 8, alignItems: 'center' },
+  dock: { paddingHorizontal: Spacing.three, paddingTop: 7, gap: 7, backgroundColor: '#0D100F' },
+  attachment: { minHeight: 58, borderRadius: 14, padding: 7, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  attachmentImage: { width: 44, height: 44, borderRadius: 10 },
+  composer: { minHeight: 52, maxHeight: 130, borderRadius: 26, borderWidth: StyleSheet.hairlineWidth, padding: 5, flexDirection: 'row', alignItems: 'flex-end', gap: 5 },
+  iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  input: { flex: 1, minHeight: 40, maxHeight: 112, paddingVertical: 9, fontSize: 16, lineHeight: 21 },
+  sendButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
 });

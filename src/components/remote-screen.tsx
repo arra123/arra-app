@@ -130,6 +130,7 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
   const inlineWeb = useRef<WebView>(null);
   const fsWeb = useRef<WebView>(null);
   const kbInput = useRef<TextInput>(null);
+  const fsKbInput = useRef<TextInput>(null);
   const [kbVal, setKbVal] = useState(SENT);
   const [full, setFull] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -145,8 +146,6 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
     }
     return () => { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {}); };
   }, [full]);
-
-  const activeWeb = () => (fullRef.current ? fsWeb.current : inlineWeb.current);
 
   useImperativeHandle(ref, () => ({
     pushFrame: (data: string) => {
@@ -214,7 +213,7 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
       {/* раскрытая панель */}
       {menu && (
         <Animated.View entering={FadeIn.duration(140)} exiting={FadeOut.duration(120)} style={[styles.panel, { top: (inFull ? 44 : 8) + 50, backgroundColor: 'rgba(18,20,26,0.92)' }]}>
-          <TouchableOpacity style={styles.row} onPress={() => { kbInput.current?.focus(); }}>
+          <TouchableOpacity style={styles.row} onPress={() => { (inFull ? fsKbInput : kbInput).current?.focus(); }}>
             <SymbolView name="keyboard" tintColor="#fff" size={16} />
             <ThemedText type="smallBold" style={styles.rowTxt}>Клавиатура</ThemedText>
           </TouchableOpacity>
@@ -291,6 +290,17 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
         <View style={{ flex: 1, backgroundColor: '#000' }}>
           {screenView(fsWeb)}
           {controls(true)}
+          <TextInput
+            ref={fsKbInput}
+            value={kbVal}
+            onChangeText={onKbChange}
+            onSubmitEditing={() => key('enter')}
+            blurOnSubmit={false}
+            autoCapitalize="none"
+            autoCorrect={false}
+            spellCheck={false}
+            style={styles.hidden}
+          />
         </View>
       </Modal>
     </View>
