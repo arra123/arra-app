@@ -1505,7 +1505,7 @@ function listPotentialBlockers() {
   }));
   if (process.platform !== 'win32') return Promise.resolve(terminalItems);
   const names = "'Code','Cursor','Claude','ChatGPT','WINWORD','EXCEL','POWERPNT','Acrobat','AcroRd32','devenv','notepad++','Obsidian'";
-  const command = `$names=@(${names}); Get-Process -ErrorAction SilentlyContinue | Where-Object { (($names -contains $_.ProcessName) -and $_.MainWindowHandle -ne 0) -or $_.ProcessName -like 'codex*' } | Select-Object ProcessName,Id,MainWindowTitle | ConvertTo-Json -Compress`;
+  const command = `$names=@(${names}); Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and (($names -contains $_.ProcessName) -or $_.ProcessName -like 'codex*') } | Select-Object ProcessName,Id,MainWindowTitle | ConvertTo-Json -Compress`;
   return new Promise((resolve) => {
     execFile('powershell.exe', psArgs(command), { encoding: 'utf8', windowsHide: true, timeout: 8000 }, (error, stdout) => {
       if (error) writeLog('error', 'sync.blockers.list', error);
