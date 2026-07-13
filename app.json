@@ -1,18 +1,18 @@
 {
   "expo": {
-    "name": "Arra",
+    "name": "Noda",
     "slug": "aura",
     "owner": "arratima",
-    "version": "1.4.4",
+    "version": "1.5.0",
     "orientation": "default",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/noda-app-icon.png",
     "scheme": "aura",
     "userInterfaceStyle": "automatic",
     "runtimeVersion": {
       "policy": "appVersion"
     },
     "ios": {
-      "icon": "./assets/images/icon.png",
+      "icon": "./assets/images/noda-app-icon.png",
       "bundleIdentifier": "com.arratima.aura",
       "supportsTablet": true,
       "infoPlist": {
@@ -20,24 +20,20 @@
         "UIBackgroundModes": [
           "audio"
         ],
-        "NSCameraUsageDescription": "Arra использует камеру, чтобы быстро снимать чеки и фото для переноса на компьютер.",
-        "NSMicrophoneUsageDescription": "Arra использует микрофон для голосового ввода трат.",
-        "NSPhotoLibraryUsageDescription": "Arra добавляет фото и скриншоты из галереи для распознавания трат и переноса файлов."
+        "NSCameraUsageDescription": "Noda использует камеру, чтобы быстро снимать чеки и фото для переноса на компьютер.",
+        "NSMicrophoneUsageDescription": "Noda использует микрофон для голосового ввода трат.",
+        "NSPhotoLibraryUsageDescription": "Noda добавляет фото и скриншоты из галереи для распознавания трат и переноса файлов."
       }
     },
     "android": {
+      "icon": "./assets/images/noda-app-icon.png",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#F4F7FB",
+        "foregroundImage": "./assets/images/noda-mark.png",
+        "monochromeImage": "./assets/images/noda-mark.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.FOREGROUND_SERVICE",
@@ -46,7 +42,7 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/noda-app-icon.png"
     },
     "plugins": [
       "expo-router",
@@ -54,12 +50,12 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#08090A",
-          "image": "./assets/images/icon.png",
+          "image": "./assets/images/noda-mark.png",
           "imageWidth": 110,
           "resizeMode": "contain",
           "dark": {
             "backgroundColor": "#08090A",
-            "image": "./assets/images/icon.png",
+            "image": "./assets/images/noda-mark.png",
             "imageWidth": 110
           }
         }
@@ -69,9 +65,10 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "Arra берёт последнее фото из галереи, чтобы быстро отправить его на компьютер."
+          "photosPermission": "Noda берёт последние фото из галереи, чтобы быстро отправить их на компьютер."
         }
-      ]
+      ],
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,
