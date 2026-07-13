@@ -5,7 +5,7 @@ type Meta = { sf: SymbolViewProps['name']; color: string };
 
 // Категория -> SF Symbol + цвет. Спокойная палитра (Linear-стиль), приглушённые тона.
 const MAP: Record<string, Meta> = {
-  Продукты: { sf: 'cart.fill', color: '#4CB782' },
+  Продукты: { sf: 'cart.fill', color: '#6F9AE8' },
   'Кафе и рестораны': { sf: 'fork.knife', color: '#E0A33E' },
   Кафе: { sf: 'cup.and.saucer.fill', color: '#E0A33E' },
   Рестораны: { sf: 'fork.knife', color: '#E0A33E' },
@@ -24,7 +24,7 @@ const MAP: Record<string, Meta> = {
   Созвон: { sf: 'video.fill', color: '#4CB7A5' },
   Здоровье: { sf: 'cross.case.fill', color: '#E06C75' },
   Аптека: { sf: 'pills.fill', color: '#E06C75' },
-  Спорт: { sf: 'figure.run', color: '#4CB782' },
+  Спорт: { sf: 'figure.run', color: '#6F9AE8' },
   Красота: { sf: 'scissors', color: '#C98AB8' },
   Одежда: { sf: 'tshirt.fill', color: '#C98AB8' },
   Развлечения: { sf: 'gamecontroller.fill', color: '#6E79E6' },
@@ -39,14 +39,14 @@ const MAP: Record<string, Meta> = {
   'Дом и быт': { sf: 'lamp.table.fill', color: '#8A8F98' },
   Техника: { sf: 'desktopcomputer', color: '#8A8F98' },
   Дети: { sf: 'figure.and.child.holdinghands', color: '#E0A33E' },
-  Питомцы: { sf: 'pawprint.fill', color: '#4CB782' },
+  Питомцы: { sf: 'pawprint.fill', color: '#6F9AE8' },
   Авто: { sf: 'car.fill', color: '#8A8F98' },
   Маркетплейс: { sf: 'bag.fill', color: '#E0A33E' },
   Налоги: { sf: 'building.columns.fill', color: '#8A8F98' },
   Бизнес: { sf: 'briefcase.fill', color: '#6E79E6' },
-  Инвестиции: { sf: 'chart.line.uptrend.xyaxis', color: '#4CB782' },
-  Зарплата: { sf: 'banknote.fill', color: '#4CB782' },
-  Доход: { sf: 'arrow.down.left', color: '#4CB782' },
+  Инвестиции: { sf: 'chart.line.uptrend.xyaxis', color: '#6F9AE8' },
+  Зарплата: { sf: 'banknote.fill', color: '#6F9AE8' },
+  Доход: { sf: 'arrow.down.left', color: '#6F9AE8' },
   Перевод: { sf: 'arrow.left.arrow.right', color: '#6E79E6' },
   Прочее: { sf: 'creditcard.fill', color: '#8A8F98' },
 };

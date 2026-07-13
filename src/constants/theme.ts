@@ -14,9 +14,9 @@ export const Colors = {
     backgroundElement: '#FFFFFF',
     backgroundSelected: '#E6E7EC',
     textSecondary: '#8A8E99',
-    tint: '#2E9B61',
-    accent: '#2E9B61',
-    success: '#34C759',
+    tint: '#6F79F6',
+    accent: '#6F79F6',
+    success: '#5F83D6',
     danger: '#FF3B30',
     warning: '#FF9500',
     glass: 'rgba(255,255,255,0.72)',
@@ -24,20 +24,20 @@ export const Colors = {
     separator: 'rgba(60,60,67,0.10)',
   },
   dark: {
-    // Единый графитовый интерфейс Noda с зелёным рабочим акцентом.
-    text: '#F4F5F7',
-    background: '#121317',
-    backgroundElement: 'rgba(255,255,255,0.07)',
-    backgroundSelected: 'rgba(255,255,255,0.12)',
-    textSecondary: '#9AA0AA',
-    tint: '#72D99B',
-    accent: '#72D99B',
-    success: '#4CB782',
+    // Та же холодная серо-голубая система, что и в настольном приложении.
+    text: '#F1F2F5',
+    background: '#1C1C1F',
+    backgroundElement: '#242428',
+    backgroundSelected: '#303139',
+    textSecondary: '#979BA6',
+    tint: '#7C85FF',
+    accent: '#7C85FF',
+    success: '#6F9AE8',
     danger: '#EB5757',
     warning: '#F2C94C',
-    glass: 'rgba(255,255,255,0.07)',
-    glassBorder: 'rgba(255,255,255,0.10)',
-    separator: 'rgba(255,255,255,0.09)',
+    glass: 'rgba(39,39,44,0.92)',
+    glassBorder: 'rgba(255,255,255,0.09)',
+    separator: 'rgba(255,255,255,0.08)',
   },
 } as const;
 
@@ -54,7 +54,7 @@ export const Radius = {
 /** Палитра градиентов в стиле iOS 26 Liquid Glass */
 export const Gradients = {
   aura: ['#7C5CFF', '#0A84FF', '#32D7D2'] as const,
-  finance: ['#0A84FF', '#34C759'] as const,
+  finance: ['#6F79F6', '#5B8DEF'] as const,
   files: ['#7C5CFF', '#FF6FD8'] as const,
 };
 
@@ -93,8 +93,8 @@ export const Spacing = {
   six: 64,
 } as const;
 
-export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
+export const BottomTabInset = Platform.select({ ios: 50, android: 80, web: 64 }) ?? 0;
 export const MaxContentWidth = 800;
 
 /** Номер сборки JS — показывается в углу экрана. Увеличивать при каждом выкате OTA. */
-export const APP_BUILD = 69;
+export const APP_BUILD = 70;

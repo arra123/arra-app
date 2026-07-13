@@ -23,7 +23,7 @@ import { DebtsModal, type Debt } from '@/components/debts-modal';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { VoiceRecorder } from '@/components/voice-recorder';
-import { APP_BUILD, BottomTabInset, Radius, Spacing } from '@/constants/theme';
+import { BottomTabInset, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
@@ -58,11 +58,12 @@ type Parsed = {
   note?: string | null;
 };
 type EntryKind = 'reimbursement' | 'owes_me' | 'i_owe';
+type SavedEntry = { amount: number; title: string };
 
 const STATUS: Record<ReimbursementStatus, { label: string; color: string }> = {
   pending: { label: 'Ждёт отправки', color: '#F2C94C' },
   submitted: { label: 'На проверке', color: '#64A8FF' },
-  reimbursed: { label: 'Компенсировано', color: '#55C98A' },
+  reimbursed: { label: 'Компенсировано', color: '#7C85FF' },
   rejected: { label: 'Отклонено', color: '#EB6A6A' },
 };
 const fmt = (value: number) => Math.round(value).toLocaleString('ru-RU');
@@ -74,7 +75,7 @@ const dateLabel = (value?: string | null) => value
 export default function MoneyScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const [section, setSection] = useState<'overview' | 'add'>('overview');
+  const [section, setSection] = useState<'overview' | 'add'>('add');
   const [showClosed, setShowClosed] = useState(false);
   const [items, setItems] = useState<Reimbursement[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
@@ -83,6 +84,8 @@ export default function MoneyScreen() {
   const [showDebts, setShowDebts] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [editing, setEditing] = useState<Reimbursement | null>(null);
+  const [draftReady, setDraftReady] = useState(false);
+  const [lastSaved, setLastSaved] = useState<SavedEntry | null>(null);
 
   const [kind, setKind] = useState<EntryKind>('reimbursement');
   const [raw, setRaw] = useState('');
@@ -147,6 +150,7 @@ export default function MoneyScreen() {
     setOccurred(new Date().toISOString().slice(0, 10));
     setDue('');
     setNote('');
+    setDraftReady(false);
   }
 
   function applyParsed(parsed: Parsed, transcript: string, nextSource: typeof source) {
@@ -165,16 +169,20 @@ export default function MoneyScreen() {
     if (parsed.occurred_at) setOccurred(dateInput(parsed.occurred_at));
     setDue(dateInput(parsed.due_date));
     setNote(parsed.note || '');
+    setDraftReady(true);
+    setLastSaved(null);
   }
 
   async function parseInput(text: string, nextSource: typeof source = 'text', image?: string) {
     const cleaned = text.trim();
     if (!cleaned && !image) return;
     Keyboard.dismiss();
+    setDraftReady(false);
+    setLastSaved(null);
     setParsing(true);
     try {
       const response = await api<{ parsed: Parsed }>('/reimbursements/parse', {
-        body: { text: cleaned || undefined, image, preferredKind: kind === 'reimbursement' ? 'reimbursement' : 'debt' },
+        body: { text: cleaned || undefined, image },
       });
       applyParsed(response.parsed, cleaned, nextSource);
       haptic.success();
@@ -197,14 +205,27 @@ export default function MoneyScreen() {
       : await ImagePicker.launchImageLibraryAsync({ base64: true, quality: 0.55, mediaTypes: ['images'] });
     const asset = result.canceled ? null : result.assets?.[0];
     if (!asset?.base64) return;
+    const description = draftReady ? '' : raw;
+    resetDraft('reimbursement');
+    setRaw(description);
     setPhotoUri(asset.uri);
-    await parseInput(raw, 'photo', `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}`);
+    await parseInput(description, 'photo', `data:${asset.mimeType || 'image/jpeg'};base64,${asset.base64}`);
   }
 
-  function pickPhoto() {
-    Alert.alert('Добавить чек или фото', '', [
-      { text: 'Снять', onPress: () => choosePhoto(true) },
-      { text: 'Из галереи', onPress: () => choosePhoto(false) },
+  function startManual(nextKind: EntryKind) {
+    resetDraft(nextKind);
+    setSource('manual');
+    setDraftReady(true);
+    setLastSaved(null);
+  }
+
+  function openAddMenu() {
+    Alert.alert('Добавить', '', [
+      { text: 'Снять чек', onPress: () => choosePhoto(true) },
+      { text: 'Выбрать фото', onPress: () => choosePhoto(false) },
+      { text: 'Компенсацию вручную', onPress: () => startManual('reimbursement') },
+      { text: 'Мне должны', onPress: () => startManual('owes_me') },
+      { text: 'Я должен', onPress: () => startManual('i_owe') },
       { text: 'Отмена', style: 'cancel' },
     ]);
   }
@@ -235,8 +256,12 @@ export default function MoneyScreen() {
         });
       }
       haptic.success();
+      setLastSaved({
+        amount: numericAmount,
+        title: kind === 'reimbursement' ? purpose.trim() : counterparty.trim(),
+      });
       resetDraft(kind);
-      setSection('overview');
+      setSection('add');
       await load();
     } catch (error: any) {
       haptic.error();
@@ -255,32 +280,28 @@ export default function MoneyScreen() {
         keyboardShouldPersistTaps="handled"
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.tint} />}>
         <View style={styles.header}>
-          <View>
-            <ThemedText style={styles.title}>Возвраты</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">компенсации компании и личные долги</ThemedText>
-          </View>
+          <ThemedText style={styles.title}>Возвраты</ThemedText>
           <View style={styles.headerActions}>
-            <ThemedText type="small" themeColor="textSecondary">v{APP_BUILD}</ThemedText>
+            <TouchableOpacity
+              accessibilityLabel={section === 'add' ? 'Открыть список' : 'Открыть запись'}
+              onPress={() => setSection(section === 'add' ? 'overview' : 'add')}
+              style={[styles.roundButton, { backgroundColor: theme.backgroundElement }]}>
+              <SymbolView name={section === 'add' ? 'list.bullet' : 'waveform'} tintColor={theme.tint} size={18} />
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => setShowSettings(true)} style={[styles.roundButton, { backgroundColor: theme.backgroundElement }]}>
               <SymbolView name="gearshape.fill" tintColor={theme.text} size={18} />
             </TouchableOpacity>
           </View>
         </View>
 
-        <View style={[styles.mainSegment, { backgroundColor: theme.backgroundElement }]}>
-          <SegmentButton label="Список" icon="list.bullet" active={section === 'overview'} onPress={() => setSection('overview')} />
-          <SegmentButton label="Записать" icon="waveform" active={section === 'add'} onPress={() => setSection('add')} />
-        </View>
-
         {section === 'overview' ? (
           <>
-            <View style={[styles.hero, { backgroundColor: theme.tint }]}>
+            <View style={[styles.hero, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
               <View style={styles.heroTop}>
-                <View style={styles.heroIcon}><SymbolView name="building.2.fill" tintColor="#07120D" size={20} /></View>
-                <ThemedText type="smallBold" style={{ color: '#07120D' }}>{activeItems.length} активных</ThemedText>
+                <View style={[styles.heroIcon, { backgroundColor: `${theme.tint}1F` }]}><SymbolView name="building.2.fill" tintColor={theme.tint} size={20} /></View>
+                <ThemedText type="smallBold" style={{ color: theme.tint }}>{activeItems.length} активных</ThemedText>
               </View>
-              <ThemedText style={styles.heroValue}>{fmt(toReturn)} ₽</ThemedText>
-              <ThemedText type="small" style={{ color: 'rgba(7,18,13,0.72)' }}>компания должна вернуть</ThemedText>
+              <ThemedText style={[styles.heroValue, { color: theme.text }]}>{fmt(toReturn)} ₽</ThemedText>
             </View>
 
             <View style={styles.statsRow}>
@@ -310,9 +331,6 @@ export default function MoneyScreen() {
               <View style={[styles.empty, { borderColor: theme.separator }]}>
                 <SymbolView name="tray.fill" tintColor={theme.textSecondary} size={28} />
                 <ThemedText type="smallBold">{showClosed ? 'Закрытых компенсаций нет' : 'Нечего возвращать'}</ThemedText>
-                <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
-                  Удерживайте микрофон во вкладке «Записать» и скажите сумму и назначение.
-                </ThemedText>
               </View>
             ) : (
               <View style={styles.list}>
@@ -339,70 +357,130 @@ export default function MoneyScreen() {
             )}
           </>
         ) : (
-          <>
-            <View style={styles.kindRow}>
-              <KindButton label="Компания вернёт" active={kind === 'reimbursement'} onPress={() => setKind('reimbursement')} />
-              <KindButton label="Мне должны" active={kind === 'owes_me'} onPress={() => setKind('owes_me')} />
-              <KindButton label="Я должен" active={kind === 'i_owe'} onPress={() => setKind('i_owe')} />
+          <View style={styles.conversation}>
+            <View style={styles.conversationFeed}>
+              {!lastSaved && !draftReady && !parsing && (
+                <View style={[styles.conversationEmpty, { borderColor: theme.separator }]}>
+                  <SymbolView name="doc.text.fill" tintColor={theme.tint} size={30} />
+                </View>
+              )}
+
+              {!!lastSaved && (
+                <View style={styles.aiDraftRow}>
+                  <View style={[styles.aiMark, { backgroundColor: `${theme.tint}1F` }]}>
+                    <SymbolView name="checkmark" tintColor={theme.tint} size={15} />
+                  </View>
+                  <View style={[styles.savedCard, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
+                    <ThemedText type="smallBold" numberOfLines={1} style={{ flex: 1 }}>{lastSaved.title}</ThemedText>
+                    <ThemedText style={styles.savedAmount}>{fmt(lastSaved.amount)} ₽</ThemedText>
+                  </View>
+                </View>
+              )}
+
+              {(parsing || draftReady) && (!!raw.trim() || !!photoUri) && (
+                <View style={styles.userEntryRow}>
+                  <View style={[styles.userEntryBubble, { backgroundColor: theme.tint }]}>
+                    {!!photoUri && <Image source={{ uri: photoUri }} style={styles.photoPreview} />}
+                    {!!raw.trim() && <ThemedText style={{ color: '#FFFFFF' }}>{raw.trim()}</ThemedText>}
+                  </View>
+                </View>
+              )}
+
+              {parsing && (
+                <View style={styles.aiDraftRow}>
+                  <View style={[styles.aiMark, { backgroundColor: `${theme.tint}1F` }]}>
+                    <SymbolView name="sparkles" tintColor={theme.tint} size={15} />
+                  </View>
+                  <View style={[styles.parsingCard, { backgroundColor: theme.backgroundElement }]}>
+                    <ActivityIndicator size="small" color={theme.tint} />
+                  </View>
+                </View>
+              )}
+
+              {draftReady && !parsing && (
+                <View style={styles.aiDraftRow}>
+                  <View style={[styles.aiMark, { backgroundColor: `${theme.tint}1F` }]}>
+                    <SymbolView name="sparkles" tintColor={theme.tint} size={15} />
+                  </View>
+                  <View style={[styles.form, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
+                    <View style={styles.formCardHeader}>
+                      <View style={[styles.formIcon, { backgroundColor: `${theme.tint}1F` }]}>
+                        <SymbolView
+                          name={kind === 'reimbursement' ? 'building.2.fill' : 'person.2.fill'}
+                          tintColor={theme.tint}
+                          size={18}
+                        />
+                      </View>
+                      <ThemedText type="smallBold" style={{ flex: 1 }}>
+                        {kind === 'reimbursement' ? 'Компенсация' : kind === 'owes_me' ? 'Мне должны' : 'Я должен'}
+                      </ThemedText>
+                      <TouchableOpacity onPress={() => resetDraft(kind)} hitSlop={8}>
+                        <SymbolView name="xmark.circle.fill" tintColor={theme.textSecondary} size={22} />
+                      </TouchableOpacity>
+                    </View>
+
+                    <Field label="Сумма, ₽">
+                      <TextInput value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={theme.textSecondary} style={[styles.input, styles.amountInput, { color: theme.text, backgroundColor: theme.backgroundSelected }]} />
+                    </Field>
+                    {kind === 'reimbursement' ? (
+                      <>
+                        <Field label="На что потрачено"><TextInput value={purpose} onChangeText={setPurpose} placeholder="Такси, материалы, подписка…" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundSelected }]} /></Field>
+                        <View style={styles.twoCols}>
+                          <View style={{ flex: 1 }}><Field label="Где / сервис"><TextInput value={merchant} onChangeText={setMerchant} placeholder="Ситидрайв" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundSelected }]} /></Field></View>
+                          <View style={{ flex: 1 }}><Field label="Место"><TextInput value={location} onChangeText={setLocation} placeholder="Москва" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundSelected }]} /></Field></View>
+                        </View>
+                        <Field label="Кто компенсирует"><TextInput value={company} onChangeText={setCompany} placeholder="Компания" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundSelected }]} /></Field>
+                      </>
+                    ) : (
+                      <Field label={kind === 'owes_me' ? 'Кто должен мне' : 'Кому я должен'}><TextInput value={counterparty} onChangeText={setCounterparty} placeholder="Имя или компания" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundSelected }]} /></Field>
+                    )}
+                    <View style={styles.twoCols}>
+                      <View style={{ flex: 1 }}><Field label="Дата"><TextInput value={occurred} onChangeText={setOccurred} placeholder="ГГГГ-ММ-ДД" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundSelected }]} /></Field></View>
+                      <View style={{ flex: 1 }}><Field label="Вернуть до"><TextInput value={due} onChangeText={setDue} placeholder="необязательно" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundSelected }]} /></Field></View>
+                    </View>
+                    <Field label="Комментарий"><TextInput value={note} onChangeText={setNote} multiline placeholder="Важные детали" placeholderTextColor={theme.textSecondary} style={[styles.input, styles.noteInput, { color: theme.text, backgroundColor: theme.backgroundSelected }]} /></Field>
+
+                    <TouchableOpacity disabled={saving} onPress={saveDraft} style={[styles.saveButton, { backgroundColor: theme.tint }]}>
+                      {saving ? <ActivityIndicator color="#FFFFFF" /> : <SymbolView name="checkmark" tintColor="#FFFFFF" size={20} />}
+                      <ThemedText type="smallBold" style={{ color: '#FFFFFF' }}>Сохранить</ThemedText>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
             </View>
 
-            <VoiceRecorder
-              disabled={parsing || saving}
-              hint="держите · вверх — зафиксировать · влево — отмена"
-              onTranscript={(text) => parseInput(text, 'voice')}
-            />
-
             <View style={[styles.textComposer, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
+              <TouchableOpacity accessibilityLabel="Добавить" onPress={openAddMenu} style={styles.composerIcon}>
+                <SymbolView name="plus" tintColor={theme.textSecondary} size={22} />
+              </TouchableOpacity>
               <TextInput
-                value={raw}
-                onChangeText={setRaw}
-                placeholder={kind === 'reimbursement' ? 'Например: компенсация 500 ₽ за такси сегодня' : 'Например: дал Егору 2 000 ₽ вчера'}
+                value={draftReady || parsing ? '' : raw}
+                editable={!parsing && !saving}
+                onChangeText={(text) => {
+                  if (draftReady) resetDraft(kind);
+                  setLastSaved(null);
+                  setRaw(text);
+                }}
+                placeholder="Сообщение"
                 placeholderTextColor={theme.textSecondary}
                 multiline
                 style={[styles.rawInput, { color: theme.text }]}
               />
-              <TouchableOpacity onPress={pickPhoto} style={styles.composerIcon}>
-                <SymbolView name="camera.fill" tintColor={theme.textSecondary} size={21} />
-              </TouchableOpacity>
-              <TouchableOpacity disabled={!raw.trim() || parsing} onPress={() => parseInput(raw, 'text')} style={[styles.parseButton, { backgroundColor: raw.trim() ? theme.tint : theme.backgroundSelected }]}>
-                {parsing ? <ActivityIndicator size="small" color="#07120D" /> : <SymbolView name="arrow.up" tintColor="#07120D" size={20} />}
-              </TouchableOpacity>
-            </View>
-            {!!photoUri && <Image source={{ uri: photoUri }} style={styles.photoPreview} />}
-
-            <View style={styles.formHeader}>
-              <ThemedText type="smallBold">{source === 'manual' ? 'Заполните вручную' : 'Проверьте распознанное'}</ThemedText>
-              {source !== 'manual' && <ThemedText type="small" themeColor="textSecondary">можно исправить любое поле</ThemedText>}
-            </View>
-
-            <View style={[styles.form, { backgroundColor: theme.backgroundElement }]}>
-              <Field label="Сумма, ₽">
-                <TextInput value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0" placeholderTextColor={theme.textSecondary} style={[styles.input, styles.amountInput, { color: theme.text }]} />
-              </Field>
-              {kind === 'reimbursement' ? (
-                <>
-                  <Field label="На что потрачено"><TextInput value={purpose} onChangeText={setPurpose} placeholder="Такси, материалы, подписка…" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text }]} /></Field>
-                  <View style={styles.twoCols}>
-                    <View style={{ flex: 1 }}><Field label="Где / сервис"><TextInput value={merchant} onChangeText={setMerchant} placeholder="Ситидрайв" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text }]} /></Field></View>
-                    <View style={{ flex: 1 }}><Field label="Место"><TextInput value={location} onChangeText={setLocation} placeholder="Москва" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text }]} /></Field></View>
-                  </View>
-                  <Field label="Кто компенсирует"><TextInput value={company} onChangeText={setCompany} placeholder="Компания" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text }]} /></Field>
-                </>
+              {raw.trim() && !draftReady ? (
+                <TouchableOpacity accessibilityLabel="Отправить" disabled={parsing} onPress={() => parseInput(raw, 'text')} style={[styles.parseButton, { backgroundColor: theme.tint }]}>
+                  {parsing ? <ActivityIndicator size="small" color="#FFFFFF" /> : <SymbolView name="arrow.up" tintColor="#FFFFFF" size={20} />}
+                </TouchableOpacity>
               ) : (
-                <Field label={kind === 'owes_me' ? 'Кто должен мне' : 'Кому я должен'}><TextInput value={counterparty} onChangeText={setCounterparty} placeholder="Имя или компания" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text }]} /></Field>
+                <VoiceRecorder
+                  disabled={parsing || saving}
+                  onTranscript={(text) => {
+                    resetDraft('reimbursement');
+                    return parseInput(text, 'voice');
+                  }}
+                />
               )}
-              <View style={styles.twoCols}>
-                <View style={{ flex: 1 }}><Field label="Дата"><TextInput value={occurred} onChangeText={setOccurred} placeholder="ГГГГ-ММ-ДД" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text }]} /></Field></View>
-                <View style={{ flex: 1 }}><Field label="Вернуть до"><TextInput value={due} onChangeText={setDue} placeholder="необязательно" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text }]} /></Field></View>
-              </View>
-              <Field label="Комментарий"><TextInput value={note} onChangeText={setNote} multiline placeholder="Важные детали" placeholderTextColor={theme.textSecondary} style={[styles.input, styles.noteInput, { color: theme.text }]} /></Field>
             </View>
-
-            <TouchableOpacity disabled={saving} onPress={saveDraft} style={[styles.saveButton, { backgroundColor: theme.tint }]}>
-              {saving ? <ActivityIndicator color="#07120D" /> : <SymbolView name="checkmark" tintColor="#07120D" size={20} />}
-              <ThemedText type="smallBold" style={{ color: '#07120D' }}>Сохранить запись</ThemedText>
-            </TouchableOpacity>
-          </>
+          </View>
         )}
       </ScrollView>
 
@@ -418,25 +496,6 @@ export default function MoneyScreen() {
         </ThemedView>
       </Modal>
     </ThemedView>
-  );
-}
-
-function SegmentButton({ label, icon, active, onPress }: { label: string; icon: any; active: boolean; onPress: () => void }) {
-  const theme = useTheme();
-  return (
-    <Pressable onPress={onPress} style={[styles.segmentButton, active && { backgroundColor: theme.backgroundSelected }]}>
-      <SymbolView name={icon} tintColor={active ? theme.tint : theme.textSecondary} size={16} />
-      <ThemedText type="smallBold" themeColor={active ? 'text' : 'textSecondary'}>{label}</ThemedText>
-    </Pressable>
-  );
-}
-
-function KindButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  const theme = useTheme();
-  return (
-    <Pressable onPress={onPress} style={[styles.kindButton, { borderColor: active ? theme.tint : theme.separator, backgroundColor: active ? `${theme.tint}18` : theme.backgroundElement }]}>
-      <ThemedText type="smallBold" style={{ color: active ? theme.tint : theme.textSecondary, textAlign: 'center' }}>{label}</ThemedText>
-    </Pressable>
   );
 }
 
@@ -526,18 +585,16 @@ function ReimbursementEditor({ item, onClose, onChanged }: { item: Reimbursement
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0D100F' },
-  content: { paddingHorizontal: Spacing.three, paddingBottom: BottomTabInset + Spacing.five, gap: Spacing.three },
+  container: { flex: 1 },
+  content: { flexGrow: 1, paddingHorizontal: Spacing.three, paddingBottom: BottomTabInset + Spacing.five, gap: Spacing.three },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { fontSize: 34, lineHeight: 39, fontWeight: '800', letterSpacing: -1.1 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   roundButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  mainSegment: { flexDirection: 'row', padding: 4, borderRadius: Radius.md },
-  segmentButton: { flex: 1, height: 42, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
-  hero: { borderRadius: Radius.xl, padding: Spacing.four, minHeight: 154, justifyContent: 'flex-end' },
+  hero: { borderRadius: Radius.xl, padding: Spacing.four, minHeight: 154, justifyContent: 'flex-end', borderWidth: StyleSheet.hairlineWidth },
   heroTop: { position: 'absolute', left: Spacing.four, top: Spacing.three, right: Spacing.four, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  heroIcon: { width: 34, height: 34, borderRadius: 12, backgroundColor: 'rgba(7,18,13,0.12)', alignItems: 'center', justifyContent: 'center' },
-  heroValue: { color: '#07120D', fontSize: 38, lineHeight: 43, fontWeight: '800', letterSpacing: -1.5, fontVariant: ['tabular-nums'] },
+  heroIcon: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  heroValue: { fontSize: 38, lineHeight: 43, fontWeight: '800', letterSpacing: -1.5, fontVariant: ['tabular-nums'] },
   statsRow: { flexDirection: 'row', gap: Spacing.two },
   moneyStat: { flex: 1, borderRadius: Radius.md, padding: 12, gap: 2 },
   allDebts: { width: 64, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', gap: 3 },
@@ -551,17 +608,26 @@ const styles = StyleSheet.create({
   itemAmount: { fontSize: 17, fontWeight: '800', fontVariant: ['tabular-nums'] },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
-  kindRow: { flexDirection: 'row', gap: 7 },
-  kindButton: { flex: 1, minHeight: 48, paddingHorizontal: 6, borderWidth: 1, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  textComposer: { borderWidth: StyleSheet.hairlineWidth, borderRadius: Radius.lg, padding: 8, minHeight: 92, flexDirection: 'row', alignItems: 'flex-end', gap: 6 },
-  rawInput: { flex: 1, minHeight: 70, maxHeight: 130, paddingHorizontal: 8, paddingVertical: 8, fontSize: 16, lineHeight: 22, textAlignVertical: 'top' },
-  composerIcon: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
+  conversation: { flex: 1, gap: 10 },
+  conversationFeed: { flex: 1, minHeight: 300, gap: 10, justifyContent: 'flex-end' },
+  conversationEmpty: { flex: 1, minHeight: 250, alignItems: 'center', justifyContent: 'center' },
+  aiDraftRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingRight: 18 },
+  aiMark: { width: 28, height: 28, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  savedCard: { flex: 1, minHeight: 58, borderRadius: 18, borderBottomLeftRadius: 6, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  savedAmount: { fontSize: 18, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  userEntryRow: { alignItems: 'flex-end', paddingLeft: 54 },
+  userEntryBubble: { maxWidth: '92%', padding: 8, borderRadius: 18, borderBottomRightRadius: 6, gap: 8 },
+  parsingCard: { width: 58, height: 44, borderRadius: 18, borderBottomLeftRadius: 6, alignItems: 'center', justifyContent: 'center' },
+  textComposer: { borderWidth: StyleSheet.hairlineWidth, borderRadius: Radius.pill, padding: 5, minHeight: 52, maxHeight: 130, flexDirection: 'row', alignItems: 'flex-end', gap: 5, position: 'relative' },
+  rawInput: { flex: 1, minHeight: 40, maxHeight: 112, paddingHorizontal: 4, paddingVertical: 9, fontSize: 16, lineHeight: 21 },
+  composerIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   parseButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  photoPreview: { width: '100%', height: 150, borderRadius: Radius.lg, resizeMode: 'cover' },
-  formHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 4 },
-  form: { borderRadius: Radius.lg, padding: Spacing.three, gap: 13 },
+  photoPreview: { width: 220, height: 132, borderRadius: 13, resizeMode: 'cover' },
+  form: { flex: 1, borderRadius: Radius.lg, borderBottomLeftRadius: 7, borderWidth: StyleSheet.hairlineWidth, padding: Spacing.three, gap: 13 },
+  formCardHeader: { minHeight: 36, flexDirection: 'row', alignItems: 'center', gap: 9 },
+  formIcon: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   field: { gap: 6 },
-  input: { minHeight: 46, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.055)', paddingHorizontal: 13, paddingVertical: 10, fontSize: 16 },
+  input: { minHeight: 46, borderRadius: 12, paddingHorizontal: 13, paddingVertical: 10, fontSize: 16 },
   amountInput: { fontSize: 25, fontWeight: '700', fontVariant: ['tabular-nums'] },
   noteInput: { minHeight: 80, textAlignVertical: 'top' },
   twoCols: { flexDirection: 'row', gap: Spacing.two },

@@ -22,7 +22,6 @@ type Phase = 'idle' | 'preparing' | 'recording' | 'transcribing';
 type Props = {
   onTranscript: (text: string) => void | Promise<void>;
   disabled?: boolean;
-  hint?: string;
 };
 
 const BARS = 25;
@@ -36,7 +35,7 @@ const mmss = (ms: number) => {
  * удержание записывает, свайп вверх фиксирует запись, свайп влево отменяет.
  * Волна строится из реального metering expo-audio, а не из декоративной анимации.
  */
-export function VoiceRecorder({ onTranscript, disabled = false, hint = 'Удерживайте, чтобы говорить' }: Props) {
+export function VoiceRecorder({ onTranscript, disabled = false }: Props) {
   const theme = useTheme();
   const options = useMemo(() => ({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true }), []);
   const recorder = useAudioRecorder(options);
@@ -186,78 +185,81 @@ export function VoiceRecorder({ onTranscript, disabled = false, hint = 'Удер
 
   if (phase === 'transcribing') {
     return (
-      <View style={[styles.longBar, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
+      <View style={[styles.composerOverlay, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
         <ActivityIndicator size="small" color={theme.tint} />
-        <ThemedText type="smallBold">Распознаю речь…</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary" style={{ marginLeft: 'auto' }}>обычно 2–5 сек</ThemedText>
+        <View style={styles.transcribingWave}>
+          {[0.35, 0.7, 1, 0.58, 0.28].map((height, index) => (
+            <View key={index} style={[styles.transcribingBar, { height: 7 + height * 17, backgroundColor: theme.tint }]} />
+          ))}
+        </View>
+      </View>
+    );
+  }
+
+  if (active) {
+    return (
+      <View style={[styles.composerOverlay, styles.activeBar, { backgroundColor: theme.backgroundElement, borderColor: theme.tint }]}>
+        <Pressable onPress={() => finish(false)} hitSlop={10} style={styles.cancelButton}>
+          <SymbolView name="xmark" tintColor={theme.danger} size={17} />
+        </Pressable>
+        <View style={styles.wave}>
+          {levels.map((level, index) => (
+            <View
+              key={index}
+              style={[styles.waveBar, { height: 4 + level * 23, backgroundColor: theme.tint, opacity: 0.4 + level * 0.6 }]}
+            />
+          ))}
+        </View>
+        <ThemedText type="smallBold" style={styles.timer}>{phase === 'preparing' ? '…' : mmss(duration)}</ThemedText>
+        {locked && <SymbolView name="lock.fill" tintColor={theme.tint} size={15} />}
+        <View {...pan.panHandlers}>
+          <Pressable
+            onPress={locked ? () => finish(true) : undefined}
+            style={[styles.mic, { backgroundColor: locked ? theme.tint : theme.danger }]}>
+            <SymbolView name={locked ? 'arrow.up' : 'mic.fill'} tintColor="#FFFFFF" size={21} />
+          </Pressable>
+        </View>
+        {!locked && (
+          <View style={styles.lockHint} pointerEvents="none">
+            <SymbolView name="lock.fill" tintColor={theme.textSecondary} size={13} />
+            <SymbolView name="chevron.up" tintColor={theme.textSecondary} size={10} />
+          </View>
+        )}
       </View>
     );
   }
 
   return (
-    <View style={[styles.longBar, active && styles.activeBar, { backgroundColor: theme.backgroundElement, borderColor: active ? theme.tint : theme.separator }]}>
-      {active ? (
-        <>
-          <Pressable onPress={() => finish(false)} hitSlop={10} style={styles.cancelButton}>
-            <SymbolView name="xmark" tintColor={theme.danger} size={17} />
-          </Pressable>
-          <View style={styles.wave}>
-            {levels.map((level, index) => (
-              <View
-                key={index}
-                style={[styles.waveBar, { height: 4 + level * 24, backgroundColor: theme.tint, opacity: 0.45 + level * 0.55 }]}
-              />
-            ))}
-          </View>
-          <ThemedText type="smallBold" style={styles.timer}>{phase === 'preparing' ? '…' : mmss(duration)}</ThemedText>
-          {locked && <SymbolView name="lock.fill" tintColor={theme.tint} size={15} />}
-          <View {...pan.panHandlers}>
-            <Pressable
-              onPress={locked ? () => finish(true) : undefined}
-              style={[styles.mic, { backgroundColor: locked ? theme.tint : theme.danger }]}>
-              <SymbolView name={locked ? 'arrow.up' : 'mic.fill'} tintColor="#fff" size={21} />
-            </Pressable>
-          </View>
-          {!locked && (
-            <View style={styles.lockHint} pointerEvents="none">
-              <SymbolView name="lock.fill" tintColor={theme.textSecondary} size={12} />
-              <ThemedText type="small" themeColor="textSecondary">вверх</ThemedText>
-            </View>
-          )}
-        </>
-      ) : (
-        <>
-          <View style={styles.idleCopy}>
-            <ThemedText type="smallBold">Голосом</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{hint}</ThemedText>
-          </View>
-          <View {...pan.panHandlers}>
-            <Pressable disabled={disabled} style={[styles.mic, { backgroundColor: theme.tint, opacity: disabled ? 0.45 : 1 }]}>
-              <SymbolView name="mic.fill" tintColor="#07120D" size={22} />
-            </Pressable>
-          </View>
-        </>
-      )}
+    <View {...pan.panHandlers}>
+      <Pressable accessibilityLabel="Записать голос" disabled={disabled} style={[styles.mic, { backgroundColor: theme.tint, opacity: disabled ? 0.45 : 1 }]}>
+        <SymbolView name="mic.fill" tintColor="#FFFFFF" size={21} />
+      </Pressable>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  longBar: {
-    minHeight: 64,
-    borderRadius: Radius.lg,
+  composerOverlay: {
+    position: 'absolute',
+    left: 4,
+    right: 4,
+    top: 4,
+    bottom: 4,
+    zIndex: 4,
+    borderRadius: Radius.pill,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
   },
   activeBar: { borderWidth: 1 },
-  idleCopy: { flex: 1, paddingLeft: 4 },
-  mic: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  cancelButton: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  wave: { flex: 1, height: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 2 },
-  waveBar: { width: 3, minHeight: 4, borderRadius: 2 },
+  mic: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  cancelButton: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  wave: { flex: 1, height: 31, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 2 },
+  waveBar: { width: 2.5, minHeight: 4, borderRadius: 2 },
   timer: { minWidth: 40, fontVariant: ['tabular-nums'] },
-  lockHint: { position: 'absolute', right: 11, bottom: 62, alignItems: 'center', gap: 2 },
+  lockHint: { position: 'absolute', right: 18, bottom: 51, alignItems: 'center' },
+  transcribingWave: { flex: 1, height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
+  transcribingBar: { width: 3, borderRadius: 2, opacity: 0.75 },
 });
