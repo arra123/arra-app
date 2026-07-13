@@ -1,5 +1,6 @@
+import { useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -86,6 +87,10 @@ export default function MoneyScreen() {
   const [editing, setEditing] = useState<Reimbursement | null>(null);
   const [draftReady, setDraftReady] = useState(false);
   const [lastSaved, setLastSaved] = useState<SavedEntry | null>(null);
+  const [parseError, setParseError] = useState('');
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const addScrollRef = useRef<ScrollView>(null);
+  const inputRef = useRef<TextInput>(null);
 
   const [kind, setKind] = useState<EntryKind>('reimbursement');
   const [raw, setRaw] = useState('');
@@ -102,6 +107,27 @@ export default function MoneyScreen() {
   const [occurred, setOccurred] = useState(() => new Date().toISOString().slice(0, 10));
   const [due, setDue] = useState('');
   const [note, setNote] = useState('');
+
+  const scrollAddEnd = useCallback((animated = true) => {
+    requestAnimationFrame(() => addScrollRef.current?.scrollToEnd({ animated }));
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    inputRef.current?.blur();
+    Keyboard.dismiss();
+    return () => { inputRef.current?.blur(); Keyboard.dismiss(); };
+  }, []));
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEvent, (event) => {
+      setKeyboardHeight(event.endCoordinates?.height || 0);
+      scrollAddEnd(false);
+    });
+    const hide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
+    return () => { show.remove(); hide.remove(); };
+  }, [scrollAddEnd]);
 
   const load = useCallback(async () => {
     try {
@@ -151,6 +177,7 @@ export default function MoneyScreen() {
     setDue('');
     setNote('');
     setDraftReady(false);
+    setParseError('');
   }
 
   function applyParsed(parsed: Parsed, transcript: string, nextSource: typeof source) {
@@ -177,8 +204,11 @@ export default function MoneyScreen() {
     const cleaned = text.trim();
     if (!cleaned && !image) return;
     Keyboard.dismiss();
+    if (cleaned) setRaw(cleaned);
+    setSource(nextSource);
     setDraftReady(false);
     setLastSaved(null);
+    setParseError('');
     setParsing(true);
     try {
       const response = await api<{ parsed: Parsed }>('/reimbursements/parse', {
@@ -188,10 +218,18 @@ export default function MoneyScreen() {
       haptic.success();
     } catch (error: any) {
       haptic.error();
-      Alert.alert('Не удалось разобрать', error?.message || 'Проверьте связь и попробуйте ещё раз.');
+      setParseError(error?.message || 'AI-сервис не ответил. Попробуйте ещё раз.');
     } finally {
       setParsing(false);
     }
+  }
+
+  function switchSection(next: 'overview' | 'add') {
+    if (next === section) return;
+    inputRef.current?.blur();
+    Keyboard.dismiss();
+    haptic.tap();
+    setSection(next);
   }
 
   async function choosePhoto(fromCamera: boolean) {
@@ -273,29 +311,56 @@ export default function MoneyScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <ScrollView
-        contentContainerStyle={[styles.content, { paddingTop: insets.top + 10 }]}
-        showsVerticalScrollIndicator={false}
-        keyboardDismissMode="interactive"
-        keyboardShouldPersistTaps="handled"
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.tint} />}>
+      <View style={[styles.topArea, { paddingTop: insets.top + 10, backgroundColor: theme.background }]}>
         <View style={styles.header}>
           <ThemedText style={styles.title}>Возвраты</ThemedText>
           <View style={styles.headerActions}>
-            <TouchableOpacity
-              accessibilityLabel={section === 'add' ? 'Открыть список' : 'Открыть запись'}
-              onPress={() => setSection(section === 'add' ? 'overview' : 'add')}
-              style={[styles.roundButton, { backgroundColor: theme.backgroundElement }]}>
-              <SymbolView name={section === 'add' ? 'list.bullet' : 'waveform'} tintColor={theme.tint} size={18} />
-            </TouchableOpacity>
             <TouchableOpacity onPress={() => setShowSettings(true)} style={[styles.roundButton, { backgroundColor: theme.backgroundElement }]}>
               <SymbolView name="gearshape.fill" tintColor={theme.text} size={18} />
             </TouchableOpacity>
           </View>
         </View>
 
-        {section === 'overview' ? (
-          <>
+        <View style={[styles.sectionTabs, { backgroundColor: theme.backgroundSelected, borderColor: theme.separator }]}>
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: section === 'add' }}
+            onPress={() => switchSection('add')}
+            style={({ pressed }) => [
+              styles.sectionTab,
+              section === 'add' && { backgroundColor: theme.tint },
+              pressed && { opacity: 0.78 },
+            ]}>
+            <SymbolView name="waveform" tintColor={section === 'add' ? '#FFFFFF' : theme.textSecondary} size={16} />
+            <ThemedText type="smallBold" style={{ color: section === 'add' ? '#FFFFFF' : theme.textSecondary }}>Записать</ThemedText>
+          </Pressable>
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: section === 'overview' }}
+            onPress={() => switchSection('overview')}
+            style={({ pressed }) => [
+              styles.sectionTab,
+              section === 'overview' && { backgroundColor: theme.tint },
+              pressed && { opacity: 0.78 },
+            ]}>
+            <SymbolView name="list.bullet" tintColor={section === 'overview' ? '#FFFFFF' : theme.textSecondary} size={16} />
+            <ThemedText type="smallBold" style={{ color: section === 'overview' ? '#FFFFFF' : theme.textSecondary }}>Список</ThemedText>
+            {!!activeItems.length && (
+              <View style={[styles.sectionCount, { backgroundColor: section === 'overview' ? 'rgba(255,255,255,0.18)' : theme.backgroundElement }]}>
+                <ThemedText type="smallBold" style={{ color: section === 'overview' ? '#FFFFFF' : theme.textSecondary }}>{activeItems.length}</ThemedText>
+              </View>
+            )}
+          </Pressable>
+        </View>
+      </View>
+
+      {section === 'overview' ? (
+        <ScrollView
+          style={styles.body}
+          contentContainerStyle={[styles.overviewContent, { paddingBottom: Math.max(insets.bottom, BottomTabInset) + Spacing.four }]}
+          showsVerticalScrollIndicator={false}
+          keyboardDismissMode="interactive"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.tint} />}>
             <View style={[styles.hero, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
               <View style={styles.heroTop}>
                 <View style={[styles.heroIcon, { backgroundColor: `${theme.tint}1F` }]}><SymbolView name="building.2.fill" tintColor={theme.tint} size={20} /></View>
@@ -315,12 +380,12 @@ export default function MoneyScreen() {
 
             <View style={styles.listHeader}>
               <ThemedText type="smallBold">Компенсации</ThemedText>
-              <View style={[styles.smallSegment, { backgroundColor: theme.backgroundElement }]}>
-                <Pressable onPress={() => setShowClosed(false)} style={[styles.smallSegmentButton, !showClosed && { backgroundColor: theme.backgroundSelected }]}>
-                  <ThemedText type="small" themeColor={!showClosed ? 'text' : 'textSecondary'}>Активные</ThemedText>
+              <View style={[styles.smallSegment, { backgroundColor: theme.backgroundSelected, borderColor: theme.separator }]}>
+                <Pressable onPress={() => setShowClosed(false)} style={[styles.smallSegmentButton, !showClosed && { backgroundColor: theme.tint }]}>
+                  <ThemedText type="smallBold" style={{ color: !showClosed ? '#FFFFFF' : theme.textSecondary }}>Активные</ThemedText>
                 </Pressable>
-                <Pressable onPress={() => setShowClosed(true)} style={[styles.smallSegmentButton, showClosed && { backgroundColor: theme.backgroundSelected }]}>
-                  <ThemedText type="small" themeColor={showClosed ? 'text' : 'textSecondary'}>Закрытые</ThemedText>
+                <Pressable onPress={() => setShowClosed(true)} style={[styles.smallSegmentButton, showClosed && { backgroundColor: theme.tint }]}>
+                  <ThemedText type="smallBold" style={{ color: showClosed ? '#FFFFFF' : theme.textSecondary }}>Закрытые</ThemedText>
                 </Pressable>
               </View>
             </View>
@@ -355,10 +420,17 @@ export default function MoneyScreen() {
                 ))}
               </View>
             )}
-          </>
+        </ScrollView>
         ) : (
           <View style={styles.conversation}>
-            <View style={styles.conversationFeed}>
+            <ScrollView
+              ref={addScrollRef}
+              style={styles.feedScroll}
+              contentContainerStyle={styles.conversationFeed}
+              showsVerticalScrollIndicator={false}
+              keyboardDismissMode="interactive"
+              keyboardShouldPersistTaps="handled"
+              onContentSizeChange={() => scrollAddEnd(false)}>
               {!lastSaved && !draftReady && !parsing && (
                 <View style={[styles.conversationEmpty, { borderColor: theme.separator }]}>
                   <SymbolView name="doc.text.fill" tintColor={theme.tint} size={30} />
@@ -447,42 +519,56 @@ export default function MoneyScreen() {
                   </View>
                 </View>
               )}
-            </View>
 
-            <View style={[styles.textComposer, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
-              <TouchableOpacity accessibilityLabel="Добавить" onPress={openAddMenu} style={styles.composerIcon}>
-                <SymbolView name="plus" tintColor={theme.textSecondary} size={22} />
-              </TouchableOpacity>
-              <TextInput
-                value={draftReady || parsing ? '' : raw}
-                editable={!parsing && !saving}
-                onChangeText={(text) => {
-                  if (draftReady) resetDraft(kind);
-                  setLastSaved(null);
-                  setRaw(text);
-                }}
-                placeholder="Сообщение"
-                placeholderTextColor={theme.textSecondary}
-                multiline
-                style={[styles.rawInput, { color: theme.text }]}
-              />
-              {raw.trim() && !draftReady ? (
-                <TouchableOpacity accessibilityLabel="Отправить" disabled={parsing} onPress={() => parseInput(raw, 'text')} style={[styles.parseButton, { backgroundColor: theme.tint }]}>
-                  {parsing ? <ActivityIndicator size="small" color="#FFFFFF" /> : <SymbolView name="arrow.up" tintColor="#FFFFFF" size={20} />}
-                </TouchableOpacity>
-              ) : (
-                <VoiceRecorder
-                  disabled={parsing || saving}
-                  onTranscript={(text) => {
-                    resetDraft('reimbursement');
-                    return parseInput(text, 'voice');
-                  }}
-                />
+              {!!parseError && (
+                <Pressable onPress={() => parseInput(raw, source)} style={[styles.errorRow, { backgroundColor: theme.backgroundElement, borderColor: theme.danger }]}>
+                  <View style={[styles.aiMark, { backgroundColor: `${theme.danger}1F` }]}>
+                    <SymbolView name="exclamationmark" tintColor={theme.danger} size={15} />
+                  </View>
+                  <ThemedText type="small" style={{ flex: 1, color: theme.danger }}>{parseError}</ThemedText>
+                  {!!raw.trim() && <SymbolView name="arrow.clockwise" tintColor={theme.danger} size={15} />}
+                </Pressable>
               )}
+            </ScrollView>
+
+            <View style={[styles.dock, { paddingBottom: (keyboardHeight > 0 ? keyboardHeight : Math.max(insets.bottom, BottomTabInset)) + Spacing.two, backgroundColor: theme.background }]}>
+              <View style={[styles.textComposer, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
+                <TouchableOpacity accessibilityLabel="Добавить" onPress={openAddMenu} style={styles.composerIcon}>
+                  <SymbolView name="plus" tintColor={theme.textSecondary} size={22} />
+                </TouchableOpacity>
+                <TextInput
+                  ref={inputRef}
+                  value={draftReady || parsing ? '' : raw}
+                  editable={!parsing && !saving}
+                  onFocus={() => scrollAddEnd(false)}
+                  onChangeText={(text) => {
+                    if (draftReady) resetDraft(kind);
+                    setLastSaved(null);
+                    setParseError('');
+                    setRaw(text);
+                  }}
+                  placeholder="Сообщение"
+                  placeholderTextColor={theme.textSecondary}
+                  multiline
+                  style={[styles.rawInput, { color: theme.text }]}
+                />
+                {raw.trim() && !draftReady ? (
+                  <TouchableOpacity accessibilityLabel="Отправить" disabled={parsing} onPress={() => parseInput(raw, 'text')} style={[styles.parseButton, { backgroundColor: theme.tint }]}>
+                    {parsing ? <ActivityIndicator size="small" color="#FFFFFF" /> : <SymbolView name="arrow.up" tintColor="#FFFFFF" size={20} />}
+                  </TouchableOpacity>
+                ) : (
+                  <VoiceRecorder
+                    disabled={parsing || saving}
+                    onTranscript={(text) => {
+                      resetDraft('reimbursement');
+                      return parseInput(text, 'voice');
+                    }}
+                  />
+                )}
+              </View>
             </View>
           </View>
         )}
-      </ScrollView>
 
       <DebtsModal visible={showDebts} onClose={() => setShowDebts(false)} onChanged={load} />
       {!!editing && <ReimbursementEditor key={editing.id} item={editing} onClose={() => setEditing(null)} onChanged={async () => { setEditing(null); await load(); }} />}
@@ -586,11 +672,16 @@ function ReimbursementEditor({ item, onClose, onChanged }: { item: Reimbursement
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  content: { flexGrow: 1, paddingHorizontal: Spacing.three, paddingBottom: BottomTabInset + Spacing.five, gap: Spacing.three },
+  topArea: { paddingHorizontal: Spacing.three, paddingBottom: 10, gap: 10, zIndex: 2 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { fontSize: 34, lineHeight: 39, fontWeight: '800', letterSpacing: -1.1 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   roundButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  sectionTabs: { minHeight: 48, padding: 4, borderRadius: Radius.md, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', gap: 4 },
+  sectionTab: { flex: 1, minHeight: 40, paddingHorizontal: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  sectionCount: { minWidth: 23, height: 23, paddingHorizontal: 6, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
+  body: { flex: 1 },
+  overviewContent: { flexGrow: 1, paddingHorizontal: Spacing.three, paddingTop: Spacing.two, gap: Spacing.three },
   hero: { borderRadius: Radius.xl, padding: Spacing.four, minHeight: 154, justifyContent: 'flex-end', borderWidth: StyleSheet.hairlineWidth },
   heroTop: { position: 'absolute', left: Spacing.four, top: Spacing.three, right: Spacing.four, flexDirection: 'row', alignItems: 'center', gap: 8 },
   heroIcon: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
@@ -599,8 +690,8 @@ const styles = StyleSheet.create({
   moneyStat: { flex: 1, borderRadius: Radius.md, padding: 12, gap: 2 },
   allDebts: { width: 64, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', gap: 3 },
   listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
-  smallSegment: { flexDirection: 'row', padding: 3, borderRadius: 11 },
-  smallSegmentButton: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 9 },
+  smallSegment: { flexDirection: 'row', padding: 3, borderRadius: 11, borderWidth: StyleSheet.hairlineWidth },
+  smallSegmentButton: { minHeight: 30, paddingHorizontal: 11, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   empty: { alignItems: 'center', gap: 8, paddingVertical: Spacing.five, paddingHorizontal: Spacing.four, borderWidth: StyleSheet.hairlineWidth, borderRadius: Radius.lg },
   list: { gap: Spacing.two },
   item: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: Radius.lg, padding: 13 },
@@ -608,8 +699,9 @@ const styles = StyleSheet.create({
   itemAmount: { fontSize: 17, fontWeight: '800', fontVariant: ['tabular-nums'] },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
-  conversation: { flex: 1, gap: 10 },
-  conversationFeed: { flex: 1, minHeight: 300, gap: 10, justifyContent: 'flex-end' },
+  conversation: { flex: 1 },
+  feedScroll: { flex: 1 },
+  conversationFeed: { flexGrow: 1, minHeight: 300, paddingHorizontal: Spacing.three, paddingTop: Spacing.two, paddingBottom: 12, gap: 10, justifyContent: 'flex-end' },
   conversationEmpty: { flex: 1, minHeight: 250, alignItems: 'center', justifyContent: 'center' },
   aiDraftRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingRight: 18 },
   aiMark: { width: 28, height: 28, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
@@ -618,6 +710,8 @@ const styles = StyleSheet.create({
   userEntryRow: { alignItems: 'flex-end', paddingLeft: 54 },
   userEntryBubble: { maxWidth: '92%', padding: 8, borderRadius: 18, borderBottomRightRadius: 6, gap: 8 },
   parsingCard: { width: 58, height: 44, borderRadius: 18, borderBottomLeftRadius: 6, alignItems: 'center', justifyContent: 'center' },
+  errorRow: { minHeight: 50, borderWidth: StyleSheet.hairlineWidth, borderRadius: 16, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 9 },
+  dock: { paddingHorizontal: Spacing.three, paddingTop: 8 },
   textComposer: { borderWidth: StyleSheet.hairlineWidth, borderRadius: Radius.pill, padding: 5, minHeight: 52, maxHeight: 130, flexDirection: 'row', alignItems: 'flex-end', gap: 5, position: 'relative' },
   rawInput: { flex: 1, minHeight: 40, maxHeight: 112, paddingHorizontal: 4, paddingVertical: 9, fontSize: 16, lineHeight: 21 },
   composerIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },

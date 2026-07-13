@@ -377,5 +377,5 @@ const styles = StyleSheet.create({
   titleInput: { fontSize: 26, fontWeight: '700', fontFamily: 'Inter_700Bold', paddingVertical: Spacing.two },
   bodyInput: { fontSize: 17, lineHeight: 25, fontFamily: 'Inter_400Regular', minHeight: 300, textAlignVertical: 'top' },
   voiceDock: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two },
-  voiceComposer: { minHeight: 52, borderRadius: 26, borderWidth: StyleSheet.hairlineWidth, padding: 5, paddingLeft: 15, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  voiceComposer: { minHeight: 52, borderRadius: 26, borderWidth: StyleSheet.hairlineWidth, padding: 5, paddingLeft: 15, flexDirection: 'row', alignItems: 'center', gap: 6, position: 'relative' },
 });
