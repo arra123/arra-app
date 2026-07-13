@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
 import { RemoteScreen, type RemoteScreenHandle } from '@/components/remote-screen';
+import { SyncPanel } from '@/components/sync-panel';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Colors, Radius, Spacing } from '@/constants/theme';
@@ -123,7 +124,6 @@ export default function PcScreen() {
   const [devOpen, setDevOpen] = useState(false); // открыт ли список выбора ПК
   const [termEpoch, setTermEpoch] = useState(0); // ремоунт терминалов только при ручной смене ПК
   const [sub, setSub] = useState<'term' | 'explorer' | 'screen' | 'transfer'>('term');
-  const [remoteSync, setRemoteSync] = useState<{ busy: boolean; pct: number; speed: number; message: string }>({ busy: false, pct: 0, speed: 0, message: '' });
 
   // удалённый экран
   const screenRef = useRef<RemoteScreenHandle>(null);
@@ -142,8 +142,8 @@ export default function PcScreen() {
   const [pcTerms, setPcTerms] = useState<{ termId: string; cwd: string }[]>([]); // сессии, открытые на самом ПК
   const activeWeb = () => webRefs.current[activeTerm];
   // refs для доступа из замыкания WS-обработчика (иначе видит устаревшее состояние)
-  const termsRef = useRef(terms); termsRef.current = terms;
-  const activeTermRef = useRef(activeTerm); activeTermRef.current = activeTerm;
+  const termsRef = useRef(terms);
+  const activeTermRef = useRef(activeTerm);
   const pendingAttach = useRef(0);
   const [recentPicker, setRecentPicker] = useState(false);
 
@@ -160,10 +160,14 @@ export default function PcScreen() {
   const [preview, setPreview] = useState<{ path: string; name: string; mime: string; data: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [busyMsg, setBusyMsg] = useState('');
+  const [compose, setCompose] = useState('');
 
   const deviceIdRef = useRef<string | null>(null);
-  deviceIdRef.current = deviceId;
   const manualPick = useRef(false); // пользователь выбрал ПК вручную → не переключать автоматически
+
+  useEffect(() => { termsRef.current = terms; }, [terms]);
+  useEffect(() => { activeTermRef.current = activeTerm; }, [activeTerm]);
+  useEffect(() => { deviceIdRef.current = deviceId; }, [deviceId]);
 
   const send = useCallback((obj: any) => {
     const ws = wsRef.current;
@@ -267,22 +271,6 @@ export default function PcScreen() {
         case 'fs_download': setBusyMsg('Файл отправлен в приложение ✓'); setTimeout(() => setBusyMsg(''), 2500); break;
         case 'fs_zip': setBusyMsg(`Архив готов: ${m.name} → во вкладке «Файлы»`); setTimeout(() => setBusyMsg(''), 3500); break;
         case 'pc_offline': setBusyMsg('Компьютер не в сети'); setTimeout(() => setBusyMsg(''), 2500); break;
-        case 'sync_remote_ack':
-          setRemoteSync((prev) => ({ ...prev, busy: true, message: m.message || 'Выгрузка запущена' }));
-          break;
-        case 'sync_remote_event': {
-          const event = m.event || {};
-          if (event.type === 'progress') {
-            const pct = event.totalBytes ? Math.round((event.bytes || 0) / event.totalBytes * 100) : 0;
-            setRemoteSync({ busy: true, pct, speed: event.speed || 0, message: `${event.done || 0} / ${event.total || 0} файлов` });
-          } else if (event.type === 'done') {
-            setRemoteSync({ busy: false, pct: 100, speed: 0, message: `Готово · ${event.transferred || 0} файлов` });
-            haptic.success();
-          } else if (event.type === 'error') {
-            setRemoteSync({ busy: false, pct: 0, speed: 0, message: event.error || 'Ошибка выгрузки' });
-          }
-          break;
-        }
         case 'err': setBusyMsg(m.message || 'Ошибка'); setSaving(false); setTimeout(() => setBusyMsg(''), 3000); break;
         default: break;
       }
@@ -290,7 +278,6 @@ export default function PcScreen() {
 
     connect();
     return () => { alive = false; clearTimeout(reconnectTimer); try { wsRef.current?.close(); } catch {} };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -342,7 +329,6 @@ export default function PcScreen() {
       };
     }, []),
   );
-  const scrollTerm = (n: number) => activeWeb()?.injectJavaScript(`window.__scroll&&window.__scroll(${n});true;`);
   const pickMode = useRef(false);
   const pickFileForTerminal = () => { pickMode.current = true; setSub('explorer'); setBusyMsg('Выбери файл — его путь вставится в терминал'); setTimeout(() => setBusyMsg(''), 3500); };
 
@@ -382,7 +368,7 @@ export default function PcScreen() {
       if (res.status >= 400) throw new Error('Ошибка ' + res.status);
       // путь вставится, когда ПК сохранит файл и пришлёт file_saved
       setTimeout(() => { if (pendingAttach.current > 0) { setBusyMsg(`Жду ПК · файлов в очереди ${pendingAttach.current}`); } }, 15000);
-    } catch (e: any) {
+    } catch {
       pendingAttach.current = Math.max(0, pendingAttach.current - 1);
       setBusyMsg('Не удалось отправить'); setTimeout(() => setBusyMsg(''), 2500);
     }
@@ -474,7 +460,6 @@ export default function PcScreen() {
   };
 
   // Поле «сообщения»: набираешь/диктуешь/прикрепляешь, потом «отправить» → вставляется в терминал
-  const [compose, setCompose] = useState('');
   const appendCompose = (t: string) => setCompose((prev) => (prev.trim() ? prev.trimEnd() + ' ' : '') + t);
   const sendCompose = () => {
     const t = compose.trim();
@@ -544,12 +529,6 @@ export default function PcScreen() {
 
   const selDevice = devices.find((d) => d.id === deviceId);
   const online = connected && selDevice?.online;
-  const startRemoteTransfer = (mode: 'push' | 'pull') => {
-    if (!online) { setRemoteSync({ busy: false, pct: 0, speed: 0, message: 'Устройство не в сети' }); return; }
-    setRemoteSync({ busy: true, pct: 0, speed: 0, message: mode === 'push' ? 'Запускаю отправку на устройстве…' : 'Запускаю получение на устройстве…' });
-    send({ type: mode === 'push' ? 'sync_remote_push' : 'sync_remote_pull', reqId: newReq() });
-  };
-
   // Ручной выбор ПК (ноут / стационарный и т.д.). Сбрасываем состояние, чтобы оно
   // перезапросилось у нового устройства; терминалы перемонтируются (см. key с deviceId).
   const pickDevice = (id: string) => {
@@ -717,31 +696,7 @@ export default function PcScreen() {
           bottomInset={kb ? 0 : insets.bottom + BottomTabInset - 16}
         />
       ) : sub === 'transfer' ? (
-        <View style={[styles.transferScreen, { paddingBottom: insets.bottom + BottomTabInset }]}>
-          <View style={styles.transferDevice}>
-            <View style={[styles.dot, { backgroundColor: online ? c.success : c.textSecondary }]} />
-            <View style={{ flex: 1 }}>
-              <ThemedText type="smallBold">{selDevice?.name || 'Устройство'}</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">{online ? 'готово к удалённой команде' : 'не в сети'}</ThemedText>
-            </View>
-          </View>
-          <TouchableOpacity disabled={!online || remoteSync.busy} onPress={() => startRemoteTransfer('push')} style={[styles.transferButton, (!online || remoteSync.busy) && { opacity: 0.45 }]}>
-            <SymbolView name="arrow.up.to.line" tintColor="#fff" size={20} />
-            <ThemedText type="smallBold" style={{ color: '#fff' }}>{remoteSync.busy ? 'Выгружается…' : 'Выгрузить на сервер'}</ThemedText>
-          </TouchableOpacity>
-          <TouchableOpacity disabled={!online || remoteSync.busy} onPress={() => startRemoteTransfer('pull')} style={[styles.transferButton, styles.transferButtonSecondary, (!online || remoteSync.busy) && { opacity: 0.45 }]}>
-            <SymbolView name="arrow.down.to.line" tintColor={c.success} size={20} />
-            <ThemedText type="smallBold">Забрать с сервера</ThemedText>
-          </TouchableOpacity>
-          <View style={styles.transferProgress}>
-            <View style={[styles.transferProgressFill, { width: `${remoteSync.pct}%` }]} />
-          </View>
-          <View style={styles.transferStats}>
-            <View><ThemedText type="small" themeColor="textSecondary">Прогресс</ThemedText><ThemedText type="smallBold">{remoteSync.pct}%</ThemedText></View>
-            <View><ThemedText type="small" themeColor="textSecondary">Скорость</ThemedText><ThemedText type="smallBold">{remoteSync.speed ? `${(remoteSync.speed / 1048576).toFixed(1)} МБ/с` : '—'}</ThemedText></View>
-          </View>
-          {!!remoteSync.message && <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.three }}>{remoteSync.message}</ThemedText>}
-        </View>
+        <SyncPanel preferredDeviceId={deviceId} compact />
       ) : (
         <View style={{ flex: 1 }}>
           <View style={styles.pathBar}>
@@ -933,13 +888,6 @@ const styles = StyleSheet.create({
   segBtn: { flex: 1, paddingVertical: Spacing.two, borderRadius: Radius.sm, alignItems: 'center' },
   segBtnOn: { backgroundColor: c.accent },
   toast: { textAlign: 'center', color: c.text, paddingVertical: 4 },
-  transferScreen: { flex: 1, paddingHorizontal: Spacing.three, paddingTop: Spacing.three },
-  transferDevice: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, padding: Spacing.three, borderRadius: Radius.md, backgroundColor: c.backgroundElement },
-  transferButton: { marginTop: Spacing.three, minHeight: 50, borderRadius: Radius.md, backgroundColor: c.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.two },
-  transferButtonSecondary: { marginTop: Spacing.two, backgroundColor: c.backgroundElement, borderWidth: StyleSheet.hairlineWidth, borderColor: c.separator },
-  transferProgress: { height: 7, marginTop: Spacing.four, overflow: 'hidden', borderRadius: 4, backgroundColor: c.backgroundElement },
-  transferProgressFill: { height: '100%', borderRadius: 4, backgroundColor: c.success },
-  transferStats: { flexDirection: 'row', justifyContent: 'space-between', marginTop: Spacing.three },
   termTabs: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: Spacing.three, marginBottom: Spacing.two },
   termPresets: { flexDirection: 'row', gap: 7, paddingHorizontal: Spacing.three, marginBottom: Spacing.two },
   termPresetBtn: { flex: 1, minHeight: 36, borderRadius: Radius.sm, backgroundColor: c.backgroundElement, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 8 },

@@ -313,17 +313,19 @@ def scan_everything():
     client, sftp = connect()
     result = []
     try:
-        for scope in SCOPES:
+        for scope_index, scope in enumerate(SCOPES, 1):
             sid, label = scope["id"], scope["label"]
 
-            def remote_progress(files=0, dirs=0, done=False, _label=label):
+            def remote_progress(files=0, dirs=0, done=False, _label=label, _index=scope_index):
                 emit({"type": "scan", "side": "remote", "scope": _label, "files": files,
                       "dirs": dirs, "done": done, "elapsed": int(time.time() - started),
+                      "scopeIndex": _index, "scopeTotal": len(SCOPES),
                       "msg": f"Сканирую сервер · {_label}"})
 
-            def local_progress(files=0, dirs=0, done=False, _label=label):
+            def local_progress(files=0, dirs=0, done=False, _label=label, _index=scope_index):
                 emit({"type": "scan", "side": "local", "scope": _label, "files": files,
                       "dirs": dirs, "done": done, "elapsed": int(time.time() - started),
+                      "scopeIndex": _index, "scopeTotal": len(SCOPES),
                       "msg": f"Сканирую этот компьютер · {_label}"})
 
             remote = fast_scan_remote(client, scope["remote"], label, remote_progress, started,
