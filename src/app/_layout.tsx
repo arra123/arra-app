@@ -8,7 +8,6 @@ import {
 } from '@expo-google-fonts/inter';
 import { DefaultTheme, ThemeProvider } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import * as Updates from 'expo-updates';
 import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -51,23 +50,6 @@ export default function RootLayout() {
   // По умолчанию приложение портретное; альбомную включает только удалённый экран.
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
-  }, []);
-
-  // Жёсткая авто-проверка апдейта при каждом запуске: качаем и применяем сразу,
-  // не полагаясь на капризное нативное поведение expo-updates (из-за него версия «застревала»).
-  useEffect(() => {
-    if (__DEV__) return;
-    (async () => {
-      try {
-        const res = await Updates.checkForUpdateAsync();
-        if (res.isAvailable) {
-          await Updates.fetchUpdateAsync();
-          await Updates.reloadAsync();
-        }
-      } catch {
-        // нет сети / уже последняя — молча
-      }
-    })();
   }, []);
 
   return (

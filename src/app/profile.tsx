@@ -1,8 +1,7 @@
 import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import * as Updates from 'expo-updates';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppleButton } from '@/components/apple-button';
@@ -34,25 +33,22 @@ export default function ProfileScreen({ embedded = false }: { embedded?: boolean
       .catch(() => {});
   }, []);
 
-  const [checking, setChecking] = useState(false);
+  const [openingTestFlight, setOpeningTestFlight] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
-  async function checkUpdate() {
-    if (checking) return;
-    setChecking(true);
+  async function openTestFlight() {
+    if (openingTestFlight) return;
+    setOpeningTestFlight(true);
     try {
-      const res = await Updates.checkForUpdateAsync();
-      if (res.isAvailable) {
-        await Updates.fetchUpdateAsync();
-        Alert.alert('Обновление готово', 'Сейчас приложение перезапустится с новой версией.', [
-          { text: 'Перезапустить', onPress: () => Updates.reloadAsync() },
-        ]);
-      } else {
-        Alert.alert('Уже последняя версия', `У тебя установлена v${APP_BUILD}.`);
+      if (Platform.OS === 'ios') await Linking.openURL('itms-beta://');
+      else await Linking.openURL('https://apps.apple.com/app/testflight/id899247664');
+    } catch {
+      try {
+        await Linking.openURL('https://apps.apple.com/app/testflight/id899247664');
+      } catch {
+        Alert.alert('Не удалось открыть TestFlight', 'Открой TestFlight вручную и нажми «Обновить» у Noda.');
       }
-    } catch (e: any) {
-      Alert.alert('Не получилось проверить', e?.message || 'Проверь интернет и попробуй ещё раз.');
     } finally {
-      setChecking(false);
+      setOpeningTestFlight(false);
     }
   }
 
@@ -135,16 +131,16 @@ export default function ProfileScreen({ embedded = false }: { embedded?: boolean
           </TouchableOpacity>
 
           <ThemedText type="smallBold" themeColor="textSecondary" style={styles.label}>Обновление</ThemedText>
-          <TouchableOpacity activeOpacity={0.8} onPress={checkUpdate} disabled={checking}>
+          <TouchableOpacity activeOpacity={0.8} onPress={openTestFlight} disabled={openingTestFlight}>
             <GlassCard radius={Radius.lg} style={styles.infoCard}>
               <View style={styles.infoRow}>
-                <View>
-                  <ThemedText type="smallBold">Проверить обновление</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">установлена v{APP_BUILD}</ThemedText>
+                <View style={{ flex: 1, paddingRight: Spacing.two }}>
+                  <ThemedText type="smallBold">Открыть TestFlight</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">Noda v{APP_BUILD} · обновления только через TestFlight</ThemedText>
                 </View>
-                {checking
+                {openingTestFlight
                   ? <ActivityIndicator color={theme.textSecondary} />
-                  : <SymbolView name="arrow.triangle.2.circlepath" tintColor={theme.accent} size={20} />}
+                  : <SymbolView name="arrow.up.forward.app.fill" tintColor={theme.accent} size={20} />}
               </View>
             </GlassCard>
           </TouchableOpacity>
