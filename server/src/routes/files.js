@@ -155,6 +155,16 @@ export default async function fileRoutes(app) {
         [request.user.id, token, name, deviceKey, role, hostname, platform],
       );
     }
+    // После перехода на постоянный аппаратный ключ убираем старые записи той
+    // же физической роли без ключа. Иначе прежние переустановки снова
+    // появляются в телефоне отдельными «ПК» или «Ноутбук».
+    if (deviceKey && role) {
+      await query(
+        `DELETE FROM pc_tokens
+         WHERE user_id = $1 AND id <> $2 AND device_key IS NULL AND role = $3`,
+        [request.user.id, rec.id, role],
+      );
+    }
     return { pcToken: rec };
   });
 
