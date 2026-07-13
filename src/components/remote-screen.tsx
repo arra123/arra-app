@@ -45,7 +45,7 @@ const SCREEN_HTML = `<!doctype html><html><head>
     var minX=W-W*scale, minY=H-H*scale;
     tx=Math.min(0,Math.max(minX,tx)); ty=Math.min(0,Math.max(minY,ty));
   }
-  var sx0=0,sy0=0,moved=false,lastMove=0,lastTap=0,lp=null,lpFired=false,dragging=false,lastNx=0,lastNy=0,startT=0,maxd=0;
+  var sx0=0,sy0=0,panX=0,panY=0,moved=false,lastMove=0,lastTap=0,lp=null,lpFired=false,dragging=false,lastNx=0,lastNy=0,startT=0,maxd=0;
   var pinchD=0,pinchCx=0,pinchCy=0,pinching=false;
   function dist(a,b){ var dx=a.clientX-b.clientX, dy=a.clientY-b.clientY; return Math.sqrt(dx*dx+dy*dy); }
   function clearLp(){ if(lp){clearTimeout(lp);lp=null;} }
@@ -57,7 +57,7 @@ const SCREEN_HTML = `<!doctype html><html><head>
       pinchCy=(e.touches[0].clientY+e.touches[1].clientY)/2;
       return;
     }
-    var t=e.touches[0]; sx0=t.clientX; sy0=t.clientY; moved=false; lpFired=false; dragging=false; startT=Date.now(); maxd=0;
+    var t=e.touches[0]; sx0=t.clientX; sy0=t.clientY; panX=sx0; panY=sy0; moved=false; lpFired=false; dragging=false; startT=Date.now(); maxd=0;
     var p=norm(sx0,sy0); lastNx=p.nx; lastNy=p.ny;
     if(mode==='drag'){ dragging=true; send({t:'input',action:'down',nx:p.nx,ny:p.ny}); }
     else { lp=setTimeout(function(){ lpFired=true; var q=norm(sx0,sy0); send({t:'input',action:'click',nx:q.nx,ny:q.ny,button:'right'}); }, 480); }
@@ -81,6 +81,12 @@ const SCREEN_HTML = `<!doctype html><html><head>
     if(dd>5){ if(!moved){moved=true;clearLp();} }
     if(!moved) return;
     var now=Date.now();
+    // После увеличения один палец двигает сам экран. Раньше панорама работала
+    // только двумя пальцами и по горизонтали почти не ощущалась.
+    if(mode==='control' && scale>1.01){
+      tx+=t.clientX-panX; ty+=t.clientY-panY; panX=t.clientX; panY=t.clientY;
+      clampPan(); applyT(); return;
+    }
     if(mode==='scroll'){
       if(now-lastMove>40){ lastMove=now; var p=norm(t.clientX,t.clientY); send({t:'input',action:'scroll',nx:p.nx,ny:p.ny,dy: dy>0?-120:120}); sy0=t.clientY; }
       return;
@@ -262,7 +268,7 @@ export const RemoteScreen = forwardRef<RemoteScreenHandle, Props>(function Remot
         {!full && controls(false)}
       </View>
       <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center', paddingVertical: 6 }}>
-        1 палец — курсор · тап — клик · долгое — правый · 2 пальца — зум/панорама
+        1 палец — курсор · после зума — двигать экран · тап — клик · 2 пальца — масштаб
       </ThemedText>
       <View style={{ height: bottomInset }} />
 

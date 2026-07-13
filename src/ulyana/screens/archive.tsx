@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getToken } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 
-import { STK } from '../assets';
+import { STK, UL } from '../assets';
 import {
   cryMediaUrl, cryStats, deleteCry, deletePingMatch, listCries, listPingMatches,
   type Cry, type CryStats, type PingMatch,
@@ -294,11 +294,12 @@ function Empty({ icon, text }: { icon: string; text: string }) {
 }
 
 function scoreSticker(score: number) {
-  if (score < 15) return STK.smileTear;
-  if (score < 35) return STK.cry;
-  if (score < 55) return STK.droplet;
-  if (score < 75) return STK.sweat;
-  return STK.sob;
+  if (score < 15) return UL.calm;
+  if (score < 35) return UL.almost;
+  if (score < 55) return UL.cry1;
+  if (score < 75) return UL.cry2;
+  if (score < 90) return UL.sob;
+  return UL.flood;
 }
 
 function fmtDate(iso: string) {

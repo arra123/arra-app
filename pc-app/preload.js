@@ -42,8 +42,10 @@ contextBridge.exposeInMainWorld('arra', {
   syncCloseBlockers: (pids) => ipcRenderer.invoke('sync-close-blockers', pids),
   syncForceCloseBlockers: (pids) => ipcRenderer.invoke('sync-force-close-blockers', pids),
   remoteSync: (deviceId, mode) => ipcRenderer.invoke('remote-sync', { deviceId, mode }),
+  remoteScreenSend: (deviceId, message) => ipcRenderer.invoke('remote-screen-send', { deviceId, message }),
   onSyncEvent: (cb) => ipcRenderer.on('sync-event', (_e, o) => cb(o)),
   onRemoteSyncEvent: (cb) => ipcRenderer.on('remote-sync-event', (_e, o) => cb(o)),
+  onRemoteScreenEvent: (cb) => ipcRenderer.on('remote-screen-event', (_e, o) => cb(o)),
   // Реальный путь перетащенного файла (в Electron 33 File.path удалён → только так)
   filePath: (file) => { try { return webUtils.getPathForFile(file) || ''; } catch { return ''; } },
   // Системные предупреждения (например, запуск от администратора)

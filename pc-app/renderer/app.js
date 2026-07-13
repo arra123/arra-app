@@ -76,6 +76,7 @@ const NAVICON = {
   notes: '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
   term: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>',
   sync: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-7.5-4M3 12a9 9 0 0 1 9-9 9 9 0 0 1 7.5 4"/><path d="M21 3v5h-5M3 21v-5h5"/></svg>',
+  remote: '<svg viewBox="0 0 24 24"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8 21h8M12 16.5V21M7 10l3-3m-3 3h4M17 10l-3 3m3-3h-4"/></svg>',
 };
 const SVG = {
   tag: '<svg viewBox="0 0 24 24"><path d="M20 12V7a2 2 0 0 0-2-2h-5L3 15l6 6 11-9z"/><circle cx="15.5" cy="8.5" r="1.2"/></svg>',
@@ -91,6 +92,12 @@ const SVG = {
 const state = {
   section: 'fin', files: [], monthDate: null, viewer: null,
   presence: { phone: false, laptop: false, pc: false, devices: [], currentId: null, status: {} },
+};
+
+const remoteDesktop = {
+  deviceId: null, running: false, screens: [], activeScreen: null,
+  frame: null, frameW: 16, frameH: 9, frameQueued: false, lastFrameAt: 0,
+  moveAt: 0, uiAt: 0, error: '',
 };
 
 function deviceRole(device, currentId, currentRole, deviceCount) {
@@ -120,6 +127,7 @@ async function refreshPresence(redraw = true) {
     if (redraw) {
       renderNav();
       if (state.section === 'sync') renderSyncV2Body();
+      if (state.section === 'remote') updateRemoteDeviceUi();
     }
   } catch {}
 }
@@ -471,7 +479,7 @@ function renderLogin() {
       <div class="card gap">
         <label class="field"><span>Логин</span><input id="login" type="text" autocomplete="username" /></label>
         <label class="field"><span>Пароль</span><input id="password" type="password" autocomplete="current-password" /></label>
-        <label class="field"><span>Имя компьютера</span><input id="device" type="text" value="Мой ПК" /></label>
+        <label class="field"><span>Имя компьютера</span><input id="device" type="text" placeholder="Определится автоматически" /></label>
         <button class="btn full" id="connect">Подключить</button>
         <div class="err" id="err"></div>
       </div>
@@ -482,7 +490,7 @@ function renderLogin() {
 async function doLogin() {
   const login = document.getElementById('login').value.trim();
   const password = document.getElementById('password').value;
-  const deviceName = document.getElementById('device').value.trim() || 'Мой ПК';
+  const deviceName = document.getElementById('device').value.trim();
   const err = document.getElementById('err');
   const btn = document.getElementById('connect');
   if (!login || !password) { err.textContent = 'Введи логин и пароль'; return; }
@@ -499,6 +507,7 @@ async function renderNav() {
     ['term', 'Терминал', NAVICON.term],
     ['files', 'Файлы', NAVICON.files],
     ['sync', 'Передача', NAVICON.sync],
+    ['remote', 'Удалённый ПК', NAVICON.remote],
     ['chat', 'Помощник', NAVICON.chat],
     ['notes', 'Заметки', NAVICON.notes],
     ['fin', 'Финансы', NAVICON.fin],
@@ -524,6 +533,7 @@ async function renderNav() {
 }
 
 function route() {
+  if (state.section !== 'remote' && remoteDesktop.running) stopRemoteDesktop();
   document.body.classList.toggle('term-mode', state.section === 'term');
   document.body.classList.toggle('chat-mode', state.section === 'chat');
   if (state.section === 'fin') renderFin();
@@ -531,7 +541,242 @@ function route() {
   else if (state.section === 'term') renderTerminal();
   else if (state.section === 'files') renderFiles();
   else if (state.section === 'sync') renderSyncV2();
+  else if (state.section === 'remote') renderRemoteDesktop();
   else if (state.section === 'notes') renderNotes();
+}
+
+// ================= УДАЛЁННЫЙ ПК =================
+function availableRemoteDevices() {
+  return state.presence.devices.filter((device) => device.id !== state.presence.currentId);
+}
+
+function selectedRemoteDevice() {
+  const devices = availableRemoteDevices();
+  return devices.find((device) => device.id === remoteDesktop.deviceId)
+    || devices.find((device) => device.online)
+    || devices[0]
+    || null;
+}
+
+async function sendRemoteDesktop(message) {
+  const device = selectedRemoteDevice();
+  if (!device) return { ok: false, error: 'Другой компьютер не найден' };
+  remoteDesktop.deviceId = device.id;
+  const result = await window.arra.remoteScreenSend(device.id, message);
+  if (!result?.ok) {
+    remoteDesktop.error = result?.error || 'Команда не отправлена';
+    updateRemoteDeviceUi();
+  }
+  return result;
+}
+
+async function startRemoteDesktop() {
+  const device = selectedRemoteDevice();
+  if (!device?.online) { remoteDesktop.error = 'Выбранный компьютер не в сети'; updateRemoteDeviceUi(); return; }
+  remoteDesktop.deviceId = device.id;
+  remoteDesktop.error = '';
+  remoteDesktop.running = true;
+  remoteDesktop.lastFrameAt = 0;
+  updateRemoteDeviceUi();
+  await sendRemoteDesktop({ type: 'screen_start', displayId: remoteDesktop.activeScreen || undefined, fps: 15, quality: 68, width: 1680 });
+  await sendRemoteDesktop({ type: 'screen_list' });
+}
+
+async function stopRemoteDesktop() {
+  if (remoteDesktop.deviceId) await window.arra.remoteScreenSend(remoteDesktop.deviceId, { type: 'screen_stop' });
+  remoteDesktop.running = false;
+  remoteDesktop.frame = null;
+  remoteDesktop.lastFrameAt = 0;
+  updateRemoteDeviceUi();
+}
+
+async function switchRemoteScreen(displayId) {
+  remoteDesktop.activeScreen = String(displayId);
+  await sendRemoteDesktop({ type: 'screen_switch', displayId: remoteDesktop.activeScreen });
+  renderRemoteScreenButtons();
+}
+
+function fitRemoteCanvas() {
+  const stage = document.getElementById('remote-stage');
+  const canvas = document.getElementById('remote-canvas');
+  if (!stage || !canvas) return;
+  const maxW = Math.max(1, stage.clientWidth - 24);
+  const maxH = Math.max(1, stage.clientHeight - 24);
+  const ratio = Math.max(0.2, remoteDesktop.frameW / Math.max(1, remoteDesktop.frameH));
+  let width = maxW;
+  let height = width / ratio;
+  if (height > maxH) { height = maxH; width = height * ratio; }
+  canvas.style.width = `${Math.round(width)}px`;
+  canvas.style.height = `${Math.round(height)}px`;
+}
+
+function drawRemoteFrame() {
+  remoteDesktop.frameQueued = false;
+  const frame = remoteDesktop.frame;
+  const canvas = document.getElementById('remote-canvas');
+  if (!frame || !canvas || state.section !== 'remote') return;
+  const image = new Image();
+  image.onload = () => {
+    const width = remoteDesktop.frameW || image.naturalWidth || 16;
+    const height = remoteDesktop.frameH || image.naturalHeight || 9;
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    canvas.getContext('2d', { alpha: false })?.drawImage(image, 0, 0, width, height);
+    fitRemoteCanvas();
+    const hint = document.getElementById('remote-stage-hint'); if (hint) hint.hidden = true;
+  };
+  image.src = `data:image/jpeg;base64,${frame}`;
+}
+
+function queueRemoteFrame(data, width, height) {
+  remoteDesktop.frame = data;
+  remoteDesktop.frameW = Number(width) || remoteDesktop.frameW;
+  remoteDesktop.frameH = Number(height) || remoteDesktop.frameH;
+  remoteDesktop.lastFrameAt = Date.now();
+  if (!remoteDesktop.frameQueued) {
+    remoteDesktop.frameQueued = true;
+    requestAnimationFrame(drawRemoteFrame);
+  }
+  if (remoteDesktop.lastFrameAt - remoteDesktop.uiAt > 1000) {
+    remoteDesktop.uiAt = remoteDesktop.lastFrameAt;
+    updateRemoteDeviceUi();
+  }
+}
+
+function handleRemoteDesktopEvent(message) {
+  if (!message) return;
+  if (message.sourceDeviceId && remoteDesktop.deviceId && message.sourceDeviceId !== remoteDesktop.deviceId) return;
+  if (message.type === 'screen_frame' && message.data) {
+    remoteDesktop.running = true;
+    queueRemoteFrame(message.data, message.w, message.h);
+  } else if (message.type === 'screens') {
+    remoteDesktop.screens = message.screens || [];
+    remoteDesktop.activeScreen = remoteDesktop.activeScreen
+      || remoteDesktop.screens.find((screen) => screen.primary)?.id
+      || remoteDesktop.screens[0]?.id
+      || null;
+    renderRemoteScreenButtons();
+  } else if (message.type === 'pc_offline') {
+    remoteDesktop.running = false;
+    remoteDesktop.error = 'Компьютер отключился';
+    updateRemoteDeviceUi();
+  }
+}
+
+window.arra.onRemoteScreenEvent?.(handleRemoteDesktopEvent);
+
+function remotePoint(event) {
+  const canvas = document.getElementById('remote-canvas');
+  if (!canvas) return null;
+  const rect = canvas.getBoundingClientRect();
+  return {
+    nx: Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width))),
+    ny: Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height))),
+  };
+}
+
+function wireRemoteCanvas() {
+  const canvas = document.getElementById('remote-canvas');
+  if (!canvas) return;
+  canvas.onpointerdown = (event) => {
+    canvas.focus();
+    if (event.button !== 0) return;
+    event.preventDefault();
+    canvas.setPointerCapture?.(event.pointerId);
+    const point = remotePoint(event); if (point) sendRemoteDesktop({ type: 'screen_input', action: 'down', ...point });
+  };
+  canvas.onpointermove = (event) => {
+    const now = Date.now(); if (now - remoteDesktop.moveAt < 28) return;
+    remoteDesktop.moveAt = now;
+    const point = remotePoint(event); if (point) sendRemoteDesktop({ type: 'screen_input', action: 'move', ...point });
+  };
+  canvas.onpointerup = (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const point = remotePoint(event); if (point) sendRemoteDesktop({ type: 'screen_input', action: 'up', ...point });
+  };
+  canvas.oncontextmenu = (event) => {
+    event.preventDefault();
+    const point = remotePoint(event); if (point) sendRemoteDesktop({ type: 'screen_input', action: 'click', button: 'right', ...point });
+  };
+  canvas.onwheel = (event) => {
+    event.preventDefault();
+    const point = remotePoint(event); if (point) sendRemoteDesktop({ type: 'screen_input', action: 'scroll', dy: event.deltaY > 0 ? -120 : 120, ...point });
+  };
+  canvas.onkeydown = (event) => {
+    const map = { Enter: 'enter', Backspace: 'backspace', Escape: 'esc', Tab: 'tab', ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Delete: 'delete', Home: 'home', End: 'end', ' ': 'space' };
+    const key = map[event.key];
+    if (key) {
+      event.preventDefault();
+      sendRemoteDesktop({ type: 'screen_input', action: 'key', key });
+    } else if (event.key.length === 1) {
+      event.preventDefault();
+      if (event.ctrlKey || event.altKey || event.metaKey) {
+        sendRemoteDesktop({ type: 'screen_input', action: 'key', key: event.key, ctrl: event.ctrlKey || event.metaKey, alt: event.altKey, shift: event.shiftKey });
+      } else {
+        sendRemoteDesktop({ type: 'screen_input', action: 'key', text: event.key });
+      }
+    }
+  };
+  new ResizeObserver(fitRemoteCanvas).observe(document.getElementById('remote-stage'));
+}
+
+function renderRemoteScreenButtons() {
+  const box = document.getElementById('remote-monitors');
+  if (!box) return;
+  box.innerHTML = remoteDesktop.screens.map((screen, index) => `<button data-display="${esc(screen.id)}" class="${String(screen.id) === String(remoteDesktop.activeScreen) ? 'active' : ''}">${screen.primary ? 'Основной' : `Монитор ${index + 1}`}<small>${screen.width || ''}${screen.width ? '×' : ''}${screen.height || ''}</small></button>`).join('');
+  box.querySelectorAll('[data-display]').forEach((button) => { button.onclick = () => switchRemoteScreen(button.dataset.display); });
+}
+
+function updateRemoteDeviceUi() {
+  const device = selectedRemoteDevice();
+  if (!remoteDesktop.deviceId && device) remoteDesktop.deviceId = device.id;
+  const select = document.getElementById('remote-device');
+  if (select) {
+    const devices = availableRemoteDevices();
+    const value = remoteDesktop.deviceId;
+    select.innerHTML = devices.map((item) => `<option value="${esc(item.id)}">${esc(item.name || (item.role === 'laptop' ? 'Ноутбук' : 'ПК'))}${item.online ? ' · в сети' : ' · офлайн'}</option>`).join('');
+    if (value && devices.some((item) => item.id === value)) select.value = value;
+  }
+  const current = selectedRemoteDevice();
+  const status = document.getElementById('remote-status');
+  const action = document.getElementById('remote-connect');
+  if (status) {
+    const frameAge = remoteDesktop.lastFrameAt ? Math.max(0, Math.round((Date.now() - remoteDesktop.lastFrameAt) / 1000)) : null;
+    status.textContent = remoteDesktop.error || (remoteDesktop.running
+      ? (frameAge != null && frameAge > 4 ? `Жду кадры · ${frameAge} с` : 'Удалённое управление активно')
+      : (current?.online ? 'Готов к подключению' : 'Устройство не в сети'));
+    status.className = remoteDesktop.error ? 'remote-status bad' : 'remote-status';
+  }
+  if (action) {
+    action.textContent = remoteDesktop.running ? 'Отключиться' : 'Подключиться';
+    action.disabled = !remoteDesktop.running && !current?.online;
+  }
+}
+
+function renderRemoteDesktop() {
+  const device = selectedRemoteDevice();
+  if (!remoteDesktop.deviceId && device) remoteDesktop.deviceId = device.id;
+  app.innerHTML = `<div class="remote-page">
+    <header class="remote-head"><div><h1>Удалённый ПК</h1><p>Полный доступ к другому компьютеру через защищённый канал Noda.</p></div>
+      <div class="remote-device-controls"><select id="remote-device" aria-label="Компьютер"></select><button class="btn" id="remote-connect">Подключиться</button></div></header>
+    <div class="remote-meta"><span id="remote-status">Готов к подключению</span><div id="remote-monitors" class="remote-monitors"></div><span class="remote-help">Кликни по экрану и печатай · колесо — прокрутка · правый клик поддерживается</span></div>
+    <div class="remote-stage" id="remote-stage"><canvas id="remote-canvas" tabindex="0"></canvas><div id="remote-stage-hint" class="remote-stage-hint"><b>${device ? 'Экран появится здесь' : 'Другой компьютер пока не найден'}</b><span>${device ? 'Noda на втором устройстве должна быть открыта и находиться в сети.' : 'Установи Noda на ПК и войди под тем же аккаунтом.'}</span></div></div>
+  </div>`;
+  const select = document.getElementById('remote-device');
+  select.onchange = async () => {
+    if (remoteDesktop.running) await stopRemoteDesktop();
+    remoteDesktop.deviceId = select.value;
+    remoteDesktop.screens = [];
+    remoteDesktop.activeScreen = null;
+    remoteDesktop.error = '';
+    updateRemoteDeviceUi(); renderRemoteScreenButtons();
+  };
+  document.getElementById('remote-connect').onclick = () => remoteDesktop.running ? stopRemoteDesktop() : startRemoteDesktop();
+  wireRemoteCanvas();
+  renderRemoteScreenButtons();
+  updateRemoteDeviceUi();
+  if (remoteDesktop.frame) drawRemoteFrame();
 }
 
 // ================= ФИНАНСЫ =================
@@ -1279,7 +1524,7 @@ function handleRemoteSyncEvent(message) {
   const key = message.deviceId || message.sourceDeviceId || 'remote';
   const device = state.presence.devices.find((item) => item.id === key);
   const name = device?.name || 'Другое устройство';
-  sync.remote[key] = { name, type: event.type, pct: event.type === 'progress' ? Math.round((event.bytes || 0) / Math.max(1, event.totalBytes || 1) * 100) : (event.type === 'done' ? 100 : 0), event };
+  sync.remote[key] = { ...(sync.remote[key] || {}), name, type: event.type, pct: event.type === 'progress' ? Math.round((event.bytes || 0) / Math.max(1, event.totalBytes || 1) * 100) : (event.type === 'done' ? 100 : 0), event };
   if (event.type === 'progress') syncLog(`${name}: ${fmtB(event.speed || 0)}/с · ${event.done || 0}/${event.total || 0}`);
   if (event.type === 'done') toast(name, `Выгрузка завершена: ${event.transferred || 0} файлов`, event.errors ? 'warn' : 'ok', 7000);
   if (event.type === 'error') toast(name, event.error || 'Ошибка удалённой выгрузки', 'warn', 7000);
@@ -1473,12 +1718,13 @@ async function forceCloseSyncSessions(pids) {
   }
 }
 
-async function startRemotePush(deviceId) {
+async function startRemoteTransfer(deviceId, mode) {
   const device = state.presence.devices.find((item) => item.id === deviceId);
-  if (!device?.online) { toast('Удалённая выгрузка', 'Устройство сейчас не в сети', 'warn'); return; }
-  const result = await window.arra.remoteSync(deviceId, 'push');
-  if (!result?.ok) { toast('Удалённая выгрузка', result?.error || 'Команда не отправлена', 'warn'); return; }
-  sync.remote[deviceId] = { name: device.name, type: 'starting', pct: 0 };
+  const title = mode === 'pull' ? 'Удалённое получение' : 'Удалённая выгрузка';
+  if (!device?.online) { toast(title, 'Устройство сейчас не в сети', 'warn'); return; }
+  const result = await window.arra.remoteSync(deviceId, mode);
+  if (!result?.ok) { toast(title, result?.error || 'Команда не отправлена', 'warn'); return; }
+  sync.remote[deviceId] = { name: device.name, type: 'starting', mode, pct: 0 };
   renderRemoteDevices();
 }
 
@@ -1493,12 +1739,13 @@ function renderRemoteDevices() {
     .filter((device) => device.role === role)
     .sort((a, b) => Number(b.online) - Number(a.online) || String(b.last_seen || b.created_at || '').localeCompare(String(a.last_seen || a.created_at || '')))[0])
     .filter(Boolean);
-  box.innerHTML = `<div class="sync-utility-head"><b>Другие устройства</b><span>удалённая выгрузка</span></div>${others.length ? others.map((device) => {
+  box.innerHTML = `<div class="sync-utility-head"><b>Другие устройства</b><span>удалённое управление переносом</span></div>${others.length ? others.map((device) => {
     const remote = sync.remote[device.id];
     const running = remote && !['done', 'error', 'closed'].includes(remote.type);
-    return `<div class="sync-remote-row"><span class="dot ${device.online ? 'on' : ''}"></span><div><b>${esc(device.name || (device.role === 'laptop' ? 'Ноутбук' : 'ПК'))}</b><small>${running ? `выполняется${remote.pct ? ` · ${remote.pct}%` : '…'}` : (device.online ? 'в сети' : 'не в сети')}</small></div><button data-remote-push="${esc(device.id)}" ${!device.online || running ? 'disabled' : ''}>На сервер</button></div>`;
+    return `<div class="sync-remote-row"><span class="dot ${device.online ? 'on' : ''}"></span><div><b>${esc(device.name || (device.role === 'laptop' ? 'Ноутбук' : 'ПК'))}</b><small>${running ? `${remote.mode === 'pull' ? 'получает с сервера' : 'отправляет на сервер'}${remote.pct ? ` · ${remote.pct}%` : '…'}` : (device.online ? 'в сети' : 'не в сети')}</small></div><span class="sync-remote-actions"><button data-remote-push="${esc(device.id)}" ${!device.online || running ? 'disabled' : ''}>На сервер</button><button data-remote-pull="${esc(device.id)}" ${!device.online || running ? 'disabled' : ''}>С сервера</button></span></div>`;
   }).join('') : '<div class="sync-utility-empty">Других устройств пока нет.</div>'}`;
-  box.querySelectorAll('[data-remote-push]').forEach((button) => { button.onclick = () => startRemotePush(button.dataset.remotePush); });
+  box.querySelectorAll('[data-remote-push]').forEach((button) => { button.onclick = () => startRemoteTransfer(button.dataset.remotePush, 'push'); });
+  box.querySelectorAll('[data-remote-pull]').forEach((button) => { button.onclick = () => startRemoteTransfer(button.dataset.remotePull, 'pull'); });
 }
 function renderSyncViewBody() {
   if (document.querySelector('.sync-v3')) renderSyncV2Body();

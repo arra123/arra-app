@@ -1,5 +1,7 @@
 import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
 import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
+import { useFocusEffect } from 'expo-router';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -63,6 +65,7 @@ const TERM_HTML = `<!doctype html><html><head>
     } catch(e){ try{ if(window.CanvasAddon) term.loadAddon(new CanvasAddon.CanvasAddon()); }catch(e2){} }
     function doFit(){ try{ fit.fit(); send({t:'resize',cols:term.cols,rows:term.rows}); }catch(e){} }
     window.__recv=function(d){ term.write(d, function(){ try{ term.refresh(0, term.rows-1); }catch(e){} }); };
+    window.__setsize=function(c,r){ try{ if(c>0&&r>0){ term.resize(c,r); term.refresh(0,term.rows-1); } }catch(e){} };
     window.__fit=doFit;
     window.__focus=function(){ term.focus(); };
     window.__blur=function(){ try{ if(term.textarea) term.textarea.blur(); term.blur(); }catch(e){} };
@@ -94,7 +97,7 @@ const TERM_HTML = `<!doctype html><html><head>
       }
     },{passive:false});
     host.addEventListener('touchend',function(){ ty=null; },{passive:false});
-    setTimeout(function(){ doFit(); term.focus(); send({t:'ready',cols:term.cols,rows:term.rows}); },300);
+    setTimeout(function(){ doFit(); send({t:'ready',cols:term.cols,rows:term.rows}); },300);
   }
   boot();
 })();
@@ -119,7 +122,8 @@ export default function PcScreen() {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [devOpen, setDevOpen] = useState(false); // открыт ли список выбора ПК
   const [termEpoch, setTermEpoch] = useState(0); // ремоунт терминалов только при ручной смене ПК
-  const [sub, setSub] = useState<'term' | 'explorer' | 'screen'>('term');
+  const [sub, setSub] = useState<'term' | 'explorer' | 'screen' | 'transfer'>('term');
+  const [remoteSync, setRemoteSync] = useState<{ busy: boolean; pct: number; speed: number; message: string }>({ busy: false, pct: 0, speed: 0, message: '' });
 
   // удалённый экран
   const screenRef = useRef<RemoteScreenHandle>(null);
@@ -140,7 +144,8 @@ export default function PcScreen() {
   // refs для доступа из замыкания WS-обработчика (иначе видит устаревшее состояние)
   const termsRef = useRef(terms); termsRef.current = terms;
   const activeTermRef = useRef(activeTerm); activeTermRef.current = activeTerm;
-  const pendingAttach = useRef(false);
+  const pendingAttach = useRef(0);
+  const [recentPicker, setRecentPicker] = useState(false);
 
   // всплывающий выбор папки при открытии нового терминала
   const [picker, setPicker] = useState(false);
@@ -201,6 +206,12 @@ export default function PcScreen() {
           ref?.injectJavaScript(`window.__recv && window.__recv(${JSON.stringify(m.data)});true;`);
           break;
         }
+        case 'pty_size': {
+          // подключились к ПК-сессии — подстраиваем свой терминал под её размер (видим то же самое)
+          const ref = webRefs.current[m.termId];
+          if (ref && m.cols && m.rows) ref.injectJavaScript(`window.__setsize&&window.__setsize(${m.cols},${m.rows});true;`);
+          break;
+        }
         case 'pty_exit':
           // сессия на ПК завершилась — перезапустим терминал в той же вкладке
           termReady.current[m.termId || '1'] = false;
@@ -237,10 +248,10 @@ export default function PcScreen() {
         }
         case 'file_saved':
           // файл с телефона сохранён на ПК — если ждём прикрепление, вставляем путь в терминал
-          if (pendingAttach.current && m.path) {
-            pendingAttach.current = false;
+          if (pendingAttach.current > 0 && m.path) {
+            pendingAttach.current = Math.max(0, pendingAttach.current - 1);
             setCompose((prev) => (prev.trim() ? prev.trimEnd() + ' ' : '') + `"${m.path}" `);
-            setBusyMsg('Файл добавлен в сообщение ✓');
+            setBusyMsg(pendingAttach.current ? `Добавлено · осталось ${pendingAttach.current}` : 'Файлы добавлены в сообщение ✓');
             setTimeout(() => setBusyMsg(''), 2500);
           }
           break;
@@ -256,6 +267,22 @@ export default function PcScreen() {
         case 'fs_download': setBusyMsg('Файл отправлен в приложение ✓'); setTimeout(() => setBusyMsg(''), 2500); break;
         case 'fs_zip': setBusyMsg(`Архив готов: ${m.name} → во вкладке «Файлы»`); setTimeout(() => setBusyMsg(''), 3500); break;
         case 'pc_offline': setBusyMsg('Компьютер не в сети'); setTimeout(() => setBusyMsg(''), 2500); break;
+        case 'sync_remote_ack':
+          setRemoteSync((prev) => ({ ...prev, busy: true, message: m.message || 'Выгрузка запущена' }));
+          break;
+        case 'sync_remote_event': {
+          const event = m.event || {};
+          if (event.type === 'progress') {
+            const pct = event.totalBytes ? Math.round((event.bytes || 0) / event.totalBytes * 100) : 0;
+            setRemoteSync({ busy: true, pct, speed: event.speed || 0, message: `${event.done || 0} / ${event.total || 0} файлов` });
+          } else if (event.type === 'done') {
+            setRemoteSync({ busy: false, pct: 100, speed: 0, message: `Готово · ${event.transferred || 0} файлов` });
+            haptic.success();
+          } else if (event.type === 'error') {
+            setRemoteSync({ busy: false, pct: 0, speed: 0, message: event.error || 'Ошибка выгрузки' });
+          }
+          break;
+        }
         case 'err': setBusyMsg(m.message || 'Ошибка'); setSaving(false); setTimeout(() => setBusyMsg(''), 3000); break;
         default: break;
       }
@@ -273,7 +300,13 @@ export default function PcScreen() {
 
   useEffect(() => {
     if (!connected) return;
-    const t = setInterval(() => { const ws = wsRef.current; if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'list_devices' })); }, 5000);
+    const t = setInterval(() => {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'list_devices' }));
+        if (deviceIdRef.current) ws.send(JSON.stringify({ to: 'pc', deviceId: deviceIdRef.current, type: 'phone_presence' }));
+      }
+    }, 5000);
     return () => clearInterval(t);
   }, [connected]);
 
@@ -297,8 +330,18 @@ export default function PcScreen() {
       else send({ type: 'pty_start', termId, cols: m.cols, rows: m.rows, cwd: termCwds.current[termId] || undefined });
     }
   };
-  const sendKey = (seq: string) => { send({ type: 'pty_input', termId: activeTerm, data: seq }); activeWeb()?.injectJavaScript('window.__focus&&window.__focus();true;'); };
+  const sendKey = (seq: string) => { send({ type: 'pty_input', termId: activeTerm, data: seq }); };
   const hideKeyboard = () => { activeWeb()?.injectJavaScript('window.__blur&&window.__blur();if(document.activeElement)document.activeElement.blur();true;'); Keyboard.dismiss(); };
+  useFocusEffect(
+    useCallback(() => {
+      Keyboard.dismiss();
+      Object.values(webRefs.current).forEach((w) => w?.injectJavaScript('window.__blur&&window.__blur();if(document.activeElement)document.activeElement.blur();true;'));
+      return () => {
+        Keyboard.dismiss();
+        Object.values(webRefs.current).forEach((w) => w?.injectJavaScript('window.__blur&&window.__blur();if(document.activeElement)document.activeElement.blur();true;'));
+      };
+    }, []),
+  );
   const scrollTerm = (n: number) => activeWeb()?.injectJavaScript(`window.__scroll&&window.__scroll(${n});true;`);
   const pickMode = useRef(false);
   const pickFileForTerminal = () => { pickMode.current = true; setSub('explorer'); setBusyMsg('Выбери файл — его путь вставится в терминал'); setTimeout(() => setBusyMsg(''), 3500); };
@@ -328,20 +371,36 @@ export default function PcScreen() {
   // прикрепить фото/файл с телефона прямо в терминал: загрузить на ПК → вставить путь
   async function uploadToPc(uri: string) {
     setBusyMsg('Отправляю файл на ПК…');
-    pendingAttach.current = true;
+    pendingAttach.current += 1;
     try {
       const token = await getToken();
-      const res = await uploadAsync(`${API_URL}/files`, uri, {
+      const target = deviceIdRef.current ? `?targetTokenId=${encodeURIComponent(deviceIdRef.current)}` : '';
+      const res = await uploadAsync(`${API_URL}/files${target}`, uri, {
         httpMethod: 'POST', uploadType: FileSystemUploadType.MULTIPART, fieldName: 'file',
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
       if (res.status >= 400) throw new Error('Ошибка ' + res.status);
       // путь вставится, когда ПК сохранит файл и пришлёт file_saved
-      setTimeout(() => { if (pendingAttach.current) { pendingAttach.current = false; setBusyMsg('ПК не в сети — файл не дошёл'); setTimeout(() => setBusyMsg(''), 2500); } }, 15000);
+      setTimeout(() => { if (pendingAttach.current > 0) { setBusyMsg(`Жду ПК · файлов в очереди ${pendingAttach.current}`); } }, 15000);
     } catch (e: any) {
-      pendingAttach.current = false;
+      pendingAttach.current = Math.max(0, pendingAttach.current - 1);
       setBusyMsg('Не удалось отправить'); setTimeout(() => setBusyMsg(''), 2500);
     }
+  }
+  async function attachRecentPhotos(count: number) {
+    setRecentPicker(false);
+    try {
+      const perm = await MediaLibrary.requestPermissionsAsync();
+      if (!perm.granted) { setBusyMsg('Нужен доступ к фото'); return; }
+      const result = await MediaLibrary.getAssetsAsync({ first: count, mediaType: 'photo', sortBy: [['creationTime', false]] });
+      const assets = result.assets?.slice(0, count) || [];
+      if (!assets.length) { setBusyMsg('Фото не найдены'); return; }
+      for (let i = 0; i < assets.length; i++) {
+        setBusyMsg(`Отправляю фото ${i + 1} из ${assets.length}…`);
+        const info = await MediaLibrary.getAssetInfoAsync(assets[i]);
+        await uploadToPc(info.localUri || assets[i].uri);
+      }
+    } catch { setBusyMsg('Не удалось отправить последние фото'); setTimeout(() => setBusyMsg(''), 2500); }
   }
   const attachToTerminal = () => {
     Alert.alert('Прикрепить в терминал', 'Откуда взять?', [
@@ -410,7 +469,8 @@ export default function PcScreen() {
   };
   const switchTerm = (id: string) => {
     setActiveTerm(id);
-    setTimeout(() => webRefs.current[id]?.injectJavaScript('window.__fit&&window.__fit();window.__focus&&window.__focus();true;'), 60);
+    Keyboard.dismiss();
+    setTimeout(() => webRefs.current[id]?.injectJavaScript('window.__fit&&window.__fit();window.__blur&&window.__blur();true;'), 60);
   };
 
   // Поле «сообщения»: набираешь/диктуешь/прикрепляешь, потом «отправить» → вставляется в терминал
@@ -421,7 +481,7 @@ export default function PcScreen() {
     if (!t) return;
     send({ type: 'pty_input', termId: activeTerm, data: t }); // вставляем в терминал (без Enter — можно доредактировать)
     setCompose('');
-    activeWeb()?.injectJavaScript('window.__focus&&window.__focus();true;');
+    hideKeyboard();
   };
 
   // голосовой ввод → в поле сообщения (а не сразу в терминал)
@@ -484,6 +544,11 @@ export default function PcScreen() {
 
   const selDevice = devices.find((d) => d.id === deviceId);
   const online = connected && selDevice?.online;
+  const startRemoteTransfer = (mode: 'push' | 'pull') => {
+    if (!online) { setRemoteSync({ busy: false, pct: 0, speed: 0, message: 'Устройство не в сети' }); return; }
+    setRemoteSync({ busy: true, pct: 0, speed: 0, message: mode === 'push' ? 'Запускаю отправку на устройстве…' : 'Запускаю получение на устройстве…' });
+    send({ type: mode === 'push' ? 'sync_remote_push' : 'sync_remote_pull', reqId: newReq() });
+  };
 
   // Ручной выбор ПК (ноут / стационарный и т.д.). Сбрасываем состояние, чтобы оно
   // перезапросилось у нового устройства; терминалы перемонтируются (см. key с deviceId).
@@ -541,6 +606,7 @@ export default function PcScreen() {
         <SegBtn label="Терминал" active={sub === 'term'} onPress={() => setSub('term')} />
         <SegBtn label="Проводник" active={sub === 'explorer'} onPress={() => setSub('explorer')} />
         <SegBtn label="Экран" active={sub === 'screen'} onPress={() => setSub('screen')} />
+        <SegBtn label="Передача" active={sub === 'transfer'} onPress={() => setSub('transfer')} />
       </View>
 
       {!!busyMsg && <ThemedText type="small" style={styles.toast}>{busyMsg}</ThemedText>}
@@ -569,6 +635,14 @@ export default function PcScreen() {
               </TouchableOpacity>
             ))}
           </View>
+          <View style={styles.termPresets}>
+            <TouchableOpacity onPress={() => sendKey('codex --yolo\r')} style={styles.termPresetBtn}>
+              <View style={[styles.presetDot, { backgroundColor: c.accent }]} /><ThemedText type="smallBold">Codex · YOLO mode</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => sendKey('claude --dangerously-skip-permissions\r')} style={styles.termPresetBtn}>
+              <View style={[styles.presetDot, { backgroundColor: '#D88B5A' }]} /><ThemedText type="smallBold">Claude · полный доступ</ThemedText>
+            </TouchableOpacity>
+          </View>
           <View style={styles.termWrap}>
             {terms.map((t) => (
               <View
@@ -580,7 +654,7 @@ export default function PcScreen() {
                   originWhitelist={['*']}
                   source={{ html: TERM_HTML }}
                   onMessage={onWebMessage(t.id)}
-                  keyboardDisplayRequiresUserAction={false}
+                  keyboardDisplayRequiresUserAction
                   hideKeyboardAccessoryView
                   style={{ backgroundColor: '#0a0b0d' }}
                   scrollEnabled={false}
@@ -596,6 +670,10 @@ export default function PcScreen() {
             <TouchableOpacity style={[styles.key, { backgroundColor: c.accent, minWidth: 50 }]} onPress={() => sendKey('\r')}>
               <ThemedText type="smallBold" style={{ color: '#fff', fontSize: 16 }}>↵</ThemedText>
             </TouchableOpacity>
+            <TouchableOpacity style={[styles.key, { minWidth: 88 }]} onPress={pasteFromClipboard}>
+              <SymbolView name="doc.on.clipboard" tintColor={c.text} size={15} />
+              <ThemedText type="smallBold" style={{ color: c.text }}>Вставить</ThemedText>
+            </TouchableOpacity>
             {KEYS.map((k) => (
               <TouchableOpacity key={k.label} style={[styles.key, /↑|↓|←|→/.test(k.label) && { minWidth: 46 }]} onPress={() => sendKey(k.seq)}>
                 <ThemedText type="smallBold" style={{ color: c.text, fontSize: /↑|↓|←|→/.test(k.label) ? 17 : 13 }}>{k.label}</ThemedText>
@@ -610,6 +688,9 @@ export default function PcScreen() {
             </TouchableOpacity>
             <TouchableOpacity onPress={attachToTerminal} style={[styles.composeBtn, { backgroundColor: c.backgroundElement }]}>
               <SymbolView name="paperclip" tintColor={c.text} size={19} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setRecentPicker(true)} style={[styles.composeBtn, { backgroundColor: c.backgroundElement }]}>
+              <SymbolView name="photo.stack.fill" tintColor={c.text} size={18} />
             </TouchableOpacity>
             <TextInput
               value={compose}
@@ -635,6 +716,32 @@ export default function PcScreen() {
           onSwitch={switchScreen}
           bottomInset={kb ? 0 : insets.bottom + BottomTabInset - 16}
         />
+      ) : sub === 'transfer' ? (
+        <View style={[styles.transferScreen, { paddingBottom: insets.bottom + BottomTabInset }]}>
+          <View style={styles.transferDevice}>
+            <View style={[styles.dot, { backgroundColor: online ? c.success : c.textSecondary }]} />
+            <View style={{ flex: 1 }}>
+              <ThemedText type="smallBold">{selDevice?.name || 'Устройство'}</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">{online ? 'готово к удалённой команде' : 'не в сети'}</ThemedText>
+            </View>
+          </View>
+          <TouchableOpacity disabled={!online || remoteSync.busy} onPress={() => startRemoteTransfer('push')} style={[styles.transferButton, (!online || remoteSync.busy) && { opacity: 0.45 }]}>
+            <SymbolView name="arrow.up.to.line" tintColor="#fff" size={20} />
+            <ThemedText type="smallBold" style={{ color: '#fff' }}>{remoteSync.busy ? 'Выгружается…' : 'Выгрузить на сервер'}</ThemedText>
+          </TouchableOpacity>
+          <TouchableOpacity disabled={!online || remoteSync.busy} onPress={() => startRemoteTransfer('pull')} style={[styles.transferButton, styles.transferButtonSecondary, (!online || remoteSync.busy) && { opacity: 0.45 }]}>
+            <SymbolView name="arrow.down.to.line" tintColor={c.success} size={20} />
+            <ThemedText type="smallBold">Забрать с сервера</ThemedText>
+          </TouchableOpacity>
+          <View style={styles.transferProgress}>
+            <View style={[styles.transferProgressFill, { width: `${remoteSync.pct}%` }]} />
+          </View>
+          <View style={styles.transferStats}>
+            <View><ThemedText type="small" themeColor="textSecondary">Прогресс</ThemedText><ThemedText type="smallBold">{remoteSync.pct}%</ThemedText></View>
+            <View><ThemedText type="small" themeColor="textSecondary">Скорость</ThemedText><ThemedText type="smallBold">{remoteSync.speed ? `${(remoteSync.speed / 1048576).toFixed(1)} МБ/с` : '—'}</ThemedText></View>
+          </View>
+          {!!remoteSync.message && <ThemedText type="small" themeColor="textSecondary" style={{ marginTop: Spacing.three }}>{remoteSync.message}</ThemedText>}
+        </View>
       ) : (
         <View style={{ flex: 1 }}>
           <View style={styles.pathBar}>
@@ -682,6 +789,23 @@ export default function PcScreen() {
           </ScrollView>
         </View>
       )}
+
+      <Modal visible={recentPicker} transparent animationType="fade" onRequestClose={() => setRecentPicker(false)}>
+        <Pressable style={styles.recentBackdrop} onPress={() => setRecentPicker(false)}>
+          <Pressable style={styles.recentSheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.recentHandle} />
+            <ThemedText style={styles.recentTitle}>Последние фото в терминал</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">На ПК сохранятся файлы, а их пути появятся в строке команды.</ThemedText>
+            <View style={styles.recentGrid}>
+              {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+                <TouchableOpacity key={n} onPress={() => attachRecentPhotos(n)} style={[styles.recentCount, n === 1 && { backgroundColor: c.accent }]}>
+                  <ThemedText style={{ color: n === 1 ? '#fff' : c.text, fontWeight: '700' }}>{n}</ThemedText>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Выбор папки для нового терминала */}
       <Modal visible={picker} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setPicker(false)}>
@@ -809,14 +933,24 @@ const styles = StyleSheet.create({
   segBtn: { flex: 1, paddingVertical: Spacing.two, borderRadius: Radius.sm, alignItems: 'center' },
   segBtnOn: { backgroundColor: c.accent },
   toast: { textAlign: 'center', color: c.text, paddingVertical: 4 },
+  transferScreen: { flex: 1, paddingHorizontal: Spacing.three, paddingTop: Spacing.three },
+  transferDevice: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, padding: Spacing.three, borderRadius: Radius.md, backgroundColor: c.backgroundElement },
+  transferButton: { marginTop: Spacing.three, minHeight: 50, borderRadius: Radius.md, backgroundColor: c.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.two },
+  transferButtonSecondary: { marginTop: Spacing.two, backgroundColor: c.backgroundElement, borderWidth: StyleSheet.hairlineWidth, borderColor: c.separator },
+  transferProgress: { height: 7, marginTop: Spacing.four, overflow: 'hidden', borderRadius: 4, backgroundColor: c.backgroundElement },
+  transferProgressFill: { height: '100%', borderRadius: 4, backgroundColor: c.success },
+  transferStats: { flexDirection: 'row', justifyContent: 'space-between', marginTop: Spacing.three },
   termTabs: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: Spacing.three, marginBottom: Spacing.two },
+  termPresets: { flexDirection: 'row', gap: 7, paddingHorizontal: Spacing.three, marginBottom: Spacing.two },
+  termPresetBtn: { flex: 1, minHeight: 36, borderRadius: Radius.sm, backgroundColor: c.backgroundElement, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 8 },
+  presetDot: { width: 7, height: 7, borderRadius: 2 },
   termTab: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.sm, backgroundColor: c.backgroundElement },
   termTabOn: { backgroundColor: c.accent },
   termTabPc: { borderWidth: 1, borderColor: c.success },
   termAdd: { width: 34, height: 30, borderRadius: Radius.sm, backgroundColor: c.backgroundElement, alignItems: 'center', justifyContent: 'center' },
   termWrap: { flex: 1, marginHorizontal: Spacing.three, borderRadius: Radius.md, overflow: 'hidden', backgroundColor: '#0a0b0d', borderWidth: 1, borderColor: c.glassBorder },
   keybar: { flexGrow: 0, paddingVertical: Spacing.two },
-  key: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: Radius.sm, backgroundColor: c.backgroundSelected, minWidth: 40, alignItems: 'center' },
+  key: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: Radius.sm, backgroundColor: c.backgroundSelected, minWidth: 40, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6 },
   composeBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: Spacing.three, paddingTop: Spacing.two },
   composeBtn: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   composeInput: { flex: 1, minHeight: 42, maxHeight: 120, backgroundColor: c.backgroundElement, borderRadius: Radius.lg, paddingHorizontal: Spacing.three, paddingVertical: 11, color: c.text, fontSize: 16 },
@@ -832,4 +966,10 @@ const styles = StyleSheet.create({
   editArea: { flex: 1, fontFamily: mono, fontSize: 13, lineHeight: 19, color: c.text, padding: Spacing.three, textAlignVertical: 'top' },
   previewBar: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, paddingHorizontal: Spacing.three, paddingBottom: 8, backgroundColor: 'rgba(0,0,0,0.6)' },
   previewBtn: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)' },
+  recentBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' },
+  recentSheet: { backgroundColor: c.backgroundElement, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: Spacing.three, paddingTop: Spacing.two, paddingBottom: Spacing.five, gap: Spacing.two },
+  recentHandle: { width: 38, height: 5, borderRadius: 3, backgroundColor: c.separator, alignSelf: 'center', marginBottom: Spacing.two },
+  recentTitle: { fontSize: 21, fontWeight: '700', lineHeight: 27 },
+  recentGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.two },
+  recentCount: { width: '18%', aspectRatio: 1, borderRadius: Radius.md, backgroundColor: c.backgroundSelected, alignItems: 'center', justifyContent: 'center' },
 });

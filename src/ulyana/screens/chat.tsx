@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { STK } from '../assets';
+import { STK, UL } from '../assets';
 import { aiChat, type ChatMsg } from '../api';
 import { U, UG, UR, US } from '../theme';
 import { Gradient, Sticker, T, tap } from '../ui';
@@ -59,7 +59,7 @@ export function ChatScreen() {
       {/* Шапка */}
       <View style={[styles.header, { paddingTop: insets.top + US.sm }]}>
         <Gradient g={UG.candy} radius={UR.pill} style={styles.avatar}>
-          <Sticker src={STK.chat} size={24} />
+          <Sticker src={UL.calm} size={40} style={{ borderRadius: 20 }} />
         </Gradient>
         <View style={{ flex: 1 }}>
           <T kind="h2">Ульяна</T>

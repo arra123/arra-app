@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { mkdir, rm, stat } from 'node:fs/promises';
+import { pipeline } from 'node:stream/promises';
 import { extname, join } from 'node:path';
 import { config } from '../config.js';
 import { one, query } from '../db.js';
-import { addAgent, isAgentOnline, notifyDevice, notifyUser, onlineTokenIds, relayToClients, removeAgent } from '../ws.js';
+import { compactDeviceRows, normalizeDeviceRole } from '../devices.js';
+import { addAgent, isAgentOnline, isClientOnline, notifyDevice, notifyUser, onlineTokenIds, relayToAgents, relayToClients, removeAgent } from '../ws.js';
 
 export default async function fileRoutes(app) {
   await mkdir(config.uploadDir, { recursive: true });
@@ -13,7 +15,6 @@ export default async function fileRoutes(app) {
   app.post('/files', { preHandler: app.auth }, async (request, reply) => {
     const file = await request.file();
     if (!file) return reply.code(400).send({ error: 'Нужен файл' });
-    const buffer = await file.toBuffer();
     let targetTokenId = request.query?.targetTokenId || null;
 
     // Проверяем, что устройство принадлежит пользователю
@@ -29,13 +30,19 @@ export default async function fileRoutes(app) {
     const safeExt = extname(file.filename || '').slice(0, 10);
     const storageName = `${id}${safeExt}`;
     const storagePath = join(config.uploadDir, storageName);
-    await writeFile(storagePath, buffer);
+    // Пишем стримом на диск — большие видео не держим в памяти
+    await pipeline(file.file, createWriteStream(storagePath));
+    if (file.file.truncated) {
+      await rm(storagePath, { force: true });
+      return reply.code(413).send({ error: 'Файл больше 1 ГБ — не потянем' });
+    }
+    const size = (await stat(storagePath)).size;
 
     const rec = await one(
       `INSERT INTO files (id, user_id, original_name, mime, size, storage_path, status, target_token_id)
        VALUES ($1,$2,$3,$4,$5,$6,'uploaded',$7)
        RETURNING id, original_name, mime, size, status, target_token_id, created_at`,
-      [id, request.user.id, file.filename || storageName, file.mimetype, buffer.length, storagePath, targetTokenId],
+      [id, request.user.id, file.filename || storageName, file.mimetype, size, storagePath, targetTokenId],
     );
 
     // Маршрутизация: на выбранный ПК (или всем, если устройство не указано)
@@ -102,22 +109,63 @@ export default async function fileRoutes(app) {
 
   // ---- Токены агента на ПК ----
   app.post('/pc/token', { preHandler: app.auth }, async (request) => {
-    const token = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
-    const rec = await one(
-      `INSERT INTO pc_tokens (user_id, token, name) VALUES ($1,$2,$3)
-       RETURNING id, token, name, created_at`,
-      [request.user.id, token, request.body?.name || 'Мой ПК'],
+    const body = request.body || {};
+    const name = String(body.name || 'Мой ПК').trim().slice(0, 100) || 'Мой ПК';
+    const deviceKey = String(body.deviceKey || '').trim().slice(0, 128) || null;
+    const role = normalizeDeviceRole(body.role, name);
+    const hostname = String(body.hostname || '').trim().slice(0, 100) || null;
+    const platform = String(body.platform || '').trim().slice(0, 40) || null;
+    const existingToken = String(body.existingToken || '').trim() || null;
+
+    // Сначала ищем постоянную запись физического устройства. Если Noda уже
+    // установлена, привязываем прежний токен к device_key, не создавая дубль.
+    let rec = deviceKey ? await one(
+      `SELECT id, token, name, role, hostname, created_at
+       FROM pc_tokens WHERE user_id = $1 AND device_key = $2`,
+      [request.user.id, deviceKey],
+    ) : null;
+    if (!rec && existingToken) rec = await one(
+      `SELECT id, token, name, role, hostname, created_at
+       FROM pc_tokens WHERE user_id = $1 AND token = $2`,
+      [request.user.id, existingToken],
     );
+
+    if (rec) {
+      rec = await one(
+        `UPDATE pc_tokens
+         SET name = $3, device_key = COALESCE($4, device_key), role = $5,
+             hostname = $6, platform = $7, last_seen = now()
+         WHERE id = $1 AND user_id = $2
+         RETURNING id, token, name, role, hostname, created_at`,
+        [rec.id, request.user.id, name, deviceKey, role, hostname, platform],
+      );
+      // Если после переустановки приложение принесло другой старый токен,
+      // постоянная запись уже выбрана по device_key — лишний токен больше не нужен.
+      if (existingToken && existingToken !== rec.token) {
+        await query('DELETE FROM pc_tokens WHERE user_id = $1 AND token = $2 AND id <> $3', [
+          request.user.id, existingToken, rec.id,
+        ]);
+      }
+    } else {
+      const token = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
+      rec = await one(
+        `INSERT INTO pc_tokens (user_id, token, name, device_key, role, hostname, platform)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         RETURNING id, token, name, role, hostname, created_at`,
+        [request.user.id, token, name, deviceKey, role, hostname, platform],
+      );
+    }
     return { pcToken: rec };
   });
 
   app.get('/pc/tokens', { preHandler: app.auth }, async (request) => {
     const { rows } = await query(
-      'SELECT id, name, last_seen, created_at FROM pc_tokens WHERE user_id = $1 ORDER BY created_at DESC',
+      `SELECT id, name, role, hostname, device_key, last_seen, created_at
+       FROM pc_tokens WHERE user_id = $1 ORDER BY created_at DESC`,
       [request.user.id],
     );
     const online = onlineTokenIds(request.user.id);
-    const tokens = rows.map((t) => ({ ...t, online: online.includes(t.id) }));
+    const tokens = compactDeviceRows(rows, online);
     return { tokens, online: online.length > 0, onlineIds: online };
   });
 
@@ -141,6 +189,7 @@ export default async function fileRoutes(app) {
     await query('UPDATE pc_tokens SET last_seen = now() WHERE token = $1', [token]);
     addAgent(userId, tokenId, socket);
     socket.send(JSON.stringify({ type: 'connected', deviceId: tokenId }));
+    socket.send(JSON.stringify({ type: 'presence', phoneOnline: isClientOnline(userId) }));
 
     // Досылаем непринятые файлы (если ПК был офлайн в момент загрузки)
     try {
@@ -164,6 +213,18 @@ export default async function fileRoutes(app) {
         // помечаем, с какого устройства пришло, чтобы телефон мог сопоставить
         msg.deviceId = tokenId;
         relayToClients(userId, msg);
+      } else if (msg && msg.to === 'agent') {
+        // Noda на ноутбуке может запустить перенос на домашнем ПК и получать
+        // ход операции обратно через тот же защищённый канал.
+        const targetId = msg.deviceId || null;
+        const event = { ...msg, to: 'pc', sourceDeviceId: tokenId };
+        delete event.deviceId;
+        const delivered = relayToAgents(userId, event, targetId);
+        if (!delivered) {
+          notifyDevice(userId, tokenId, {
+            to: 'pc', type: 'pc_offline', reqId: msg.reqId || null, targetDeviceId: targetId,
+          });
+        }
       }
     });
 

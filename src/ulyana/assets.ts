@@ -53,3 +53,14 @@ export const STK = {
   hug: om('1FAC2'),          // 🫂 поддержка
   pencil: om('270F-FE0F'),   // ✏️ своё
 } as const;
+
+// Кастомные стикеры Ульяны (вырезаны из сгенерённого листа, прозрачный фон).
+// Градации плача — под результат диагноза: чем выше балл, тем сильнее рыдает.
+export const UL = {
+  calm: require('../../assets/ulyana/ulyana_calm.png'),
+  almost: require('../../assets/ulyana/ulyana_almost.png'),
+  cry1: require('../../assets/ulyana/ulyana_cry1.png'),
+  cry2: require('../../assets/ulyana/ulyana_cry2.png'),
+  sob: require('../../assets/ulyana/ulyana_sob.png'),
+  flood: require('../../assets/ulyana/ulyana_flood.png'),
+} as const;

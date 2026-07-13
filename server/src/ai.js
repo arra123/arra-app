@@ -121,6 +121,23 @@ export async function parseExpenseImage(dataUrl) {
   return normalize(parsed);
 }
 
+/** Создать вторую структурированную версию заметки, не меняя оригинал. */
+export async function structureNote(text) {
+  const source = String(text || '').trim();
+  if (!source) return '';
+  const parsed = await chat([
+    {
+      role: 'system',
+      content: `Ты — редактор личных заметок. Структурируй русский текст, сохранив ВСЕ факты,
+формулировки, числа, имена, ссылки, решения и сомнения автора. Ничего не выдумывай и не удаляй.
+Исправь только явные оговорки и повторы. Используй короткие заголовки, абзацы, списки и чек-листы,
+когда это действительно делает текст понятнее. Верни строго JSON: {"structured":"полная версия текста"}.`,
+    },
+    { role: 'user', content: source },
+  ]);
+  return typeof parsed.structured === 'string' ? parsed.structured.trim() : '';
+}
+
 // ---------- УльянаOS: ИИ-подружка ----------
 
 // Характер: саркастичная, но в душе заботливая подружка. Мемный русский, лёгкий троллинг.

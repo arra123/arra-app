@@ -66,7 +66,7 @@ export function T({
 }
 
 // ---------- Стикер (OpenMoji) ----------
-export function Sticker({ src, size = 44, style }: { src: string; size?: number; style?: StyleProp<ImageStyle> }) {
+export function Sticker({ src, size = 44, style }: { src: string | number; size?: number; style?: StyleProp<ImageStyle> }) {
   return (
     <Image
       source={src}

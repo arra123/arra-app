@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage, shell, Noti
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const https = require('https');
 const { execFile, spawn, spawnSync } = require('child_process');
 const WebSocket = require('ws');
@@ -148,6 +149,7 @@ function psArgs(command) {
 // Наличие батареи — самый надёжный признак ноутбука; chassis используется как
 // дополнительная подсказка. Результат лишь предлагается и может быть исправлен в UI.
 let deviceProfileCache = null;
+let deviceKeyCache = null;
 function detectDeviceProfile() {
   if (deviceProfileCache) return deviceProfileCache;
   const fallback = {
@@ -183,6 +185,64 @@ function detectDeviceProfile() {
     deviceProfileCache = fallback;
   }
   return deviceProfileCache;
+}
+
+// MachineGuid остаётся тем же после обновлений Noda и различается у ноутбука и
+// стационарного ПК. На сервер уходит только необратимый SHA-256, сам GUID не
+// сохраняется и не попадает в логи.
+function deviceKey() {
+  if (deviceKeyCache) return deviceKeyCache;
+  let source = '';
+  if (process.platform === 'win32') {
+    try {
+      const result = spawnSync('reg.exe', [
+        'query', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid',
+      ], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+      const match = String(result.stdout || '').match(/MachineGuid\s+REG_SZ\s+([^\r\n]+)/i);
+      source = String(match?.[1] || '').trim();
+    } catch {}
+  }
+  if (!source) {
+    const profile = detectDeviceProfile();
+    source = [os.hostname(), profile.manufacturer, profile.model, os.arch()].join('|');
+  }
+  deviceKeyCache = crypto.createHash('sha256').update(`noda-device-v1|${source}`).digest('hex');
+  return deviceKeyCache;
+}
+
+function automaticDeviceName(profile = detectDeviceProfile()) {
+  const prefix = profile.role === 'laptop' ? 'Ноутбук' : 'ПК';
+  const host = String(profile.hostname || os.hostname() || '').trim();
+  return host ? `${prefix} · ${host}` : prefix;
+}
+
+function resolvedDeviceName(requested, profile = detectDeviceProfile()) {
+  const value = String(requested || settings.deviceName || '').trim();
+  if (!value || /^(мой\s*(?:пк|компьютер)|компьютер|ноутбук|pc)$/i.test(value)) return automaticDeviceName(profile);
+  return value.slice(0, 100);
+}
+
+async function registerCurrentDevice(jwt, requestedName) {
+  const profile = detectDeviceProfile();
+  const name = resolvedDeviceName(requestedName, profile);
+  const dev = await httpJson('POST', '/pc/token', {
+    name,
+    deviceKey: deviceKey(),
+    role: profile.role,
+    hostname: profile.hostname || os.hostname(),
+    platform: `${process.platform}-${process.arch}`,
+    existingToken: settings.token || null,
+  }, jwt);
+  if (!dev?.pcToken?.token) throw new Error('Сервер не вернул токен устройства');
+  const tokenChanged = settings.token && settings.token !== dev.pcToken.token;
+  settings.token = dev.pcToken.token;
+  settings.deviceId = dev.pcToken.id;
+  settings.deviceName = dev.pcToken.name || name;
+  saveSettings();
+  writeLog('info', 'device.registered', {
+    deviceId: settings.deviceId, role: profile.role, hostname: profile.hostname, tokenChanged: !!tokenChanged,
+  });
+  return dev.pcToken;
 }
 
 // Запустить процесс и стримить вывод через send()
@@ -645,6 +705,10 @@ function screenInput(msg) {
       const map = { enter: '{ENTER}', backspace: '{BACKSPACE}', esc: '{ESC}', tab: '{TAB}', up: '{UP}', down: '{DOWN}', left: '{LEFT}', right: '{RIGHT}', delete: '{DELETE}', home: '{HOME}', end: '{END}', space: ' ' };
       let sk = null;
       if (msg.key && map[msg.key]) sk = map[msg.key];
+      else if (msg.key && String(msg.key).length === 1 && (msg.ctrl || msg.alt || msg.shift)) {
+        const key = String(msg.key).replace(/[+^%~(){}\[\]]/g, '{$&}');
+        sk = `${msg.ctrl ? '^' : ''}${msg.alt ? '%' : ''}${msg.shift ? '+' : ''}${key}`;
+      }
       else if (msg.text) {
         const encoded = Buffer.from(String(msg.text).replace(/[\r\n]+/g, ''), 'utf8').toString('base64');
         if (encoded) psCmd('P ' + encoded);
@@ -667,6 +731,10 @@ function handleRelay(msg, send) {
       send({ type: 'sync_remote_ack', reqId: msg.reqId, message: 'Выгрузка запущена' });
       runSyncProc('push', null, null, (event) => send({ type: 'sync_remote_event', reqId: msg.reqId, event }));
       break;
+    case 'sync_remote_pull':
+      send({ type: 'sync_remote_ack', reqId: msg.reqId, message: 'Получение с сервера запущено' });
+      runSyncProc('pull', null, null, (event) => send({ type: 'sync_remote_event', reqId: msg.reqId, event }));
+      break;
     case 'sync_remote_status':
       runSyncProc('status', null, null, (event) => send({ type: 'sync_remote_event', reqId: msg.reqId, event }));
       break;
@@ -679,6 +747,11 @@ function handleRelay(msg, send) {
     case 'sync_remote_event':
     case 'sync_remote_blockers':
       winSend('remote-sync-event', msg);
+      break;
+    case 'screens':
+    case 'screen_frame':
+    case 'pc_offline':
+      winSend('remote-screen-event', msg);
       break;
     case 'hello':
       send({ type: 'cwd', cwd: getTermCwd(), root: codeRoot() });
@@ -1024,7 +1097,15 @@ app.whenReady().then(async () => {
   if (elev === 'warn') {
     setTimeout(() => winSend('app-warn', 'Noda запущена от имени администратора — из-за этого Handy не вставляет текст и не работает перетаскивание файлов из проводника. Закрой приложение и открой обычным двойным кликом (без «Запуск от имени администратора»).'), 1800);
   }
-  if (settings.token) connectWS();
+  if (settings.token) {
+    // Старые установки регистрировались новым токеном после каждой потери
+    // settings.json. Теперь при каждом старте подтверждаем постоянный ID машины.
+    try {
+      const jwt = await getJwt();
+      if (jwt) await registerCurrentDevice(jwt, settings.deviceName);
+    } catch (error) { writeLog('warn', 'device.refresh', error); }
+    connectWS();
+  }
   // Автообновление (только в упакованном приложении). Не блокирует старт.
   try { initUpdater(() => win, winSend, writeLog); } catch (error) { writeLog('error', 'updater.init', error); }
 });
@@ -1072,15 +1153,7 @@ ipcMain.handle('login', async (_e, { login, password, deviceName }) => {
     settings.jwt = auth.token;
     settings.login = login;
     settings.password = password;
-    // Переиспользуем токен этого ПК, если он уже есть — иначе плодятся дубли «Мой ПК»
-    if (!settings.token) {
-      const dev = await httpJson('POST', '/pc/token', { name: deviceName || 'Мой ПК' }, auth.token);
-      settings.token = dev.pcToken.token;
-      settings.deviceId = dev.pcToken.id;
-      settings.deviceName = dev.pcToken.name;
-    } else if (deviceName) {
-      settings.deviceName = deviceName;
-    }
+    await registerCurrentDevice(auth.token, deviceName);
     if (!settings.folder) settings.folder = defaultFolder();
     if (!settings.mode) settings.mode = 'path';
     saveSettings();
@@ -1444,7 +1517,8 @@ ipcMain.handle('remote-sync', async (_e, { deviceId, mode = 'push' } = {}) => {
     const remoteWs = new WebSocket(`${CLIENT_WS_URL}?token=${encodeURIComponent(jwt)}`);
     const timeout = setTimeout(() => { try { remoteWs.close(); } catch {} }, 30 * 60 * 1000);
     remoteWs.on('open', () => remoteWs.send(JSON.stringify({
-      to: 'pc', deviceId, clientKind: 'desktop', type: mode === 'status' ? 'sync_remote_status' : 'sync_remote_push', reqId,
+      to: 'pc', deviceId, clientKind: 'desktop',
+      type: mode === 'status' ? 'sync_remote_status' : (mode === 'pull' ? 'sync_remote_pull' : 'sync_remote_push'), reqId,
     })));
     remoteWs.on('message', (raw) => {
       let message;
@@ -1464,6 +1538,22 @@ ipcMain.handle('remote-sync', async (_e, { deviceId, mode = 'push' } = {}) => {
     return { ok: true, reqId };
   } catch (error) {
     writeLog('error', 'sync.remote-start', { deviceId, reqId, error });
+    return { ok: false, error: error.message || 'Команда не отправлена' };
+  }
+});
+
+// Полный удалённый экран между двумя Noda. Команды идут по уже авторизованному
+// agent-сокету: ноутбук → сервер → выбранный ПК; кадры возвращаются тем же путём.
+ipcMain.handle('remote-screen-send', (_e, { deviceId, message } = {}) => {
+  if (!deviceId) return { ok: false, error: 'Устройство не выбрано' };
+  if (!ws || ws.readyState !== WebSocket.OPEN) return { ok: false, error: 'Нет связи с сервером' };
+  try {
+    ws.send(JSON.stringify({
+      to: 'agent', deviceId, clientKind: 'desktop', ...(message || {}),
+    }));
+    return { ok: true };
+  } catch (error) {
+    writeLog('error', 'remote-screen.send', { deviceId, type: message?.type, error });
     return { ok: false, error: error.message || 'Команда не отправлена' };
   }
 });

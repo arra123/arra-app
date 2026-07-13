@@ -1,5 +1,6 @@
 import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
 import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
+import { useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -39,6 +40,7 @@ export function Assistant() {
   const recTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const recStart = useRef(0); // момент старта записи (реальные часы) — переживает сворачивание
   const scrollRef = useRef<ScrollView>(null);
+  const inputRef = useRef<TextInput>(null);
   const pulse = useRef(new Animated.Value(1)).current;
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
@@ -47,6 +49,14 @@ export function Assistant() {
   const scrollEnd = useCallback((animated = true) => {
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated }));
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      inputRef.current?.blur();
+      Keyboard.dismiss();
+      return () => { inputRef.current?.blur(); Keyboard.dismiss(); };
+    }, []),
+  );
 
   // Единый механизм подъёма над клавиатурой: слушаем высоту клавиатуры и поднимаем
   // только док. БЕЗ KeyboardAvoidingView — иначе два механизма дёргали поле «туда-сюда».
@@ -270,6 +280,7 @@ export function Assistant() {
                 </View>
               </TouchableOpacity>
               <TextInput
+                ref={inputRef}
                 placeholder="Сообщение"
                 placeholderTextColor={theme.textSecondary}
                 value={input}

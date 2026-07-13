@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { STK } from '../assets';
+import { STK, UL } from '../assets';
 import { aiDiagnose, createCry, uploadCryMedia } from '../api';
 import { U, UG, UR, US } from '../theme';
 import { AudioPlayerBtn, Btn, Card, Chips, Gradient, MediaViewer, Slider, Sticker, Stepper, T, pop, tap, yay } from '../ui';
@@ -180,7 +180,7 @@ export function TearsScreen() {
         showsVerticalScrollIndicator={false}>
         {/* Шапка-герой */}
         <Gradient g={UG.tearHero} radius={UR.xl} style={styles.hero}>
-          <Sticker src={STK.thermometer} size={56} />
+          <Sticker src={UL.sob} size={64} />
           <View style={{ flex: 1 }}>
             <T kind="h1" color="#fff">Слёзометр 3000</T>
             <T kind="body" color="rgba(255,255,255,0.9)">Профессиональный анализ рыданий</T>

@@ -61,6 +61,10 @@ notes*.png
 # не публиковать в открытый репозиторий
 CLAUDE.md
 AGENTS.md
+# хаб-API: приватные данные проектов и креды входа — НИКОГДА в git (репо публичный)
+hub-api/private.json
+hub-api/config.json
+live-hub.png
 server/scripts/*.cjs
 SETUP_CODEMAGIC.md
 .claude/

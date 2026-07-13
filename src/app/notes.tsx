@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -28,7 +29,7 @@ import { BottomTabInset, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api, API_URL, getToken } from '@/lib/api';
 
-type Note = { id: string; title: string | null; body: string; color?: string | null; updated_at: string; created_at: string };
+type Note = { id: string; title: string | null; body: string; structured_body?: string | null; structured_at?: string | null; color?: string | null; updated_at: string; created_at: string };
 type Editing = Note | 'new' | null;
 
 // Категории-цвета заметок (подсветка)
@@ -56,9 +57,14 @@ export default function NotesScreen() {
   // перерисовывается на каждый символ и всё виснет. bodyKey форсит ремоунт при
   // открытии другой заметки / вставке надиктованного.
   const bodyRef = useRef('');
+  const structuredRef = useRef('');
+  const titleInputRef = useRef<TextInput>(null);
+  const bodyInputRef = useRef<TextInput>(null);
   const [bodyKey, setBodyKey] = useState(0);
   const setBodyText = (t: string) => { bodyRef.current = t; setBodyKey((k) => k + 1); };
   const [color, setColor] = useState<string | null>(null);
+  const [version, setVersion] = useState<'original' | 'structured'>('original');
+  const [structuring, setStructuring] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dictating, setDictating] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
@@ -126,18 +132,25 @@ export default function NotesScreen() {
   }
 
   function openNew() {
+    Keyboard.dismiss();
     setTitle('');
     setBodyText('');
+    structuredRef.current = '';
+    setVersion('original');
     setColor(null);
     setEditing('new');
   }
   function openNote(n: Note) {
+    Keyboard.dismiss();
     setTitle(n.title || '');
     setBodyText(n.body);
+    structuredRef.current = n.structured_body || '';
+    setVersion('original');
     setColor(n.color || null);
     setEditing(n);
   }
   function close() {
+    Keyboard.dismiss();
     setEditing(null);
   }
 
@@ -151,9 +164,9 @@ export default function NotesScreen() {
     setSaving(true);
     try {
       if (editing === 'new') {
-        await api('/notes', { body: { title: title.trim(), body, color } });
+        await api('/notes', { body: { title: title.trim(), body, structured_body: structuredRef.current.trim() || null, color } });
       } else if (editing) {
-        await api(`/notes/${editing.id}`, { method: 'PUT', body: { title: title.trim(), body, color } });
+        await api(`/notes/${editing.id}`, { method: 'PUT', body: { title: title.trim(), body, structured_body: structuredRef.current.trim() || null, color } });
       }
       haptic.success();
       close();
@@ -162,6 +175,31 @@ export default function NotesScreen() {
       Alert.alert('Не сохранилось', e?.message || '');
     } finally {
       setSaving(false);
+    }
+  }
+
+  function switchVersion(next: 'original' | 'structured') {
+    if (next === 'structured' && !structuredRef.current.trim()) return;
+    titleInputRef.current?.blur(); bodyInputRef.current?.blur(); Keyboard.dismiss();
+    setVersion(next);
+    setBodyKey((k) => k + 1);
+  }
+
+  async function structureCurrent() {
+    const source = bodyRef.current.trim();
+    if (!source || structuring) return;
+    setStructuring(true);
+    Keyboard.dismiss();
+    try {
+      const r = await api<{ structuredBody: string }>('/notes/structure', { body: { text: source } });
+      structuredRef.current = r.structuredBody || '';
+      setVersion('structured');
+      setBodyKey((k) => k + 1);
+      haptic.success();
+    } catch (e: any) {
+      Alert.alert('Не получилось структурировать', e?.message || '');
+    } finally {
+      setStructuring(false);
     }
   }
 
@@ -195,18 +233,20 @@ export default function NotesScreen() {
     try { await api(`/notes/${id}`, { method: 'DELETE' }); } catch { load(); }
   }
 
-  // Свайп вправо — выйти из заметки (с сохранением)
-  const exitGesture = Gesture.Pan()
-    .activeOffsetX(24)
+  // Горизонтальный свайп переключает оригинал и AI-версию. Оригинал не перезаписывается.
+  const versionGesture = Gesture.Pan()
+    .activeOffsetX([-24, 24])
+    .failOffsetY([-18, 18])
     .onEnd((e) => {
-      if (e.translationX > 80) runOnJS(save)();
+      if (e.translationX < -80) runOnJS(switchVersion)('structured');
+      else if (e.translationX > 80) runOnJS(switchVersion)('original');
     });
 
   // ----- Редактор -----
   if (editing) {
     return (
       <ThemedView style={styles.container}>
-        <GestureDetector gesture={exitGesture}>
+        <GestureDetector gesture={versionGesture}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <View style={[styles.editorBar, { paddingTop: insets.top + Spacing.two }]}>
             <TouchableOpacity onPress={save} hitSlop={10} style={styles.barBtn}>
@@ -214,6 +254,9 @@ export default function NotesScreen() {
               <ThemedText style={{ color: theme.tint }}>Готово</ThemedText>
             </TouchableOpacity>
             <View style={styles.barRight}>
+              <TouchableOpacity onPress={() => { titleInputRef.current?.blur(); bodyInputRef.current?.blur(); Keyboard.dismiss(); }} hitSlop={10} style={[styles.keyboardDown, { backgroundColor: theme.backgroundSelected }]}>
+                <SymbolView name="keyboard.chevron.compact.down" tintColor={theme.textSecondary} size={17} />
+              </TouchableOpacity>
               <TouchableOpacity
                 onPress={toggleDictate}
                 hitSlop={10}
@@ -235,8 +278,23 @@ export default function NotesScreen() {
               )}
             </View>
           </View>
-          <ScrollView contentContainerStyle={styles.editorContent} keyboardShouldPersistTaps="handled">
+          <View style={styles.versionBar}>
+            <View style={[styles.versionSeg, { backgroundColor: theme.backgroundSelected }]}>
+              <TouchableOpacity onPress={() => switchVersion('original')} style={[styles.versionBtn, version === 'original' && { backgroundColor: theme.backgroundElement }]}>
+                <ThemedText type="smallBold" style={{ color: version === 'original' ? theme.text : theme.textSecondary }}>Оригинал</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity disabled={!structuredRef.current.trim()} onPress={() => switchVersion('structured')} style={[styles.versionBtn, version === 'structured' && { backgroundColor: theme.backgroundElement }, !structuredRef.current.trim() && { opacity: 0.45 }]}>
+                <ThemedText type="smallBold" style={{ color: version === 'structured' ? theme.text : theme.textSecondary }}>AI-версия</ThemedText>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity onPress={structureCurrent} disabled={structuring} style={[styles.structureBtn, { borderColor: theme.separator, opacity: structuring ? 0.55 : 1 }]}>
+              {structuring ? <ActivityIndicator size="small" color={theme.tint} /> : <SymbolView name="wand.and.stars" tintColor={theme.tint} size={16} />}
+              <ThemedText type="smallBold" style={{ color: theme.tint }}>{structuredRef.current.trim() ? 'Обновить' : 'Структурировать'}</ThemedText>
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.editorContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="interactive" onScrollBeginDrag={Keyboard.dismiss}>
             <TextInput
+              ref={titleInputRef}
               placeholder="Заголовок"
               placeholderTextColor={theme.textSecondary}
               value={title}
@@ -255,11 +313,12 @@ export default function NotesScreen() {
               })}
             </ScrollView>
             <TextInput
-              key={bodyKey}
-              placeholder="Текст заметки…"
+              ref={bodyInputRef}
+              key={`${bodyKey}-${version}`}
+              placeholder={version === 'original' ? 'Текст заметки…' : 'Структурированная AI-версия…'}
               placeholderTextColor={theme.textSecondary}
-              defaultValue={bodyRef.current}
-              onChangeText={(t) => { bodyRef.current = t; }}
+              defaultValue={version === 'original' ? bodyRef.current : structuredRef.current}
+              onChangeText={(t) => { if (version === 'original') bodyRef.current = t; else structuredRef.current = t; }}
               multiline
               scrollEnabled={false}
               style={[styles.bodyInput, { color: theme.text }]}
@@ -319,6 +378,7 @@ export default function NotesScreen() {
                         {n.title?.trim() || 'Без названия'}
                       </ThemedText>
                       {!!catLabel(n.color) && <ThemedText type="small" style={{ color: n.color || theme.textSecondary, fontWeight: '600' }}>{catLabel(n.color)}</ThemedText>}
+                      {!!n.structured_body?.trim() && <SymbolView name="wand.and.stars" tintColor={theme.tint} size={13} />}
                     </View>
                     {!!n.body.trim() && (
                       <ThemedText type="small" themeColor="textSecondary" numberOfLines={2} style={{ marginTop: 3 }}>
@@ -358,7 +418,12 @@ const styles = StyleSheet.create({
   barBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   barRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   dictateBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 7, paddingHorizontal: 12, borderRadius: Radius.pill },
+  keyboardDown: { width: 34, height: 34, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
   editorContent: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.five, gap: Spacing.two },
+  versionBar: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  versionSeg: { flex: 1, flexDirection: 'row', borderRadius: Radius.md, padding: 3 },
+  versionBtn: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: Radius.sm },
+  structureBtn: { minHeight: 40, paddingHorizontal: 12, borderRadius: Radius.md, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 6 },
   titleInput: { fontSize: 26, fontWeight: '700', fontFamily: 'Inter_700Bold', paddingVertical: Spacing.two },
   bodyInput: { fontSize: 17, lineHeight: 25, fontFamily: 'Inter_400Regular', minHeight: 300, textAlignVertical: 'top' },
 });
