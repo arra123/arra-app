@@ -14,8 +14,8 @@ export const Colors = {
     backgroundElement: '#FFFFFF',
     backgroundSelected: '#E6E7EC',
     textSecondary: '#8A8E99',
-    tint: '#3E8EF7',
-    accent: '#4F7DF0',
+    tint: '#2E9B61',
+    accent: '#2E9B61',
     success: '#34C759',
     danger: '#FF3B30',
     warning: '#FF9500',
@@ -24,14 +24,14 @@ export const Colors = {
     separator: 'rgba(60,60,67,0.10)',
   },
   dark: {
-    // Графит Linear, но мягче: тёмно-серый фон вместо чёрного, чуть больше воздуха
+    // Единый графитовый интерфейс Noda с зелёным рабочим акцентом.
     text: '#F4F5F7',
     background: '#121317',
     backgroundElement: 'rgba(255,255,255,0.07)',
     backgroundSelected: 'rgba(255,255,255,0.12)',
     textSecondary: '#9AA0AA',
-    tint: '#6E79E6',
-    accent: '#6E79E6',
+    tint: '#72D99B',
+    accent: '#72D99B',
     success: '#4CB782',
     danger: '#EB5757',
     warning: '#F2C94C',
@@ -97,4 +97,4 @@ export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
 export const MaxContentWidth = 800;
 
 /** Номер сборки JS — показывается в углу экрана. Увеличивать при каждом выкате OTA. */
-export const APP_BUILD = 68;
+export const APP_BUILD = 69;

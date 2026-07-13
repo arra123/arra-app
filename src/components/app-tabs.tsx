@@ -2,8 +2,7 @@ import { NativeTabs } from 'expo-router/unstable-native-tabs';
 
 import { Colors } from '@/constants/theme';
 
-// Нативная стеклянная панель iOS (как у Apple). iOS показывает максимум 5 вкладок,
-// поэтому 5 главных, а Настройки открываются шестерёнкой в шапке Финансов.
+// Пять постоянных рабочих разделов; настройки открываются из шапки «Возвратов».
 export default function AppTabs() {
   const colors = Colors.dark;
 
@@ -13,12 +12,12 @@ export default function AppTabs() {
       indicatorColor={colors.backgroundElement}
       labelStyle={{ selected: { color: colors.tint } }}>
       <NativeTabs.Trigger name="index">
-        <NativeTabs.Trigger.Label>Финансы</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="rublesign.circle.fill" />
+        <NativeTabs.Trigger.Label>Возвраты</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="building.2.fill" />
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="chat">
-        <NativeTabs.Trigger.Label>Помощник</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Label>ИИ</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="bubble.left.and.bubble.right.fill" />
       </NativeTabs.Trigger>
 

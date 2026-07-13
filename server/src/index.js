@@ -13,6 +13,7 @@ import debtRoutes from './routes/debts.js';
 import fileRoutes from './routes/files.js';
 import noteRoutes from './routes/notes.js';
 import pushRoutes from './routes/push.js';
+import reimbursementRoutes from './routes/reimbursements.js';
 import relayRoutes from './routes/relay.js';
 import transactionRoutes from './routes/transactions.js';
 import ulyanaRoutes from './routes/ulyana.js';
@@ -34,6 +35,7 @@ app.get('/health', async () => ({ ok: true, service: 'aura', time: new Date().to
 await app.register(authRoutes);
 await app.register(transactionRoutes);
 await app.register(debtRoutes);
+await app.register(reimbursementRoutes);
 await app.register(aiRoutes);
 await app.register(assistantRoutes);
 await app.register(fileRoutes);

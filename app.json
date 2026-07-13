@@ -21,8 +21,8 @@
           "audio"
         ],
         "NSCameraUsageDescription": "Noda использует камеру, чтобы быстро снимать чеки и фото для переноса на компьютер.",
-        "NSMicrophoneUsageDescription": "Noda использует микрофон для голосового ввода трат.",
-        "NSPhotoLibraryUsageDescription": "Noda добавляет фото и скриншоты из галереи для распознавания трат и переноса файлов."
+        "NSMicrophoneUsageDescription": "Noda использует микрофон для голосового ввода компенсаций, сообщений и заметок.",
+        "NSPhotoLibraryUsageDescription": "Noda добавляет фото и скриншоты из галереи для чата, компенсаций и переноса файлов."
       }
     },
     "android": {

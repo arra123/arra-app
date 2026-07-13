@@ -1,5 +1,4 @@
-import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
-import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
+/* eslint-disable react-hooks/refs -- large note bodies intentionally live in refs to avoid rerendering every keystroke */
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -24,21 +23,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassCard } from '@/components/glass-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { VoiceRecorder } from '@/components/voice-recorder';
 import { haptic } from '@/lib/haptics';
 import { BottomTabInset, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { api, API_URL, getToken } from '@/lib/api';
+import { api } from '@/lib/api';
 
 type Note = { id: string; title: string | null; body: string; structured_body?: string | null; structured_at?: string | null; color?: string | null; updated_at: string; created_at: string };
 type Editing = Note | 'new' | null;
 
 // Категории-цвета заметок (подсветка)
 const NOTE_CATS: { color: string; label: string }[] = [
-  { color: '#5B8DEF', label: 'Работа' },
-  { color: '#4CB782', label: 'Личное' },
-  { color: '#E0A33E', label: 'Идеи' },
+  { color: '#72D99B', label: 'Работа' },
+  { color: '#9AC7A9', label: 'Личное' },
+  { color: '#D8B65A', label: 'Идеи' },
   { color: '#E06C75', label: 'Важное' },
-  { color: '#9A7BE0', label: 'Учёба' },
+  { color: '#75B98D', label: 'Учёба' },
 ];
 const catLabel = (c?: string | null) => NOTE_CATS.find((x) => x.color === c)?.label || '';
 
@@ -66,48 +66,10 @@ export default function NotesScreen() {
   const [version, setVersion] = useState<'original' | 'structured'>('original');
   const [structuring, setStructuring] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [dictating, setDictating] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const dictStart = useRef(0);
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-
-  async function toggleDictate() {
-    if (!dictating) {
-      const perm = await requestRecordingPermissionsAsync();
-      if (!perm.granted) return Alert.alert('Нужен доступ к микрофону');
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: true });
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-      dictStart.current = Date.now();
-      setDictating(true);
-      return;
-    }
-    setDictating(false);
-    const tooShort = Date.now() - dictStart.current < 1200;
-    try {
-      await recorder.stop();
-    } catch {
-      /* ignore */
-    }
-    const uri = recorder.uri;
-    if (!uri || tooShort) return; // ничего не наговорил — не распознаём
-    setTranscribing(true);
-    try {
-      const token = await getToken();
-      const res = await uploadAsync(`${API_URL}/ai/transcribe`, uri, {
-        httpMethod: 'POST',
-        uploadType: FileSystemUploadType.MULTIPART,
-        fieldName: 'file',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
-      if (res.status >= 400) throw new Error('Ошибка ' + res.status);
-      const data = JSON.parse(res.body || '{}');
-      if (data.text) setBodyText((bodyRef.current.trim() ? bodyRef.current.trim() + ' ' : '') + data.text);
-    } catch (e: any) {
-      Alert.alert('Не распознал', e?.message || '');
-    } finally {
-      setTranscribing(false);
-    }
+  function appendVoice(text: string) {
+    bodyRef.current = `${bodyRef.current.trim()}${bodyRef.current.trim() ? '\n\n' : ''}${text.trim()}`;
+    setVersion('original');
+    setBodyKey((key) => key + 1);
   }
 
   const load = useCallback(async () => {
@@ -122,7 +84,8 @@ export default function NotesScreen() {
   }, []);
 
   useEffect(() => {
-    load();
+    const timer = setTimeout(load, 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   async function onRefresh() {
@@ -257,20 +220,6 @@ export default function NotesScreen() {
               <TouchableOpacity onPress={() => { titleInputRef.current?.blur(); bodyInputRef.current?.blur(); Keyboard.dismiss(); }} hitSlop={10} style={[styles.keyboardDown, { backgroundColor: theme.backgroundSelected }]}>
                 <SymbolView name="keyboard.chevron.compact.down" tintColor={theme.textSecondary} size={17} />
               </TouchableOpacity>
-              <TouchableOpacity
-                onPress={toggleDictate}
-                hitSlop={10}
-                disabled={transcribing}
-                style={[styles.dictateBtn, { backgroundColor: dictating ? theme.danger : theme.backgroundSelected }]}>
-                {transcribing ? (
-                  <ActivityIndicator size="small" color={theme.tint} />
-                ) : (
-                  <SymbolView name={dictating ? 'stop.fill' : 'mic.fill'} tintColor={dictating ? '#fff' : theme.text} size={16} />
-                )}
-                <ThemedText type="small" style={{ color: dictating ? '#fff' : theme.text, fontWeight: '600' }}>
-                  {dictating ? 'Стоп' : transcribing ? 'Распознаю…' : 'Диктовать'}
-                </ThemedText>
-              </TouchableOpacity>
               {editing !== 'new' && (
                 <TouchableOpacity onPress={remove} hitSlop={10}>
                   <SymbolView name="trash" tintColor={theme.danger} size={20} />
@@ -324,6 +273,9 @@ export default function NotesScreen() {
               style={[styles.bodyInput, { color: theme.text }]}
             />
           </ScrollView>
+          <View style={[styles.voiceDock, { paddingBottom: Math.max(insets.bottom, Spacing.two) }]}>
+            <VoiceRecorder onTranscript={appendVoice} hint="надиктовать в оригинал · вверх — зафиксировать" />
+          </View>
           {saving && <ActivityIndicator style={{ marginBottom: insets.bottom + Spacing.two }} color={theme.tint} />}
         </KeyboardAvoidingView>
         </GestureDetector>
@@ -353,7 +305,7 @@ export default function NotesScreen() {
           <GlassCard radius={Radius.lg} style={styles.emptyCard}>
             <SymbolView name="note.text" tintColor={theme.textSecondary} size={34} />
             <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
-              Пусто. Нажми + — заметка появится и на компьютере.
+              Пусто. Создайте заметку здесь или попросите Noda записать её в чате.
             </ThemedText>
           </GlassCard>
         ) : (
@@ -400,14 +352,13 @@ export default function NotesScreen() {
 }
 
 const styles = StyleSheet.create({
-  // Фон в стиле Telegram (тёмно-синий графит)
-  container: { flex: 1, backgroundColor: '#0E1621' },
+  container: { flex: 1, backgroundColor: '#0D100F' },
   content: { paddingHorizontal: Spacing.three, paddingBottom: BottomTabInset + Spacing.five, gap: Spacing.three },
   headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   h1: { fontSize: 34, fontWeight: '700', lineHeight: 40, marginTop: Spacing.one },
   addBtn: { width: 42, height: 42, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
   emptyCard: { paddingVertical: Spacing.five, alignItems: 'center', gap: Spacing.two, marginTop: Spacing.two },
-  noteCard: { padding: Spacing.three, backgroundColor: '#17212B', borderRadius: Radius.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.07)' },
+  noteCard: { padding: Spacing.three, backgroundColor: '#151916', borderRadius: Radius.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.07)' },
   noteTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   noteTime: { marginTop: Spacing.two, fontSize: 12 },
   catRow: { gap: 8, paddingVertical: Spacing.two, paddingRight: Spacing.three },
@@ -417,7 +368,6 @@ const styles = StyleSheet.create({
   editorBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.three, paddingBottom: Spacing.two },
   barBtn: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   barRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
-  dictateBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 7, paddingHorizontal: 12, borderRadius: Radius.pill },
   keyboardDown: { width: 34, height: 34, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
   editorContent: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.five, gap: Spacing.two },
   versionBar: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
@@ -426,4 +376,5 @@ const styles = StyleSheet.create({
   structureBtn: { minHeight: 40, paddingHorizontal: 12, borderRadius: Radius.md, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 6 },
   titleInput: { fontSize: 26, fontWeight: '700', fontFamily: 'Inter_700Bold', paddingVertical: Spacing.two },
   bodyInput: { fontSize: 17, lineHeight: 25, fontFamily: 'Inter_400Regular', minHeight: 300, textAlignVertical: 'top' },
+  voiceDock: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two, backgroundColor: '#0D100F' },
 });

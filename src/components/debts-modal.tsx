@@ -122,7 +122,7 @@ export function DebtsModal({ visible, onClose, onChanged }: { visible: boolean; 
         <ScrollView contentContainerStyle={{ padding: Spacing.three, gap: Spacing.two, paddingBottom: Spacing.six }}>
           {groups.length === 0 && (
             <ThemedText themeColor="textSecondary" style={{ textAlign: 'center', marginTop: Spacing.five }}>
-              Пока долгов нет. Скажи помощнику «дал Егору 500» или нажми ＋.
+              Пока долгов нет. Откройте «Записать», скажите «дал Егору 500» или нажмите ＋.
             </ThemedText>
           )}
           {groups.map((g) => {

@@ -554,18 +554,26 @@ export default function PcScreen() {
     <ThemedView style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
         <ThemedText type="title" style={styles.h1}>Компьютер</ThemedText>
-        <TouchableOpacity
-          style={styles.statusRow}
-          activeOpacity={devices.length > 1 ? 0.6 : 1}
-          onPress={() => { if (devices.length > 1) setDevOpen((v) => !v); }}>
-          <View style={[styles.dot, { backgroundColor: online ? c.success : c.textSecondary }]} />
-          <ThemedText type="small" themeColor="textSecondary">
-            {!connected ? 'подключаюсь…' : online ? (selDevice?.name || 'ПК на связи') : (selDevice?.name ? `${selDevice.name} — не в сети` : 'ПК не в сети')}
-          </ThemedText>
-          {devices.length > 1 && (
-            <SymbolView name={devOpen ? 'chevron.up' : 'chevron.down'} tintColor={c.textSecondary} size={12} />
-          )}
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          <View style={styles.agentShortcuts}>
+            <TouchableOpacity onPress={() => sendKey('codex --yolo\r')} style={[styles.agentShortcut, { borderColor: c.separator }]}>
+              <View style={[styles.presetDot, { backgroundColor: c.accent }]} /><ThemedText type="smallBold">Codex</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => sendKey('claude --dangerously-skip-permissions\r')} style={[styles.agentShortcut, { borderColor: c.separator }]}>
+              <View style={[styles.presetDot, { backgroundColor: '#D88B5A' }]} /><ThemedText type="smallBold">Claude</ThemedText>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            style={styles.statusRow}
+            activeOpacity={devices.length > 1 ? 0.6 : 1}
+            onPress={() => { if (devices.length > 1) setDevOpen((v) => !v); }}>
+            <View style={[styles.dot, { backgroundColor: online ? c.success : c.textSecondary }]} />
+            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+              {!connected ? 'подключаюсь…' : online ? (selDevice?.name || 'ПК на связи') : (selDevice?.name ? `${selDevice.name} — не в сети` : 'ПК не в сети')}
+            </ThemedText>
+            {devices.length > 1 && <SymbolView name={devOpen ? 'chevron.up' : 'chevron.down'} tintColor={c.textSecondary} size={12} />}
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Выбор ПК: ноут / стационарный и т.д. (когда устройств больше одного) */}
@@ -613,14 +621,6 @@ export default function PcScreen() {
                 <ThemedText type="smallBold" style={{ color: c.success }}>ПК</ThemedText>
               </TouchableOpacity>
             ))}
-          </View>
-          <View style={styles.termPresets}>
-            <TouchableOpacity onPress={() => sendKey('codex --yolo\r')} style={styles.termPresetBtn}>
-              <View style={[styles.presetDot, { backgroundColor: c.accent }]} /><ThemedText type="smallBold">Codex · YOLO mode</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => sendKey('claude --dangerously-skip-permissions\r')} style={styles.termPresetBtn}>
-              <View style={[styles.presetDot, { backgroundColor: '#D88B5A' }]} /><ThemedText type="smallBold">Claude · полный доступ</ThemedText>
-            </TouchableOpacity>
           </View>
           <View style={styles.termWrap}>
             {terms.map((t) => (
@@ -878,9 +878,12 @@ const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.two },
+  header: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.two, flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: Spacing.two },
   h1: { fontSize: 30, lineHeight: 36 },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, marginTop: 2, alignSelf: 'flex-start' },
+  headerRight: { flex: 1, alignItems: 'flex-end', gap: 5 },
+  agentShortcuts: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  agentShortcut: { minHeight: 30, paddingHorizontal: 9, borderRadius: Radius.sm, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  statusRow: { maxWidth: '100%', flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-end' },
   devList: { marginHorizontal: Spacing.three, marginBottom: Spacing.two, borderRadius: Radius.md, backgroundColor: c.backgroundElement, overflow: 'hidden' },
   devRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two, paddingHorizontal: Spacing.three, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.separator },
   dot: { width: 9, height: 9, borderRadius: 5 },
@@ -889,8 +892,6 @@ const styles = StyleSheet.create({
   segBtnOn: { backgroundColor: c.accent },
   toast: { textAlign: 'center', color: c.text, paddingVertical: 4 },
   termTabs: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: Spacing.three, marginBottom: Spacing.two },
-  termPresets: { flexDirection: 'row', gap: 7, paddingHorizontal: Spacing.three, marginBottom: Spacing.two },
-  termPresetBtn: { flex: 1, minHeight: 36, borderRadius: Radius.sm, backgroundColor: c.backgroundElement, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 8 },
   presetDot: { width: 7, height: 7, borderRadius: 2 },
   termTab: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.sm, backgroundColor: c.backgroundElement },
   termTabOn: { backgroundColor: c.accent },
