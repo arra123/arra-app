@@ -1,0 +1,127 @@
+/* Noda liquid system — based on the extracted websiteglass.com tokens, adapted for a dense desktop tool. */
+:root,
+body[data-theme="dark"] {
+  --bg: #0a0b0f;
+  --surface: rgba(22, 24, 31, .78);
+  --surface-2: rgba(255, 255, 255, .065);
+  --surface-3: rgba(255, 255, 255, .105);
+  --text: #f5f7fb;
+  --text-2: #c3c7d0;
+  --muted: #777d89;
+  --tint: #8b94ff;
+  --tint-2: #737de9;
+  --tint-soft: rgba(139, 148, 255, .15);
+  --hair: rgba(255,255,255,.09);
+  --hair-2: rgba(255,255,255,.055);
+  --glass: rgba(30, 32, 41, .66);
+  --glass-strong: rgba(37, 40, 51, .82);
+  --glass-shadow: 0 18px 60px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.12), inset 0 0 0 1px rgba(255,255,255,.045);
+  --shadow: 0 10px 28px rgba(0,0,0,.2);
+}
+body { background: #0a0b0f; }
+body::before { content:""; position:fixed; inset:42px 0 0 var(--sidebar-w); pointer-events:none; background:radial-gradient(720px 500px at 76% -8%, rgba(100,113,255,.13), transparent 68%),radial-gradient(580px 520px at 20% 105%, rgba(56,125,173,.08),transparent 72%); z-index:-1; }
+.titlebar { background:rgba(13,14,18,.82); backdrop-filter:blur(28px) saturate(145%); border-color:rgba(255,255,255,.065); }
+.sidebar { background:rgba(14,15,20,.72); backdrop-filter:blur(32px) saturate(140%); border-color:rgba(255,255,255,.065); padding:14px 11px; }
+.sidebar .side-sec { font-size:10px; letter-spacing:.09em; color:#626772; }
+.sidebar button.navitem { height:42px; border-radius:14px; font-weight:590; color:#a5aab5; transition:background .2s ease,color .2s ease,transform .2s ease; }
+.sidebar button.navitem:hover { background:rgba(255,255,255,.06); transform:translateX(1px); }
+.sidebar button.navitem.active { color:#fff; background:rgba(255,255,255,.095); box-shadow:inset 0 1px 0 rgba(255,255,255,.11),0 8px 26px rgba(0,0,0,.18); }
+.sidebar button.navitem.active svg { color:#a4acff; filter:drop-shadow(0 0 8px rgba(139,148,255,.35)); }
+.side-update { border-radius:14px!important; background:rgba(255,255,255,.045)!important; }
+button,input,textarea,select { font-family:inherit; }
+[hidden] { display:none!important; }
+
+.liquid-page { position:relative; height:calc(100vh - 86px); min-height:520px; color:var(--text); }
+.liquid-head { height:56px; display:flex; align-items:center; gap:16px; border-bottom:1px solid var(--hair-2); }
+.liquid-head h1 { font-size:25px; line-height:1; font-weight:720; letter-spacing:-.035em; }
+.liquid-tabs { margin-left:auto; display:flex; align-items:center; gap:3px; padding:4px; border:1px solid rgba(255,255,255,.08); border-radius:18px; background:rgba(255,255,255,.055); backdrop-filter:blur(24px) saturate(150%); box-shadow:inset 0 1px 0 rgba(255,255,255,.08); }
+.liquid-tabs button { border:0; background:transparent; color:#888e9a; padding:8px 16px; border-radius:14px; font-weight:650; cursor:pointer; }
+.liquid-tabs button.active { color:#fff; background:rgba(255,255,255,.115); box-shadow:0 5px 18px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.13); }
+.liquid-body { height:calc(100% - 56px); min-height:0; }
+.liquid-loading { width:22px; height:22px; border:2px solid rgba(255,255,255,.12); border-top-color:#a2a9ff; border-radius:50%; animation:liquid-spin .8s linear infinite; margin:80px auto; }
+@keyframes liquid-spin { to{transform:rotate(360deg)} }
+.liquid-empty { display:flex; align-items:center; justify-content:center; min-height:150px; color:var(--muted); font-weight:560; }
+.liquid-empty.error { color:#ff868b; }
+
+/* Reimbursements */
+.liquid-conversation { height:100%; display:flex; flex-direction:column; max-width:920px; margin:0 auto; }
+.liquid-feed { flex:1; min-height:0; overflow:auto; padding:34px 16px 22px; scrollbar-width:thin; }
+.liquid-user-row { display:flex; justify-content:flex-end; margin:8px 0 18px; }
+.liquid-user-row>div,.liquid-message-row.user>div { max-width:68%; padding:11px 15px; background:#5965b8; color:#fff; border-radius:18px 18px 5px 18px; line-height:1.48; box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 8px 24px rgba(35,42,105,.24); }
+.liquid-ai-row { display:flex; align-items:flex-start; gap:11px; margin:10px 0 24px; }
+.liquid-ai-mark,.liquid-record-icon { width:34px; height:34px; flex:none; display:grid; place-items:center; border-radius:12px; background:rgba(139,148,255,.12); color:#a5adff; border:1px solid rgba(165,173,255,.13); }
+.liquid-ai-mark.ok { color:#70d697; background:rgba(70,190,113,.12); border-color:rgba(70,190,113,.15); }
+.liquid-ai-mark svg,.liquid-record-icon svg,.liquid-composer button svg,.liquid-primary svg,.liquid-note-toolbar svg,.liquid-search svg,.liquid-notes-list header svg,.liquid-chat-empty svg,.liquid-note-empty svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.liquid-form { width:min(620px,calc(100% - 46px)); padding:17px; display:grid; gap:10px; border-radius:22px; background:rgba(30,32,41,.74); border:1px solid rgba(255,255,255,.09); backdrop-filter:blur(28px) saturate(145%); box-shadow:var(--glass-shadow); }
+.liquid-form header { display:flex; align-items:center; padding:0 2px 7px; }
+.liquid-form header b { flex:1; font-size:15px; }
+.liquid-form header button { border:0;background:transparent;color:#737985;font-size:23px;cursor:pointer; }
+.liquid-form input { height:44px; border:1px solid rgba(255,255,255,.07); border-radius:14px; background:rgba(0,0,0,.18); color:#fff; padding:0 13px; outline:none; font-size:14px; }
+.liquid-form input:focus { border-color:rgba(151,160,255,.5); box-shadow:0 0 0 3px rgba(139,148,255,.1); }
+.liquid-form-amount { display:flex; align-items:center; background:rgba(0,0,0,.18); border:1px solid rgba(255,255,255,.07); border-radius:16px; }
+.liquid-form-amount input { flex:1; height:60px; background:transparent;border:0;font-size:31px;font-weight:700; }
+.liquid-form-amount span { padding-right:16px;color:#858b97;font-size:18px; }
+.liquid-form-grid { display:grid;grid-template-columns:1fr 1fr;gap:10px; }
+.liquid-primary { height:42px; border:0; border-radius:14px; color:#fff; background:#7781e8; display:flex;align-items:center;justify-content:center;gap:8px;font-weight:680;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.24),0 9px 22px rgba(63,72,159,.28); }
+.liquid-primary.compact { height:34px;padding:0 14px; }
+.liquid-saved { display:flex;align-items:center;gap:18px;min-width:280px;padding:13px 15px;border:1px solid rgba(255,255,255,.08);border-radius:17px;background:rgba(255,255,255,.055); }
+.liquid-saved b { flex:1; }.liquid-saved strong{font-size:17px;}
+.liquid-typing { display:flex;align-items:center;gap:5px;height:34px;padding:0 14px;border-radius:16px;background:rgba(255,255,255,.055); }
+.liquid-typing i { width:5px;height:5px;border-radius:50%;background:#969dab;animation:liquid-dot 1s infinite alternate; }.liquid-typing i:nth-child(2){animation-delay:.16s}.liquid-typing i:nth-child(3){animation-delay:.32s}
+@keyframes liquid-dot { to{transform:translateY(-4px);opacity:.5} }
+.liquid-composer-wrap { flex:none;padding:10px 12px 4px; }
+.liquid-target { display:block;margin:0 0 8px 8px;height:31px;padding:0 29px 0 12px;border:1px solid rgba(255,255,255,.09);border-radius:13px;background:rgba(255,255,255,.055);color:#cdd1da;font-weight:650;outline:none; }
+.liquid-composer { min-height:54px;display:flex;align-items:flex-end;gap:5px;padding:6px;border-radius:22px;background:rgba(31,33,42,.72);border:1px solid rgba(255,255,255,.105);backdrop-filter:blur(32px) saturate(155%);box-shadow:var(--glass-shadow); }
+.liquid-composer textarea { flex:1;resize:none;max-height:120px;min-height:40px;border:0;background:transparent;color:#fff;outline:none;padding:10px 7px;font-size:14px;line-height:20px; }
+.liquid-composer button { width:41px;height:41px;flex:none;border:0;border-radius:50%;background:transparent;color:#9298a4;display:grid;place-items:center;cursor:pointer; }
+.liquid-composer button:hover { background:rgba(255,255,255,.07);color:#fff; }
+.liquid-composer .liquid-send { background:#7b85eb;color:#fff;box-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 6px 18px rgba(66,77,175,.3); }
+.liquid-composer .liquid-mic.recording { width:auto;min-width:108px;padding:0 12px;border-radius:18px;background:rgba(226,75,82,.14);color:#ff7a80;display:flex;gap:8px; }
+.voice-bars { height:18px;display:flex;align-items:center;gap:2px; }.voice-bars i{width:2px;height:6px;background:currentColor;border-radius:2px;animation:voice-bar .55s ease-in-out infinite alternate}.voice-bars i:nth-child(2){height:14px;animation-delay:.12s}.voice-bars i:nth-child(3){height:10px;animation-delay:.25s}.voice-bars i:nth-child(4){animation-delay:.34s}
+@keyframes voice-bar{to{height:17px}}
+.voice-bars+b{font-size:11px;}
+
+.liquid-money-summary { display:grid;grid-template-columns:minmax(200px,1.2fr) minmax(130px,.8fr) auto;align-items:end;gap:32px;padding:38px 8px 22px;border-bottom:1px solid var(--hair-2); }
+.liquid-money-summary>div { display:grid;gap:5px; }.liquid-money-summary span{color:#858b97;font-size:12px}.liquid-money-summary b{font-size:28px;letter-spacing:-.04em}
+.liquid-money-summary nav { display:flex;padding:3px;border-radius:15px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.065); }
+.liquid-money-summary nav button { border:0;background:transparent;color:#777d89;padding:7px 12px;border-radius:12px;font-weight:620;cursor:pointer}.liquid-money-summary nav button.active{background:rgba(255,255,255,.09);color:#fff}
+.liquid-money-list { padding:10px 0 30px; }
+.liquid-money-row { display:grid;grid-template-columns:42px minmax(0,1fr) auto 36px;align-items:center;gap:12px;padding:13px 8px;border-bottom:1px solid rgba(255,255,255,.055);transition:background .18s; }
+.liquid-money-row:hover { background:rgba(255,255,255,.025); }.liquid-money-row.closed{opacity:.5}
+.liquid-money-row>div{display:grid;gap:4px}.liquid-money-row b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.liquid-money-row small{color:#777d89}.liquid-money-row strong{font-size:16px}
+.liquid-row-check { width:31px;height:31px;border-radius:11px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.045);color:#858b97;display:grid;place-items:center;cursor:pointer}.liquid-row-check svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2}
+.liquid-money-row:not(.closed) .liquid-row-check:hover{color:#6ed493;background:rgba(75,190,114,.12)}
+
+/* Telegram-like assistant */
+body.chat-mode main { padding-bottom:0; }
+.assistant-liquid { display:flex;flex-direction:column; }
+.liquid-online { width:7px;height:7px;border-radius:50%;background:#65d68b;box-shadow:0 0 12px rgba(101,214,139,.6); }
+.liquid-chat-feed { flex:1;min-height:0;overflow:auto;padding:30px max(18px,calc((100% - 920px)/2));display:flex;flex-direction:column;gap:8px; }
+.liquid-message-row { display:flex; }.liquid-message-row.user{justify-content:flex-end}.liquid-message-row.assistant{justify-content:flex-start}
+.liquid-message-row.assistant>div { max-width:72%;white-space:pre-wrap;padding:11px 14px;border-radius:18px 18px 18px 5px;background:rgba(255,255,255,.065);border:1px solid rgba(255,255,255,.055);line-height:1.5;color:#e4e6eb; }
+.liquid-chat-empty,.liquid-note-empty { margin:auto;width:74px;height:74px;border-radius:26px;display:grid;place-items:center;color:#7982df;background:rgba(139,148,255,.08);border:1px solid rgba(139,148,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.08); }
+.liquid-chat-empty svg,.liquid-note-empty svg{width:31px;height:31px}.liquid-chat-dock{flex:none;max-width:920px;width:100%;margin:0 auto;padding:8px 12px 16px}
+
+/* Notes — list and paper, no card grid */
+body:not(.term-mode) main:has(.notes-liquid){overflow:hidden;padding:0;}
+.notes-liquid { height:calc(100vh - 42px);display:grid;grid-template-columns:310px minmax(0,1fr); }
+.liquid-notes-list { display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--hair-2);background:rgba(13,14,18,.44);backdrop-filter:blur(24px); }
+.liquid-notes-list header { height:70px;display:flex;align-items:center;padding:0 17px 0 21px; }.liquid-notes-list h1{font-size:24px;letter-spacing:-.04em;flex:1}.liquid-notes-list header button{width:34px;height:34px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.055);color:#c9cdd5;display:grid;place-items:center;cursor:pointer}
+.liquid-search { margin:0 13px 10px;display:flex;align-items:center;gap:8px;height:38px;padding:0 11px;border-radius:13px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.055);color:#747a86}.liquid-search svg{width:16px;height:16px}.liquid-search input{flex:1;border:0;outline:0;background:transparent;color:#fff}
+#liquid-note-list{flex:1;min-height:0;overflow:auto;padding:0 8px 12px}
+.liquid-note-row { width:100%;display:grid;grid-template-columns:4px minmax(0,1fr) auto;gap:10px;align-items:center;padding:12px 10px;border:0;border-radius:14px;background:transparent;color:#dfe2e8;text-align:left;cursor:pointer}.liquid-note-row:hover{background:rgba(255,255,255,.035)}.liquid-note-row.active{background:rgba(255,255,255,.075);box-shadow:inset 0 1px 0 rgba(255,255,255,.055)}.liquid-note-row>span{width:3px;height:25px;border-radius:3px;background:#7781e8;opacity:.35}.liquid-note-row.active>span{opacity:1}.liquid-note-row>div{min-width:0;display:grid;gap:4px}.liquid-note-row b,.liquid-note-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.liquid-note-row small,.liquid-note-row time{font-size:11px;color:#747a86}.liquid-note-row time{align-self:start;margin-top:2px}
+.liquid-note-editor { min-width:0;display:flex;flex-direction:column;padding:0 max(32px,7vw); }
+.liquid-note-toolbar { height:68px;display:flex;align-items:center;border-bottom:1px solid var(--hair-2); }.liquid-note-toolbar nav{display:flex;gap:3px;padding:3px;border-radius:13px;background:rgba(255,255,255,.045)}.liquid-note-toolbar nav button{border:0;background:transparent;color:#747a86;padding:6px 11px;border-radius:10px;font-weight:620;cursor:pointer}.liquid-note-toolbar nav button.active{background:rgba(255,255,255,.085);color:#fff}.liquid-note-toolbar nav button:disabled{opacity:.35}.liquid-note-toolbar>div{margin-left:auto;display:flex;gap:6px}.liquid-note-toolbar>div>button:not(.liquid-primary){width:34px;height:34px;display:grid;place-items:center;border:0;border-radius:11px;background:transparent;color:#7f8590;cursor:pointer}.liquid-note-toolbar>div>button:hover{background:rgba(255,255,255,.05);color:#fff}
+.liquid-note-title { margin-top:34px;border:0;background:transparent;color:#fff;outline:0;font-size:30px;font-weight:720;letter-spacing:-.045em; }.liquid-note-body { flex:1;min-height:0;margin:18px 0 30px;border:0;outline:0;resize:none;background:transparent;color:#d2d5dc;font-size:15px;line-height:1.72; }
+
+/* Transfer: authoritative source remains visible above the actions. */
+.sync-v3-head { display:flex!important;align-items:center;gap:18px; }
+.sync-authority { margin-left:auto;min-height:38px;display:flex;align-items:center;gap:10px;padding:6px 13px;border-radius:15px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.075);backdrop-filter:blur(22px);box-shadow:inset 0 1px 0 rgba(255,255,255,.07); }
+.sync-authority span{font-size:11px;color:#7b818d}.sync-authority b{font-size:13px;color:#fff}.sync-authority time{font-size:11px;color:#737986}.sync-authority.ok:before{content:"";width:7px;height:7px;border-radius:50%;background:#6bd48f;box-shadow:0 0 9px rgba(107,212,143,.45)}.sync-authority.unknown:before{content:"";width:7px;height:7px;border-radius:50%;background:#6d727c}
+.sync-proof-project>summary>i.local,.sync-proof-folder>summary>i.local{color:#7d85d9!important;background:rgba(125,133,217,.12)!important}
+
+/* Remote viewer gets a clear glass status without instructional clutter. */
+.remote-head p,.remote-help{display:none!important}.remote-head{align-items:center}.remote-meta{min-height:42px}.remote-status{padding:7px 12px;border:1px solid rgba(255,255,255,.075);border-radius:13px;background:rgba(255,255,255,.05);backdrop-filter:blur(20px)}
+.remote-stage{border-radius:22px!important;border:1px solid rgba(255,255,255,.08)!important;box-shadow:var(--glass-shadow)!important;background:#020305!important;overflow:hidden}
+
+@media (max-width:900px){.liquid-money-summary{grid-template-columns:1fr 1fr}.liquid-money-summary nav{grid-column:1/-1;width:max-content}.notes-liquid{grid-template-columns:260px 1fr}.liquid-note-editor{padding:0 28px}}

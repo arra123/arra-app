@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('arra', {
   onClaudeDone: (cb) => ipcRenderer.on('claude-done', (_e, payload) => cb(payload)),
   // Перенос (синхронизация рабочих файлов с сервером)
   syncRun: (mode, only, role) => ipcRenderer.invoke('sync-run', { mode, only, role }),
+  syncLocalInventory: () => ipcRenderer.invoke('sync-local-inventory'),
   syncPause: () => ipcRenderer.invoke('sync-pause'),
   syncResume: () => ipcRenderer.invoke('sync-resume'),
   syncCancel: () => ipcRenderer.invoke('sync-cancel'),

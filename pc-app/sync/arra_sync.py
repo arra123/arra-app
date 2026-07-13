@@ -747,12 +747,15 @@ def transfer(mode, only, dry_run=False):
             return
 
         if total == 0:
+            done_state = None
             if mode in ("push", "pull"):
                 record_server_state(sftp, mode, 0, 0, 0)
                 write_remote_indexes(sftp, scopes)
+                done_state = read_server_state(sftp)
             emit({"type": "done", "direction": mode, "transferred": 0, "errors": 0,
                   "bytes": 0, "skipped": len(conflicts), "msg": "Уже актуально",
                   "planned": 0, "verified": 0, "proof": scope_rows,
+                  "serverState": done_state or {},
                   "elapsed": int(time.time() - started)})
             return
 
@@ -977,10 +980,12 @@ def transfer(mode, only, dry_run=False):
         if mode in ("push", "pull"):
             record_server_state(sftp, mode, verified, done_bytes, errors)
             write_remote_indexes(sftp, scopes)
+        done_state = read_server_state(sftp) if mode in ("push", "pull") else None
         emit({"type": "done", "direction": mode, "transferred": verified,
               "errors": errors, "bytes": done_bytes, "skipped": len(conflicts),
               "verified": verified, "planned": total,
               "proof": scope_rows,
+              "serverState": done_state or {},
               "elapsed": int(time.time() - started)})
     finally:
         try:
@@ -1000,7 +1005,14 @@ def main():
         if idx + 1 < len(args):
             only = args[idx + 1]
     try:
-        if mode == "status":
+        if mode == "authority":
+            client, sftp = connect()
+            try:
+                emit({"type": "authority", "serverState": read_server_state(sftp)})
+            finally:
+                sftp.close()
+                client.close()
+        elif mode == "status":
             client, sftp, scopes, started = scan_everything()
             try:
                 build_status(scopes, started, read_server_state(sftp))

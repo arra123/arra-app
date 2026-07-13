@@ -97,7 +97,7 @@ const state = {
 const remoteDesktop = {
   deviceId: null, running: false, screens: [], activeScreen: null,
   frame: null, frameW: 16, frameH: 9, frameQueued: false, lastFrameAt: 0,
-  moveAt: 0, uiAt: 0, error: '',
+  moveAt: 0, uiAt: 0, error: '', engine: '', frames: 0, failures: 0, blackFrames: 0,
 };
 
 function deviceRole(device, currentId, currentRole, deviceCount) {
@@ -621,9 +621,35 @@ function drawRemoteFrame() {
     const height = remoteDesktop.frameH || image.naturalHeight || 9;
     if (canvas.width !== width) canvas.width = width;
     if (canvas.height !== height) canvas.height = height;
-    canvas.getContext('2d', { alpha: false })?.drawImage(image, 0, 0, width, height);
+    const context = canvas.getContext('2d', { alpha: false });
+    context?.drawImage(image, 0, 0, width, height);
     fitRemoteCanvas();
-    const hint = document.getElementById('remote-stage-hint'); if (hint) hint.hidden = true;
+    let black = false;
+    try {
+      const probeCanvas = document.createElement('canvas'); probeCanvas.width = 24; probeCanvas.height = 16;
+      const probeContext = probeCanvas.getContext('2d', { alpha: false });
+      probeContext?.drawImage(canvas, 0, 0, 24, 16);
+      const probe = probeContext?.getImageData(0, 0, 24, 16).data;
+      let brightest = 0; let total = 0; let samples = 0;
+      if (probe?.length) {
+        const stride = Math.max(4, Math.floor(probe.length / 240 / 4) * 4);
+        for (let offset = 0; offset < probe.length; offset += stride) {
+          const value = Math.max(probe[offset] || 0, probe[offset + 1] || 0, probe[offset + 2] || 0);
+          brightest = Math.max(brightest, value); total += value; samples += 1;
+        }
+        black = brightest < 18 && total / Math.max(1, samples) < 7;
+      }
+    } catch {}
+    if (black) {
+      remoteDesktop.blackFrames += 1;
+      remoteDesktop.error = remoteDesktop.blackFrames > 2 ? 'Видеопоток идёт, но кадр остаётся чёрным' : 'Переключаю способ захвата экрана…';
+      reportError('remote.screen-black', new Error(remoteDesktop.error), { engine: remoteDesktop.engine, blackFrames: remoteDesktop.blackFrames });
+    } else {
+      remoteDesktop.blackFrames = 0;
+      if (/кадр|захват|видеопоток/i.test(remoteDesktop.error)) remoteDesktop.error = '';
+      const hint = document.getElementById('remote-stage-hint'); if (hint) hint.hidden = true;
+    }
+    updateRemoteDeviceUi();
   };
   image.src = `data:image/jpeg;base64,${frame}`;
 }
@@ -648,6 +674,7 @@ function handleRemoteDesktopEvent(message) {
   if (message.sourceDeviceId && remoteDesktop.deviceId && message.sourceDeviceId !== remoteDesktop.deviceId) return;
   if (message.type === 'screen_frame' && message.data) {
     remoteDesktop.running = true;
+    remoteDesktop.engine = message.engine || remoteDesktop.engine;
     queueRemoteFrame(message.data, message.w, message.h);
   } else if (message.type === 'screens') {
     remoteDesktop.screens = message.screens || [];
@@ -656,6 +683,12 @@ function handleRemoteDesktopEvent(message) {
       || remoteDesktop.screens[0]?.id
       || null;
     renderRemoteScreenButtons();
+  } else if (message.type === 'screen_health') {
+    remoteDesktop.engine = message.engine || remoteDesktop.engine;
+    remoteDesktop.frames = Number(message.frames) || 0;
+    remoteDesktop.failures = Number(message.failures) || 0;
+    if (message.error) remoteDesktop.error = message.error;
+    updateRemoteDeviceUi();
   } else if (message.type === 'pc_offline') {
     remoteDesktop.running = false;
     remoteDesktop.error = 'Компьютер отключился';
@@ -744,7 +777,7 @@ function updateRemoteDeviceUi() {
   if (status) {
     const frameAge = remoteDesktop.lastFrameAt ? Math.max(0, Math.round((Date.now() - remoteDesktop.lastFrameAt) / 1000)) : null;
     status.textContent = remoteDesktop.error || (remoteDesktop.running
-      ? (frameAge != null && frameAge > 4 ? `Жду кадры · ${frameAge} с` : 'Удалённое управление активно')
+      ? (frameAge != null && frameAge > 4 ? `Жду кадры · ${frameAge} с` : `Экран в сети${remoteDesktop.engine ? ` · ${remoteDesktop.engine === 'windows' ? 'Windows' : 'Electron'}` : ''}`)
       : (current?.online ? 'Готов к подключению' : 'Устройство не в сети'));
     status.className = remoteDesktop.error ? 'remote-status bad' : 'remote-status';
   }
@@ -758,9 +791,9 @@ function renderRemoteDesktop() {
   const device = selectedRemoteDevice();
   if (!remoteDesktop.deviceId && device) remoteDesktop.deviceId = device.id;
   app.innerHTML = `<div class="remote-page">
-    <header class="remote-head"><div><h1>Удалённый ПК</h1><p>Полный доступ к другому компьютеру через защищённый канал Noda.</p></div>
+    <header class="remote-head"><div><h1>Удалённый ПК</h1></div>
       <div class="remote-device-controls"><select id="remote-device" aria-label="Компьютер"></select><button class="btn" id="remote-connect">Подключиться</button></div></header>
-    <div class="remote-meta"><span id="remote-status">Готов к подключению</span><div id="remote-monitors" class="remote-monitors"></div><span class="remote-help">Кликни по экрану и печатай · колесо — прокрутка · правый клик поддерживается</span></div>
+    <div class="remote-meta"><span id="remote-status">Готов к подключению</span><div id="remote-monitors" class="remote-monitors"></div></div>
     <div class="remote-stage" id="remote-stage"><canvas id="remote-canvas" tabindex="0"></canvas><div id="remote-stage-hint" class="remote-stage-hint"><b>${device ? 'Экран появится здесь' : 'Другой компьютер пока не найден'}</b><span>${device ? 'Noda на втором устройстве должна быть открыта и находиться в сети.' : 'Установи Noda на ПК и войди под тем же аккаунтом.'}</span></div></div>
   </div>`;
   const select = document.getElementById('remote-device');
@@ -1355,6 +1388,8 @@ const sync = {
   blockers: [], blockersChecked: false, blockersBusy: false, closeResult: null,
   remote: {}, showAll: false,
   lastRequest: null, networkRetries: 0,
+  authority: (() => { try { return JSON.parse(localStorage.getItem('noda-sync-authority') || 'null'); } catch { return null; } })(),
+  authorityRequested: false,
 };
 function fmtB(n) {
   if (!n) return '0 Б';
@@ -1443,6 +1478,30 @@ function setTransferTreeFromStatus(event) {
   };
 }
 
+function updateSyncAuthority(serverState) {
+  const lastPush = serverState?.lastPush;
+  if (!lastPush?.at) return;
+  sync.authority = lastPush;
+  try { localStorage.setItem('noda-sync-authority', JSON.stringify(lastPush)); } catch {}
+  renderSyncAuthority();
+}
+
+function renderSyncAuthority() {
+  const box = document.getElementById('sync-authority');
+  if (!box) return;
+  const authority = sync.authority;
+  if (!authority?.at) {
+    box.innerHTML = `<span>Актуальная версия</span><b>ещё не определена</b>`;
+    box.className = 'sync-authority unknown';
+    return;
+  }
+  const role = authority.role === 'laptop' ? 'Ноутбук' : authority.role === 'pc' ? 'ПК' : (authority.device || 'Устройство');
+  let when = '';
+  try { when = new Date(authority.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch {}
+  box.innerHTML = `<span>Актуальная версия</span><b>${esc(role)}</b><time>${esc(when)}</time>`;
+  box.className = `sync-authority ${authority.errors ? 'bad' : 'ok'}`;
+}
+
 function updateTransferTreeItem(event, state) {
   const tree = sync.transferTree;
   if (!tree) return;
@@ -1476,12 +1535,7 @@ function renderTransferTree() {
   if (!box) return;
   const tree = sync.transferTree;
   if (!tree) {
-    const defaults = [
-      ['projects', 'Проекты'], ['claude', 'Память Claude Code'], ['codex-memory', 'Память Codex'],
-      ['codex-sessions', 'Активные сессии Codex'], ['codex-archive', 'Архив Codex'], ['codex-config', 'Настройки Codex'],
-    ];
-    box.innerHTML = `<div class="sync-tree-caption"><b>Состав передачи</b><span>появится после проверки</span></div>
-      <div class="sync-proof-tree idle">${defaults.map(([, label]) => `<div class="sync-scope-placeholder"><i>·</i><span>${esc(label)}</span><small>ждёт проверки</small></div>`).join('')}</div>`;
+    box.innerHTML = `<div class="sync-tree-caption"><b>Проекты</b><span>читаю папки…</span></div>`;
     return;
   }
   const proofByScope = new Map((tree.proof || []).map((row) => [row.id, row]));
@@ -1497,11 +1551,11 @@ function renderTransferTree() {
     const projectsHtml = projects.map((project) => {
       const projectItems = tree.items.filter((item) => item.scopeId === scope.id && item.projectKey === project.name);
       const projectPlanned = Number(project.files || 0);
-      const projectState = syncTreeState(projectItems, projectPlanned, null);
+      const projectState = tree.localOnly ? { cls: 'local', icon: '○', label: 'на этом устройстве' } : syncTreeState(projectItems, projectPlanned, null);
       const folders = project.folders?.length ? project.folders : [{ name: '(корень)', inventoryFiles: project.inventoryFiles || 0, files: projectPlanned }];
       const folderHtml = folders.map((folder) => {
         const folderItems = projectItems.filter((item) => (item.folder || '(корень)') === folder.name);
-        const folderState = syncTreeState(folderItems, Number(folder.files || 0), null);
+        const folderState = tree.localOnly ? { cls: 'local', icon: '·', label: folder.subfolders ? `${folder.subfolders} папок внутри` : 'папка' } : syncTreeState(folderItems, Number(folder.files || 0), null);
         const visible = folderItems.slice(0, 120);
         const filesHtml = visible.map((item) => {
           const itemState = item.state === 'verified' ? ['ok', '✓', 'подтверждён']
@@ -1511,12 +1565,12 @@ function renderTransferTree() {
           return `<div class="sync-proof-file ${itemState[0]}"><i>${itemState[1]}</i><span title="${esc(item.path || item.file)}">${esc(item.path || item.file)}</span><small>${item.snapshot ? `снимок ${fmtB(item.snapshotBytes || item.bytes)}` : itemState[2]}</small></div>`;
         }).join('');
         return `<details class="sync-proof-folder" ${folderItems.length && projectPlanned < 20 ? 'open' : ''}>
-          <summary><i class="${folderState.cls}">${folderState.icon}</i><span>${esc(folder.name)}</span><small>${Number(folder.inventoryFiles || folder.files || 0)} файлов · ${folderState.label}</small></summary>
+          <summary><i class="${folderState.cls}">${folderState.icon}</i><span>${esc(folder.name)}</span><small>${tree.localOnly ? folderState.label : `${Number(folder.inventoryFiles || folder.files || 0)} файлов · ${folderState.label}`}</small></summary>
           ${filesHtml ? `<div class="sync-proof-files">${filesHtml}${folderItems.length > visible.length ? `<div class="sync-proof-more">ещё ${folderItems.length - visible.length} файлов</div>` : ''}</div>` : ''}
         </details>`;
       }).join('');
       return `<details class="sync-proof-project" ${projectPlanned > 0 && projects.length < 14 ? 'open' : ''}>
-        <summary><i class="${projectState.cls}">${projectState.icon}</i><span>${esc(project.label || project.name)}</span><small>${Number(project.inventoryFiles || 0)} файлов · ${projectState.label}</small></summary>
+        <summary><i class="${projectState.cls}">${projectState.icon}</i><span>${esc(project.label || project.name)}</span><small>${tree.localOnly ? `${folders.length} папок` : `${Number(project.inventoryFiles || 0)} файлов · ${projectState.label}`}</small></summary>
         <div class="sync-proof-folders">${folderHtml}</div>
       </details>`;
     }).join('');
@@ -1531,7 +1585,7 @@ function renderTransferTree() {
     : tree.direction === 'push'
       ? `<div class="sync-session-proof"><i>✓</i><span><b>Codex можно не закрывать</b><small>Активные JSONL передаются фиксированным снимком и проверяются на сервере.</small></span></div>`
       : '';
-  box.innerHTML = `<div class="sync-tree-caption"><b>Состав передачи</b><span>${totalInventory} файлов в проверенной иерархии</span></div>
+  box.innerHTML = `<div class="sync-tree-caption"><b>${tree.localOnly ? 'Проекты на этом устройстве' : 'Состав передачи'}</b><span>${tree.localOnly ? `${tree.projects.length} проектов` : `${totalInventory} файлов в проверенной иерархии`}</span></div>
     <div class="sync-proof-tree">${scopeHtml}</div>${closedHtml}`;
 }
 function wireSyncEvents() {
@@ -1539,6 +1593,11 @@ function wireSyncEvents() {
   window.arra.onRemoteSyncEvent((message) => handleRemoteSyncEvent(message));
   window.arra.onSyncEvent((o) => {
     if (!o || !o.type) return;
+    if (o.type === 'authority') {
+      updateSyncAuthority(o.serverState);
+      sync.busy = false;
+      return;
+    }
     if (o.type === 'phase') {
       syncLog(o.msg || 'Подготовка переноса');
       sync.busy = true; sync.phase = o.msg || 'Подготовка…'; sync.detail = o.detail || '';
@@ -1554,6 +1613,7 @@ function wireSyncEvents() {
     else if (o.type === 'status') {
       syncLog(`Проверка завершена: ${o.localFiles || 0} здесь, ${o.remoteFiles || 0} на сервере, ${o.upload || 0} отправить, ${o.download || 0} забрать`);
       sync.busy = false; sync.info = o; sync.projects = o.projects || [];
+      updateSyncAuthority(o.serverState);
       setTransferTreeFromStatus(o);
       sync.lastCheckSeconds = Number(o.elapsed) || Math.round(syncElapsed());
       if (!sync.lastRequest) sync.step = 'idle';
@@ -1646,6 +1706,7 @@ function wireSyncEvents() {
       sync.phase = `${verb}: ${fileCount(o.transferred)}`;
       sync.detail = `${fmtB(o.bytes || 0)} · проверено ${o.verified ?? o.transferred ?? 0}${o.errors ? ` · ошибок ${o.errors}` : ''}${o.skipped ? ` · пропущено ${o.skipped}` : ''}`;
       sync.lastDone = new Date().toISOString(); localStorage.setItem('arra-sync-last', sync.lastDone);
+      updateSyncAuthority(o.serverState);
       sync.step = o.errors ? 'error' : 'done'; sync.stepError = o.errors ? `${o.errors} ошибок` : '';
       sync.current = null; sync.speed = 0; sync.eta = null;
       sync.verify = null;
@@ -2141,6 +2202,7 @@ async function renderSyncV2() {
     <div class="syncwrap sync-v3">
       <header class="sync-v3-head">
         <div class="synctitle">Передача</div>
+        <div id="sync-authority" class="sync-authority"></div>
       </header>
 
       <div class="sync-workbench">
@@ -2195,7 +2257,19 @@ async function renderSyncV2() {
       toast('Передача', result?.error || 'Не удалось изменить паузу', 'warn');
     }
   };
+  if (!sync.transferTree) {
+    window.arra.syncLocalInventory().then((inventory) => {
+      if (sync.transferTree) return;
+      sync.transferTree = { ...inventory, direction: 'local', itemMap: new Map(), proof: null };
+      renderTransferTree();
+    }).catch((error) => reportError('sync.local-inventory', error));
+  }
+  if (!sync.authority?.at && !sync.authorityRequested && !sync.busy) {
+    sync.authorityRequested = true;
+    window.arra.syncRun('authority', null, sync.role).catch((error) => reportError('sync.authority', error));
+  }
   renderSyncV2Body(); renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney(); renderTransferTree();
+  renderSyncAuthority();
 }
 
 function syncDeviceGlyph(kind) {
@@ -2223,6 +2297,7 @@ function renderSyncV2Body() {
   const metrics = document.getElementById('sync-metrics');
   if (metrics) metrics.innerHTML = hasCheck && i.conflicts ? `<span class="warn"><b>${fmt(i.conflicts)}</b> конфликтов</span>` : '';
   renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney(); renderTransferTree();
+  renderSyncAuthority();
 }
 
 // Иконка + цвет по типу файла (своя ФОРМА для pdf, md, фото, кода, архива и т.д. — как в VS Code)

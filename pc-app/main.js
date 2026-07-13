@@ -116,6 +116,48 @@ function defaultCodeRoot() {
   return app.getPath('home');
 }
 function codeRoot() { return settings.codeRoot || defaultCodeRoot(); }
+function localSyncInventory() {
+  const root = codeRoot();
+  const ignored = new Set(['node_modules', '.git', '.idea', '.vscode', 'dist', 'build', '.expo', '__pycache__']);
+  const containers = new Set(['Work', 'Tima', 'MAMA', 'Tools']);
+  const readDirs = (dir) => {
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !ignored.has(entry.name) && !entry.name.startsWith('.'))
+        .sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    } catch { return []; }
+  };
+  const directFiles = (dir) => {
+    try { return fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile()).length; }
+    catch { return 0; }
+  };
+  const candidates = [];
+  for (const entry of readDirs(root)) {
+    const full = path.join(root, entry.name);
+    if (containers.has(entry.name)) {
+      for (const child of readDirs(full)) candidates.push({ key: `${entry.name}/${child.name}`, label: child.name, full: path.join(full, child.name), group: entry.name });
+    } else {
+      candidates.push({ key: entry.name, label: entry.name, full, group: '' });
+    }
+  }
+  const projects = candidates.map((project) => {
+    const folders = readDirs(project.full).slice(0, 18).map((folder) => {
+      const full = path.join(project.full, folder.name);
+      return { name: folder.name, inventoryFiles: directFiles(full), subfolders: readDirs(full).length, files: 0 };
+    });
+    return {
+      name: project.key, label: project.label, group: project.group, scope: 'projects', scopeId: 'projects',
+      inventoryFiles: directFiles(project.full), files: 0, folders,
+    };
+  });
+  return {
+    root,
+    scopes: [{ id: 'projects', label: 'Проекты', inventoryFiles: projects.length, files: 0 }],
+    projects,
+    items: [],
+    localOnly: true,
+  };
+}
 let termCwd = null; // текущая папка сессии терминала
 function getTermCwd() {
   if (!termCwd || !fs.existsSync(termCwd)) termCwd = codeRoot();
@@ -601,6 +643,10 @@ let screenTimer = null;
 let screenCfg = { displayId: null, quality: 55, fps: 15, width: 1280 };
 let screenBusy = false;
 let lastCaptureMs = 0;
+let captureEngine = 'electron';
+let captureFailures = 0;
+let captureFrames = 0;
+let captureLogAt = 0;
 
 function listScreens() {
   const prim = screen.getPrimaryDisplay().id;
@@ -615,6 +661,155 @@ function listScreens() {
 function curDisplay() {
   return screen.getAllDisplays().find((d) => String(d.id) === String(screenCfg.displayId)) || screen.getPrimaryDisplay();
 }
+function nativeImageIsBlack(image) {
+  try {
+    if (!image || image.isEmpty()) return true;
+    const size = image.getSize();
+    const bitmap = image.toBitmap();
+    if (!bitmap?.length || !size.width || !size.height) return true;
+    let brightest = 0;
+    let total = 0;
+    let samples = 0;
+    const xs = 12;
+    const ys = 8;
+    for (let yi = 0; yi < ys; yi += 1) {
+      const y = Math.min(size.height - 1, Math.round((yi + 0.5) * size.height / ys));
+      for (let xi = 0; xi < xs; xi += 1) {
+        const x = Math.min(size.width - 1, Math.round((xi + 0.5) * size.width / xs));
+        const offset = (y * size.width + x) * 4;
+        const value = Math.max(bitmap[offset] || 0, bitmap[offset + 1] || 0, bitmap[offset + 2] || 0);
+        brightest = Math.max(brightest, value);
+        total += value;
+        samples += 1;
+      }
+    }
+    return brightest < 18 && total / Math.max(1, samples) < 7;
+  } catch (error) {
+    writeLog('warn', 'remote.capture.black-check', error);
+    return true;
+  }
+}
+
+const CAPTURE_PS = `
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+Add-Type -AssemblyName System.Drawing
+while ($true) {
+  $line = [Console]::In.ReadLine()
+  if ($line -eq $null) { break }
+  if ([string]::IsNullOrWhiteSpace($line)) { continue }
+  $src = $null; $dst = $null; $g1 = $null; $g2 = $null; $ms = $null
+  try {
+    $a = $line.Split(' ')
+    if ($a[0] -ne 'C' -or $a.Length -lt 9) { continue }
+    $rid = $a[1]
+    $x = [int]$a[2]; $y = [int]$a[3]; $sw = [int]$a[4]; $sh = [int]$a[5]
+    $ow = [int]$a[6]; $oh = [int]$a[7]; $quality = [long]$a[8]
+    $src = New-Object System.Drawing.Bitmap($sw, $sh, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+    $g1 = [System.Drawing.Graphics]::FromImage($src)
+    $g1.CopyFromScreen($x, $y, 0, 0, (New-Object System.Drawing.Size($sw, $sh)), [System.Drawing.CopyPixelOperation]::SourceCopy)
+    $dst = New-Object System.Drawing.Bitmap($ow, $oh, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+    $g2 = [System.Drawing.Graphics]::FromImage($dst)
+    $g2.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighSpeed
+    $g2.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::Bilinear
+    $g2.DrawImage($src, 0, 0, $ow, $oh)
+    $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+    $params = New-Object System.Drawing.Imaging.EncoderParameters(1)
+    $params.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, $quality)
+    $ms = New-Object System.IO.MemoryStream
+    $dst.Save($ms, $codec, $params)
+    [Console]::Out.WriteLine('F ' + $rid + ' ' + $ow + ' ' + $oh + ' ' + [Convert]::ToBase64String($ms.ToArray()))
+    [Console]::Out.Flush()
+  } catch {
+    $msg = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($_.Exception.Message))
+    [Console]::Out.WriteLine('E ' + $rid + ' ' + $msg)
+    [Console]::Out.Flush()
+  } finally {
+    if ($g2) { $g2.Dispose() }; if ($g1) { $g1.Dispose() }
+    if ($dst) { $dst.Dispose() }; if ($src) { $src.Dispose() }; if ($ms) { $ms.Dispose() }
+  }
+}
+`;
+let capturePs = null;
+let capturePath = null;
+let captureStdout = '';
+let capturePending = null;
+let captureRequestId = 0;
+function rejectCapturePending(error) {
+  if (!capturePending) return;
+  clearTimeout(capturePending.timer);
+  const pending = capturePending;
+  capturePending = null;
+  pending.reject(error instanceof Error ? error : new Error(String(error || 'Захват экрана остановлен')));
+}
+function handleCaptureOutput(chunk) {
+  captureStdout += String(chunk || '');
+  let newline;
+  while ((newline = captureStdout.indexOf('\n')) >= 0) {
+    const line = captureStdout.slice(0, newline).trim();
+    captureStdout = captureStdout.slice(newline + 1);
+    if (!line || !capturePending) continue;
+    const parts = line.split(' ');
+    if (parts[1] !== capturePending.id) continue;
+    clearTimeout(capturePending.timer);
+    const pending = capturePending;
+    capturePending = null;
+    if (parts[0] === 'F' && parts[4]) pending.resolve({ data: parts[4], w: Number(parts[2]), h: Number(parts[3]) });
+    else {
+      let message = 'Системный захват экрана завершился ошибкой';
+      try { message = Buffer.from(parts[2] || '', 'base64').toString('utf8') || message; } catch {}
+      pending.reject(new Error(message));
+    }
+  }
+}
+function ensureCapturePs() {
+  if (capturePs) return true;
+  try {
+    if (!capturePath) {
+      capturePath = path.join(os.tmpdir(), 'noda_capture.ps1');
+      fs.writeFileSync(capturePath, CAPTURE_PS, 'utf8');
+    }
+    capturePs = spawn('powershell.exe', ['-NoProfile', '-NoLogo', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', capturePath], {
+      windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    capturePs.stdout.setEncoding('utf8');
+    capturePs.stdout.on('data', handleCaptureOutput);
+    capturePs.stderr.on('data', (data) => writeLog('warn', 'remote.capture.windows-stderr', String(data || '').trim()));
+    capturePs.on('error', (error) => { writeLog('error', 'remote.capture.windows-process', error); capturePs = null; rejectCapturePending(error); });
+    capturePs.on('exit', (code) => { capturePs = null; rejectCapturePending(new Error(`Системный захват остановлен (${code ?? '?'})`)); });
+    writeLog('info', 'remote.capture.windows-start', { script: capturePath });
+    return true;
+  } catch (error) {
+    writeLog('error', 'remote.capture.windows-start', error);
+    capturePs = null;
+    return false;
+  }
+}
+function captureWindowsFrame(display, w, h) {
+  return new Promise((resolve, reject) => {
+    if (capturePending) return reject(new Error('Предыдущий системный кадр ещё не готов'));
+    if (!ensureCapturePs() || !capturePs?.stdin?.writable) return reject(new Error('Системный захват недоступен'));
+    const id = String(++captureRequestId);
+    const bounds = display.bounds;
+    const timer = setTimeout(() => {
+      if (capturePending?.id === id) capturePending = null;
+      reject(new Error('Системный захват не вернул кадр за 4 секунды'));
+    }, 4000);
+    capturePending = { id, resolve, reject, timer };
+    try {
+      capturePs.stdin.write(`C ${id} ${Math.round(bounds.x)} ${Math.round(bounds.y)} ${Math.max(1, Math.round(bounds.width))} ${Math.max(1, Math.round(bounds.height))} ${w} ${h} ${Math.max(25, Math.min(85, Number(screenCfg.quality) || 55))}\n`);
+    } catch (error) {
+      clearTimeout(timer); capturePending = null; reject(error);
+    }
+  });
+}
+function sendScreenHealth(extra = {}) {
+  try {
+    if (ws?.readyState === 1) ws.send(JSON.stringify({
+      to: 'client', type: 'screen_health', engine: captureEngine, frames: captureFrames,
+      failures: captureFailures, lastFrameAt: lastCaptureMs, ...extra,
+    }));
+  } catch {}
+}
 async function captureFrame() {
   // Не копим очередь: если предыдущий кадр ещё захватывается или сокет занят — пропускаем тик.
   if (screenBusy || !ws || ws.readyState !== 1 || ws.bufferedAmount > 600000) return;
@@ -623,14 +818,43 @@ async function captureFrame() {
     const disp = curDisplay();
     const w = Math.min(screenCfg.width, disp.size.width);
     const h = Math.round((w * disp.size.height) / disp.size.width);
-    const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: w, height: h } });
-    let src = sources.find((s) => String(s.display_id) === String(disp.id)) || sources[0];
-    if (src && src.thumbnail && ws && ws.readyState === 1) {
-      const b64 = src.thumbnail.toJPEG(screenCfg.quality).toString('base64');
-      ws.send(JSON.stringify({ to: 'client', type: 'screen_frame', data: b64, w, h }));
-      lastCaptureMs = Date.now();
+    let frame = null;
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: w, height: h }, fetchWindowIcons: false });
+      const src = sources.find((source) => String(source.display_id) === String(disp.id)) || sources[0];
+      if (src?.thumbnail && !nativeImageIsBlack(src.thumbnail)) {
+        frame = { data: src.thumbnail.toJPEG(screenCfg.quality).toString('base64'), w, h };
+        captureEngine = 'electron';
+      } else {
+        captureFailures += 1;
+        if (captureFailures <= 3 || Date.now() - captureLogAt > 10000) {
+          captureLogAt = Date.now();
+          writeLog('warn', 'remote.capture.black-frame', { displayId: disp.id, sources: sources.length, failures: captureFailures });
+        }
+      }
+    } catch (error) {
+      captureFailures += 1;
+      writeLog('error', 'remote.capture.electron', { displayId: disp.id, error });
     }
-  } catch {} finally { screenBusy = false; }
+    if (!frame && process.platform === 'win32') {
+      frame = await captureWindowsFrame(disp, w, h);
+      captureEngine = 'windows';
+    }
+    if (frame?.data && ws?.readyState === 1) {
+      ws.send(JSON.stringify({ to: 'client', type: 'screen_frame', data: frame.data, w: frame.w, h: frame.h, engine: captureEngine }));
+      lastCaptureMs = Date.now();
+      captureFrames += 1;
+      if (captureFrames === 1 || Date.now() - captureLogAt > 10000) {
+        captureLogAt = Date.now();
+        writeLog('info', 'remote.capture.frame', { displayId: disp.id, engine: captureEngine, bytes: Math.round(frame.data.length * 0.75), frames: captureFrames });
+        sendScreenHealth();
+      }
+    }
+  } catch (error) {
+    captureFailures += 1;
+    writeLog('error', 'remote.capture.frame', { engine: captureEngine, error });
+    sendScreenHealth({ error: error.message });
+  } finally { screenBusy = false; }
 }
 function scheduleCapture() {
   // Адаптивный цикл: запускаем следующий захват сразу после предыдущего, но не чаще fps.
@@ -644,6 +868,9 @@ function startScreen(cfg) {
   stopScreen();
   screenCfg = { ...screenCfg, ...(cfg || {}) };
   if (!screenCfg.displayId) screenCfg.displayId = String(screen.getPrimaryDisplay().id);
+  captureFailures = 0; captureFrames = 0; lastCaptureMs = 0; captureEngine = 'electron';
+  writeLog('info', 'remote.capture.start', { ...screenCfg, displayId: screenCfg.displayId });
+  sendScreenHealth({ starting: true });
   screenTimer = setTimeout(scheduleCapture, 0);
 }
 // Мгновенная смена монитора без перезапуска потока — следующий кадр уже с нового экрана.
@@ -651,7 +878,10 @@ function switchScreen(displayId) {
   if (displayId) screenCfg.displayId = String(displayId);
   if (!screenTimer) startScreen({});
 }
-function stopScreen() { if (screenTimer) { clearTimeout(screenTimer); screenTimer = null; } }
+function stopScreen() {
+  if (screenTimer) { clearTimeout(screenTimer); screenTimer = null; }
+  writeLog('info', 'remote.capture.stop', { frames: captureFrames, failures: captureFailures, engine: captureEngine });
+}
 
 // Инъекция мыши/клавиатуры через постоянный PowerShell со своим циклом чтения stdin.
 // ВАЖНО: раньше процесс запускался как `powershell -Command -`, который БУФЕРИЗИРУЕТ весь
@@ -799,6 +1029,7 @@ function handleRelay(msg, send) {
       break;
     case 'screens':
     case 'screen_frame':
+    case 'screen_health':
     case 'pc_offline':
       winSend('remote-screen-event', msg);
       break;
@@ -1523,6 +1754,7 @@ function runSyncProc(mode, only, role, remoteEmit = null) {
   return tryExe('python', 'py');
 }
 ipcMain.handle('sync-run', (_e, { mode, only, role } = {}) => { runSyncProc(mode || 'status', only || null, role || null); return true; });
+ipcMain.handle('sync-local-inventory', () => localSyncInventory());
 ipcMain.handle('sync-pause', () => {
   if (!syncProc?.stdin?.writable) return { ok: false, error: 'Передача сейчас не выполняется' };
   writeLog('info', 'sync.pause', { childPid: syncProc.pid });
