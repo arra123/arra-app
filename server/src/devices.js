@@ -16,9 +16,10 @@ function stamp(row) {
 }
 
 /**
- * В интерфейсе показываем физические места, а не исторические токены входа.
- * Для владельца Noda есть два рабочих места: ноутбук и ПК. Из дублей одного
- * места выбираем живой сокет, иначе запись, которую видели последней.
+ * В интерфейсе показываем физические устройства, а не исторические токены входа.
+ * device_key — единственный надёжный идентификатор конкретной машины. Роль
+ * (ноутбук/ПК) нужна только для подписи и иконки: две разные машины нельзя
+ * склеивать лишь потому, что обе временно получили одинаковую роль.
  */
 export function compactDeviceRows(rows, onlineTokenIds = []) {
   const online = new Set((onlineTokenIds || []).map(String));
@@ -27,7 +28,10 @@ export function compactDeviceRows(rows, onlineTokenIds = []) {
   for (const source of rows || []) {
     const role = normalizeDeviceRole(source.role, source.name);
     const normalizedName = String(source.name || 'устройство').trim().toLowerCase().replace(/\s+/g, ' ');
-    const key = role ? `slot:${role}` : (source.device_key ? `key:${source.device_key}` : `name:${normalizedName}`);
+    const hostname = String(source.hostname || '').trim().toLowerCase();
+    const key = source.device_key
+      ? `key:${source.device_key}`
+      : (hostname ? `host:${hostname}` : (role ? `legacy-slot:${role}` : `name:${normalizedName}`));
     const item = { ...source, role, online: online.has(String(source.id)) };
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(item);

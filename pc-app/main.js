@@ -218,7 +218,8 @@ function automaticDeviceName(profile = detectDeviceProfile()) {
 
 function resolvedDeviceName(requested, profile = detectDeviceProfile()) {
   const value = String(requested || settings.deviceName || '').trim();
-  if (!value || /^(мой\s*(?:пк|компьютер)|компьютер|ноутбук|pc)$/i.test(value)) return automaticDeviceName(profile);
+  const legacyAutomatic = /^(?:(?:мой\s*)?(?:пк|компьютер)|ноутбук|pc)(?:\s*[·-]\s*.+)?$/i;
+  if (!value || legacyAutomatic.test(value)) return automaticDeviceName(profile);
   return value.slice(0, 100);
 }
 
@@ -243,6 +244,20 @@ async function registerCurrentDevice(jwt, requestedName) {
     deviceId: settings.deviceId, role: profile.role, hostname: profile.hostname, tokenChanged: !!tokenChanged,
   });
   return dev.pcToken;
+}
+
+async function refreshCurrentDeviceRegistration(requestedName) {
+  let jwt = await getJwt();
+  if (!jwt) return null;
+  try {
+    return await registerCurrentDevice(jwt, requestedName);
+  } catch (firstError) {
+    if (!settings.login || !settings.password) throw firstError;
+    settings.jwt = null;
+    jwt = await getJwt();
+    if (!jwt) throw firstError;
+    return registerCurrentDevice(jwt, requestedName);
+  }
 }
 
 // Запустить процесс и стримить вывод через send()
@@ -728,24 +743,43 @@ function handleRelay(msg, send) {
       markPhonePresence();
       break;
     case 'sync_remote_push':
-      send({ type: 'sync_remote_ack', reqId: msg.reqId, message: 'Выгрузка запущена' });
-      runSyncProc('push', null, null, (event) => send({ type: 'sync_remote_event', reqId: msg.reqId, event }));
+      startRemoteSync('push', msg, send, 'Отправка запущена');
       break;
     case 'sync_remote_pull':
-      send({ type: 'sync_remote_ack', reqId: msg.reqId, message: 'Получение с сервера запущено' });
-      runSyncProc('pull', null, null, (event) => send({ type: 'sync_remote_event', reqId: msg.reqId, event }));
+      startRemoteSync('pull', msg, send, 'Получение запущено');
       break;
     case 'sync_remote_status':
-      runSyncProc('status', null, null, (event) => send({ type: 'sync_remote_event', reqId: msg.reqId, event }));
+      startRemoteSync('status', msg, send, 'Сканирование запущено');
+      break;
+    case 'sync_remote_snapshot':
+      send({ type: 'sync_remote_state', reqId: msg.reqId, state: syncStateSnapshot() });
       break;
     case 'sync_remote_blockers':
       listPotentialBlockers().then((items) => send({ type: 'sync_remote_blockers', reqId: msg.reqId, items }));
+      break;
+    case 'sync_remote_close_blockers':
+      closePotentialBlockers(msg.pids).then((result) => send({
+        type: 'sync_remote_blockers_result', reqId: msg.reqId, action: 'close', result,
+      })).catch((error) => {
+        writeLog('error', 'sync.blockers.remote-close', { reqId: msg.reqId, error });
+        send({ type: 'sync_remote_blockers_result', reqId: msg.reqId, action: 'close', result: { ok: false, error: error.message } });
+      });
+      break;
+    case 'sync_remote_force_close_blockers':
+      forceClosePotentialBlockers(msg.pids).then((result) => send({
+        type: 'sync_remote_blockers_result', reqId: msg.reqId, action: 'force', result,
+      })).catch((error) => {
+        writeLog('error', 'sync.blockers.remote-force', { reqId: msg.reqId, error });
+        send({ type: 'sync_remote_blockers_result', reqId: msg.reqId, action: 'force', result: { ok: false, error: error.message } });
+      });
       break;
     case 'sync_remote_ack':
       winSend('remote-sync-event', msg);
       break;
     case 'sync_remote_event':
     case 'sync_remote_blockers':
+    case 'sync_remote_state':
+    case 'sync_remote_blockers_result':
       winSend('remote-sync-event', msg);
       break;
     case 'screens':
@@ -1101,8 +1135,7 @@ app.whenReady().then(async () => {
     // Старые установки регистрировались новым токеном после каждой потери
     // settings.json. Теперь при каждом старте подтверждаем постоянный ID машины.
     try {
-      const jwt = await getJwt();
-      if (jwt) await registerCurrentDevice(jwt, settings.deviceName);
+      await refreshCurrentDeviceRegistration(settings.deviceName);
     } catch (error) { writeLog('warn', 'device.refresh', error); }
     connectWS();
   }
@@ -1277,6 +1310,62 @@ const SYNC_DIR = process.env.ARRA_SYNC_DIR || (app.isPackaged
   ? path.join(process.resourcesPath, 'app.asar.unpacked', 'sync')
   : path.join(__dirname, 'sync'));
 let syncProc = null;
+let syncRuntime = {
+  busy: false,
+  mode: null,
+  startedAt: null,
+  updatedAt: null,
+  lastEvent: null,
+};
+
+function syncStateSnapshot() {
+  return {
+    ...syncRuntime,
+    busy: !!syncRuntime.busy,
+    pid: syncProc?.pid || null,
+  };
+}
+
+function rememberSyncEvent(mode, event) {
+  const now = new Date().toISOString();
+  const terminal = ['status', 'done', 'error', 'blocked', 'closed'].includes(event?.type);
+  const keepPrevious = event?.type === 'closed'
+    && ['status', 'done', 'error', 'blocked'].includes(syncRuntime.lastEvent?.type);
+  syncRuntime = {
+    ...syncRuntime,
+    mode: mode || syncRuntime.mode,
+    busy: !terminal,
+    updatedAt: now,
+    lastEvent: keepPrevious ? syncRuntime.lastEvent : event,
+  };
+}
+
+function broadcastSyncMessage(message) {
+  try {
+    if (ws?.readyState === 1) ws.send(JSON.stringify({ to: 'client', ...message }));
+  } catch (error) {
+    writeLog('error', 'sync.broadcast', error);
+  }
+}
+
+function broadcastSyncState() {
+  broadcastSyncMessage({ type: 'sync_remote_state', state: syncStateSnapshot() });
+}
+
+function startRemoteSync(mode, msg, send, message) {
+  if (syncProc) {
+    send({ type: 'sync_remote_state', reqId: msg.reqId, state: syncStateSnapshot() });
+    return false;
+  }
+  const directEmit = msg.sourceDeviceId
+    ? (event) => send({ type: 'sync_remote_event', reqId: msg.reqId, event, state: syncStateSnapshot() })
+    : null;
+  const started = runSyncProc(mode, null, null, directEmit);
+  if (started) send({ type: 'sync_remote_ack', reqId: msg.reqId, message, state: syncStateSnapshot() });
+  else send({ type: 'sync_remote_state', reqId: msg.reqId, state: syncStateSnapshot() });
+  return started;
+}
+
 function readEnvFile(file) {
   try {
     const values = {};
@@ -1319,17 +1408,26 @@ function syncConnectionEnv() {
 }
 function runSyncProc(mode, only, role, remoteEmit = null) {
   const emit = (event) => {
+    rememberSyncEvent(mode, event);
     if (event?.type === 'error' || event?.type === 'stderr' || event?.type === 'fileerror') writeLog('error', `sync.${event.type}`, { mode, only, event });
     else if (event?.type === 'retry' || event?.type === 'blocked') writeLog('warn', `sync.${event.type}`, { mode, only, event });
     else if (event?.type === 'done') writeLog(event.errors ? 'warn' : 'info', 'sync.done', { mode, only, event });
     winSend('sync-event', event);
     if (remoteEmit) { try { remoteEmit(event); } catch {} }
+    broadcastSyncMessage({ type: 'sync_remote_event', event, state: syncStateSnapshot() });
   };
   if (syncProc) {
     writeLog('warn', 'sync.already-running', { mode, only });
-    emit({ type: 'error', error: 'На устройстве уже идёт проверка или передача.' });
     return false;
   }
+  syncRuntime = {
+    busy: true,
+    mode,
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    lastEvent: { type: 'phase', msg: mode === 'status' ? 'Запускаю сканирование…' : 'Готовлю передачу…' },
+  };
+  broadcastSyncState();
   const script = path.join(SYNC_DIR, 'arra_sync.py');
   if (!fs.existsSync(script)) {
     writeLog('error', 'sync.module-missing', { script, mode, only });
@@ -1375,7 +1473,12 @@ function runSyncProc(mode, only, role, remoteEmit = null) {
     p.stderr.on('data', (d) => emit({ type: 'stderr', msg: d.toString('utf8').slice(0, 300) }));
     p.on('close', (code, signal) => {
       writeLog(code ? 'error' : 'info', 'sync.closed', { mode, only, code, signal });
-      emit({ type: 'closed', code }); syncProc = null;
+      syncProc = null;
+      if (code && syncRuntime.lastEvent?.type !== 'error') {
+        emit({ type: 'error', error: `Процесс синхронизации завершился с кодом ${code}. Подробности записаны в журнал Noda.` });
+      } else {
+        emit({ type: 'closed', code });
+      }
     });
     p.on('error', (e) => {
       syncProc = null;
@@ -1451,8 +1554,7 @@ async function waitForProcessExit(pids, timeoutMs) {
   return remaining;
 }
 
-ipcMain.handle('sync-blockers', () => listPotentialBlockers());
-ipcMain.handle('sync-close-blockers', async (_e, pids = []) => {
+async function closePotentialBlockers(pids = []) {
   const safePids = normalizeProcessPids(pids);
   if (!safePids.length) return { ok: true, requested: 0, closed: 0, remaining: [] };
   if (process.platform !== 'win32') return { ok: false, error: 'Закрытие сессий поддерживается только в Windows' };
@@ -1484,8 +1586,9 @@ ipcMain.handle('sync-close-blockers', async (_e, pids = []) => {
   if (closeError) result.error = closeError.message;
   writeLog(remaining.length ? 'warn' : 'info', 'sync.blockers.close-result', result);
   return result;
-});
-ipcMain.handle('sync-force-close-blockers', async (_e, pids = []) => {
+}
+
+async function forceClosePotentialBlockers(pids = []) {
   const safePids = normalizeProcessPids(pids);
   if (!safePids.length) return { ok: true, requested: 0, closed: 0, remaining: [] };
   if (process.platform !== 'win32') return { ok: false, error: 'Принудительное закрытие поддерживается только в Windows' };
@@ -1507,7 +1610,11 @@ ipcMain.handle('sync-force-close-blockers', async (_e, pids = []) => {
   else if (remaining.length) result.error = 'Некоторые процессы не завершились даже принудительно';
   writeLog(result.ok ? 'info' : 'error', 'sync.blockers.force-result', result);
   return result;
-});
+}
+
+ipcMain.handle('sync-blockers', () => listPotentialBlockers());
+ipcMain.handle('sync-close-blockers', (_e, pids = []) => closePotentialBlockers(pids));
+ipcMain.handle('sync-force-close-blockers', (_e, pids = []) => forceClosePotentialBlockers(pids));
 ipcMain.handle('remote-sync', async (_e, { deviceId, mode = 'push' } = {}) => {
   if (!deviceId) return { ok: false, error: 'Устройство не выбрано' };
   const jwt = await getJwt();
