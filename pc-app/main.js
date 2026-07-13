@@ -1523,6 +1523,18 @@ function runSyncProc(mode, only, role, remoteEmit = null) {
   return tryExe('python', 'py');
 }
 ipcMain.handle('sync-run', (_e, { mode, only, role } = {}) => { runSyncProc(mode || 'status', only || null, role || null); return true; });
+ipcMain.handle('sync-pause', () => {
+  if (!syncProc?.stdin?.writable) return { ok: false, error: 'Передача сейчас не выполняется' };
+  writeLog('info', 'sync.pause', { childPid: syncProc.pid });
+  syncProc.stdin.write('pause\n');
+  return { ok: true };
+});
+ipcMain.handle('sync-resume', () => {
+  if (!syncProc?.stdin?.writable) return { ok: false, error: 'Передача сейчас не выполняется' };
+  writeLog('info', 'sync.resume', { childPid: syncProc.pid });
+  syncProc.stdin.write('resume\n');
+  return { ok: true };
+});
 ipcMain.handle('sync-cancel', () => {
   if (syncProc) {
     writeLog('warn', 'sync.cancel', { childPid: syncProc.pid });
@@ -1626,7 +1638,7 @@ async function closePotentialBlockers(pids = []) {
   if (closeError) writeLog('error', 'sync.blockers.close-command', { pids: processPids, error: closeError });
   const remainingPids = new Set(remaining.map((item) => item.pid));
   const closed = before.filter((item) => !remainingPids.has(item.pid));
-  const result = { ok: !closeError, requested: safePids.length, closed: closed.length, remaining, needsForce: remaining.length > 0 };
+  const result = { ok: !closeError, requested: safePids.length, closed: closed.length, closedItems: closed, remaining, needsForce: remaining.length > 0 };
   if (closeError) result.error = closeError.message;
   writeLog(remaining.length ? 'warn' : 'info', 'sync.blockers.close-result', result);
   return result;
@@ -1659,7 +1671,7 @@ async function forceClosePotentialBlockers(pids = []) {
   if (forceError) writeLog('error', 'sync.blockers.force-command', { pids: processPids, error: forceError });
   const remainingPids = new Set(remaining.map((item) => item.pid));
   const closed = before.filter((item) => !remainingPids.has(item.pid));
-  const result = { ok: !forceError && !remaining.length, requested: safePids.length, closed: closed.length, remaining };
+  const result = { ok: !forceError && !remaining.length, requested: safePids.length, closed: closed.length, closedItems: closed, remaining };
   if (forceError) result.error = forceError.message;
   else if (remaining.length) result.error = 'Некоторые процессы не завершились даже принудительно';
   writeLog(result.ok ? 'info' : 'error', 'sync.blockers.force-result', result);

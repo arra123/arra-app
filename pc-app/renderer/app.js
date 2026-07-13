@@ -1349,6 +1349,7 @@ const sync = {
   lastDone: localStorage.getItem('arra-sync-last') || '',
   speed: 0, eta: null, lastProgressAt: 0, current: null,
   liveProjects: {}, recentFiles: [], blockedFiles: [], verify: null,
+  transferTree: null, paused: false, pauseRequested: false, closeHistory: [],
   step: 'idle', failedStep: 'scan', stepError: '', errors: [],
   panelTab: localStorage.getItem('noda-sync-panel') || 'tree',
   blockers: [], blockersChecked: false, blockersBusy: false, closeResult: null,
@@ -1385,11 +1386,153 @@ function syncShortPath(value) {
   return parts.length > 4 ? ['…', ...parts.slice(-4)].join(' / ') : parts.join(' / ');
 }
 function syncConnectionState() {
+  if (sync.paused) return { label: 'на паузе', cls: 'warn' };
   if (!sync.busy || !sync.lastProgressAt) return { label: 'ожидание', cls: '' };
   const silent = (Date.now() - sync.lastProgressAt) / 1000;
   if (silent > 30) return { label: `нет ответа ${Math.round(silent)} сек`, cls: 'bad' };
   if (silent > 12) return { label: `пауза ${Math.round(silent)} сек`, cls: 'warn' };
   return { label: 'данные идут', cls: 'ok' };
+}
+
+function syncTreeKey(scopeId, projectKey, file) {
+  return `${scopeId || ''}|${projectKey || ''}|${String(file || '').replace(/\\/g, '/')}`;
+}
+
+function setTransferTreeFromPlan(event) {
+  const scopes = (event.scopes || []).map((scope) => ({ ...scope }));
+  const projects = (event.projects || []).map((project) => ({
+    ...project,
+    folders: (project.folders || []).map((folder) => ({ ...folder })),
+  }));
+  const items = (event.items || []).map((item) => ({ ...item, state: 'queued' }));
+  sync.transferTree = {
+    direction: event.direction,
+    scopes, projects, items,
+    itemMap: new Map(items.map((item) => [syncTreeKey(item.scopeId, item.projectKey, item.file), item])),
+    proof: null,
+  };
+}
+
+function setTransferTreeFromStatus(event) {
+  const scopes = (event.scopes || []).map((scope) => ({
+    ...scope,
+    inventoryFiles: scope.localFiles || 0,
+    targetFiles: scope.remoteFiles || 0,
+    files: (scope.upload || 0) + (scope.download || 0),
+    bytes: 0,
+  }));
+  const projects = (event.projects || []).map((project) => ({
+    ...project,
+    scopeId: project.scope,
+    scopeLabel: (event.scopes || []).find((scope) => scope.id === project.scope)?.label || project.scope,
+    files: (project.upload || 0) + (project.download || 0) + (project.conflicts || 0),
+    inventoryFiles: project.localFiles || 0,
+    targetFiles: project.remoteFiles || 0,
+    folders: (project.folders || []).map((folder) => ({ ...folder, inventoryFiles: folder.files || 0 })),
+  }));
+  const items = projects.flatMap((project) => (project.changes || []).map((change) => ({
+    scopeId: project.scopeId, projectKey: project.name, project: project.label,
+    file: change.path, path: change.path, folder: syncShortPath(change.path).split(' / ')[0] || '(корень)',
+    bytes: change.bytes || 0,
+    state: change.blocked || change.direction === 'conflict' ? 'failed' : 'queued',
+  })));
+  sync.transferTree = {
+    direction: 'status', scopes, projects, items,
+    itemMap: new Map(items.map((item) => [syncTreeKey(item.scopeId, item.projectKey, item.file), item])),
+    proof: null,
+  };
+}
+
+function updateTransferTreeItem(event, state) {
+  const tree = sync.transferTree;
+  if (!tree) return;
+  const key = syncTreeKey(event.scopeId, event.projectKey || event.project, event.file);
+  let item = tree.itemMap.get(key);
+  if (!item) {
+    item = tree.items.find((candidate) => candidate.projectKey === (event.projectKey || event.project) && candidate.file === event.file);
+  }
+  if (!item) return;
+  item.state = state;
+  if (event.snapshot != null) item.snapshot = !!event.snapshot;
+  if (event.snapshotBytes != null) item.snapshotBytes = Number(event.snapshotBytes) || 0;
+}
+
+function syncTreeState(items, planned, proof) {
+  const failed = items.filter((item) => item.state === 'failed').length + Number(proof?.errors || 0);
+  const verified = items.filter((item) => item.state === 'verified').length;
+  const copied = items.filter((item) => item.state === 'done' || item.state === 'verified').length;
+  const active = items.some((item) => item.state === 'copying');
+  if (failed) return { cls: 'bad', icon: '!', label: `${failed} с ошибкой` };
+  if (!planned) return { cls: 'ok', icon: '✓', label: 'актуально' };
+  if (proof && Number(proof.verified || 0) >= planned) return { cls: 'ok', icon: '✓', label: `${planned}/${planned} подтверждено` };
+  if (verified >= planned) return { cls: 'ok', icon: '✓', label: `${verified}/${planned} подтверждено` };
+  if (active) return { cls: 'active', icon: '•', label: `${copied}/${planned}` };
+  if (copied >= planned) return { cls: 'verify', icon: '…', label: 'проверяю' };
+  return { cls: 'queued', icon: '·', label: `${copied}/${planned}` };
+}
+
+function renderTransferTree() {
+  const box = document.getElementById('sync-transfer-tree');
+  if (!box) return;
+  const tree = sync.transferTree;
+  if (!tree) {
+    const defaults = [
+      ['projects', 'Проекты'], ['claude', 'Память Claude Code'], ['codex-memory', 'Память Codex'],
+      ['codex-sessions', 'Активные сессии Codex'], ['codex-archive', 'Архив Codex'], ['codex-config', 'Настройки Codex'],
+    ];
+    box.innerHTML = `<div class="sync-tree-caption"><b>Состав передачи</b><span>появится после проверки</span></div>
+      <div class="sync-proof-tree idle">${defaults.map(([, label]) => `<div class="sync-scope-placeholder"><i>·</i><span>${esc(label)}</span><small>ждёт проверки</small></div>`).join('')}</div>`;
+    return;
+  }
+  const proofByScope = new Map((tree.proof || []).map((row) => [row.id, row]));
+  const totalInventory = tree.scopes.reduce((sum, scope) => sum + Number(scope.inventoryFiles || scope.localFiles || 0), 0);
+  const scopeHtml = tree.scopes.map((scope, scopeIndex) => {
+    const projects = tree.projects.filter((project) => (project.scopeId || project.scope) === scope.id);
+    const scopeItems = tree.items.filter((item) => item.scopeId === scope.id);
+    const planned = Number(scope.files || 0);
+    const proof = proofByScope.get(scope.id);
+    const state = syncTreeState(scopeItems, planned, proof);
+    const inventory = Number(scope.inventoryFiles || scope.localFiles || 0);
+    const open = scope.id === 'projects' || planned > 0;
+    const projectsHtml = projects.map((project) => {
+      const projectItems = tree.items.filter((item) => item.scopeId === scope.id && item.projectKey === project.name);
+      const projectPlanned = Number(project.files || 0);
+      const projectState = syncTreeState(projectItems, projectPlanned, null);
+      const folders = project.folders?.length ? project.folders : [{ name: '(корень)', inventoryFiles: project.inventoryFiles || 0, files: projectPlanned }];
+      const folderHtml = folders.map((folder) => {
+        const folderItems = projectItems.filter((item) => (item.folder || '(корень)') === folder.name);
+        const folderState = syncTreeState(folderItems, Number(folder.files || 0), null);
+        const visible = folderItems.slice(0, 120);
+        const filesHtml = visible.map((item) => {
+          const itemState = item.state === 'verified' ? ['ok', '✓', 'подтверждён']
+            : item.state === 'done' ? ['verify', '…', 'передан']
+            : item.state === 'copying' ? ['active', '•', 'передаётся']
+            : item.state === 'failed' ? ['bad', '!', 'ошибка'] : ['queued', '·', 'в очереди'];
+          return `<div class="sync-proof-file ${itemState[0]}"><i>${itemState[1]}</i><span title="${esc(item.path || item.file)}">${esc(item.path || item.file)}</span><small>${item.snapshot ? `снимок ${fmtB(item.snapshotBytes || item.bytes)}` : itemState[2]}</small></div>`;
+        }).join('');
+        return `<details class="sync-proof-folder" ${folderItems.length && projectPlanned < 20 ? 'open' : ''}>
+          <summary><i class="${folderState.cls}">${folderState.icon}</i><span>${esc(folder.name)}</span><small>${Number(folder.inventoryFiles || folder.files || 0)} файлов · ${folderState.label}</small></summary>
+          ${filesHtml ? `<div class="sync-proof-files">${filesHtml}${folderItems.length > visible.length ? `<div class="sync-proof-more">ещё ${folderItems.length - visible.length} файлов</div>` : ''}</div>` : ''}
+        </details>`;
+      }).join('');
+      return `<details class="sync-proof-project" ${projectPlanned > 0 && projects.length < 14 ? 'open' : ''}>
+        <summary><i class="${projectState.cls}">${projectState.icon}</i><span>${esc(project.label || project.name)}</span><small>${Number(project.inventoryFiles || 0)} файлов · ${projectState.label}</small></summary>
+        <div class="sync-proof-folders">${folderHtml}</div>
+      </details>`;
+    }).join('');
+    const directLabel = projects.length ? `${projects.length} проектов` : `${inventory} файлов`;
+    return `<details class="sync-proof-scope" ${open ? 'open' : ''}>
+      <summary><i class="${state.cls}">${state.icon}</i><span>${esc(scope.label)}</span><small>${directLabel} · ${state.label}</small></summary>
+      <div class="sync-proof-projects">${projectsHtml || `<div class="sync-proof-empty">${inventory ? `${inventory} файлов проверено` : 'Нет файлов'}</div>`}</div>
+    </details>`;
+  }).join('');
+  const closedHtml = sync.closeHistory.length
+    ? `<div class="sync-session-proof"><i>✓</i><span><b>Закрыто перед заменой файлов</b><small>${esc(sync.closeHistory.map((item) => item.title || item.name).filter(Boolean).join(', '))}</small></span></div>`
+    : tree.direction === 'push'
+      ? `<div class="sync-session-proof"><i>✓</i><span><b>Codex можно не закрывать</b><small>Активные JSONL передаются фиксированным снимком и проверяются на сервере.</small></span></div>`
+      : '';
+  box.innerHTML = `<div class="sync-tree-caption"><b>Состав передачи</b><span>${totalInventory} файлов в проверенной иерархии</span></div>
+    <div class="sync-proof-tree">${scopeHtml}</div>${closedHtml}`;
 }
 function wireSyncEvents() {
   if (sync.wired) return; sync.wired = true;
@@ -1400,7 +1543,7 @@ function wireSyncEvents() {
       syncLog(o.msg || 'Подготовка переноса');
       sync.busy = true; sync.phase = o.msg || 'Подготовка…'; sync.detail = o.detail || '';
       sync.step = 'scan'; sync.stepError = '';
-      sync.indeterminate = true; updateSyncStage();
+      sync.indeterminate = true; sync.paused = false; sync.pauseRequested = false; updateSyncStage();
     } else if (o.type === 'scan') {
       sync.busy = true; sync.indeterminate = true;
       sync.step = 'scan';
@@ -1411,11 +1554,12 @@ function wireSyncEvents() {
     else if (o.type === 'status') {
       syncLog(`Проверка завершена: ${o.localFiles || 0} здесь, ${o.remoteFiles || 0} на сервере, ${o.upload || 0} отправить, ${o.download || 0} забрать`);
       sync.busy = false; sync.info = o; sync.projects = o.projects || [];
+      setTransferTreeFromStatus(o);
       sync.lastCheckSeconds = Number(o.elapsed) || Math.round(syncElapsed());
       if (!sync.lastRequest) sync.step = 'idle';
       sync.phase = (o.upload || o.download || o.conflicts) ? 'Состояние устройств проверено' : 'Это устройство соответствует серверу';
       sync.detail = `${o.localFiles || 0} файлов здесь · ${o.remoteFiles || 0} файлов на сервере · проверка ${fmtDuration(o.elapsed)}`;
-      sync.pct = 0; sync.indeterminate = false; renderSyncViewBody(); updateSyncStage();
+      sync.pct = 0; sync.indeterminate = false; renderSyncViewBody(); updateSyncStage(); renderTransferTree();
     } else if (o.type === 'plan') {
       syncLog(`${o.direction === 'push' ? 'Отправка на сервер' : 'Получение с сервера'}: ${o.files || 0} файлов, ${fmtB(o.bytes || 0)}`);
       sync.step = 'files'; sync.stepError = '';
@@ -1423,8 +1567,9 @@ function wireSyncEvents() {
       sync.detail = `${o.files || 0} файлов · ${fmtB(o.bytes || 0)}${o.only ? ' · ' + o.only : ''}`;
       sync.indeterminate = !(o.files > 0);
       sync.speed = 0; sync.eta = null; sync.current = null; sync.recentFiles = []; sync.blockedFiles = []; sync.verify = null;
+      sync.paused = false; sync.pauseRequested = false; setTransferTreeFromPlan(o);
       sync.liveProjects = Object.fromEntries((o.projects || []).map((p) => [p.name, { ...p, done: 0, doneBytes: 0 }]));
-      updateSyncStage(); updateSyncLive();
+      updateSyncStage(); updateSyncLive(); renderTransferTree();
     } else if (o.type === 'preflight') {
       sync.step = 'files';
       sync.phase = 'Проверяю, не заняты ли файлы';
@@ -1447,6 +1592,7 @@ function wireSyncEvents() {
       sync.detail = `${o.done || 0}/${o.total || 0} · ${fmtB(o.bytes || 0)} из ${fmtB(o.totalBytes || 0)} · ${fmtB(o.speed || 0)}/с${eta ? ` · осталось ~${eta}` : ''}${o.file ? ` · ${o.file}` : ''}`;
       sync.pct = pct; sync.indeterminate = false; sync.speed = Number(o.speed) || 0; sync.eta = o.eta;
       sync.lastProgressAt = Date.now(); sync.current = o;
+      updateTransferTreeItem(o, o.state === 'failed' ? 'failed' : (o.state === 'done' ? 'done' : 'copying'));
       const projectKey = o.projectKey || o.project;
       if (projectKey) sync.liveProjects[projectKey] = {
         ...(sync.liveProjects[projectKey] || { name: projectKey, label: o.project }),
@@ -1457,7 +1603,7 @@ function wireSyncEvents() {
         sync.recentFiles.unshift({ file: o.file, project: o.project, direction: o.direction, ok: o.state === 'done', bytes: o.fileTotal || 0 });
         sync.recentFiles = sync.recentFiles.slice(0, 8);
       }
-      setSyncProgress(pct, sync.detail); updateSyncStage(); updateSyncLive();
+      setSyncProgress(pct, sync.detail); updateSyncStage(); updateSyncLive(); renderTransferTree();
     } else if (o.type === 'retry') {
       sync.step = 'transfer';
       sync.lastProgressAt = Date.now();
@@ -1479,7 +1625,16 @@ function wireSyncEvents() {
       sync.detail = `${o.verified || 0} подтверждено из ${o.total || 0}${o.errors ? ` · ошибок ${o.errors}` : ''} · ${syncShortPath(o.file)}`;
       sync.pct = o.total ? Math.round((o.done || 0) / o.total * 100) : 100;
       sync.indeterminate = false; sync.lastProgressAt = Date.now();
-      setSyncProgress(sync.pct, sync.detail); updateSyncStage(); updateSyncLive();
+      updateTransferTreeItem(o, o.ok === false ? 'failed' : 'verified');
+      setSyncProgress(sync.pct, sync.detail); updateSyncStage(); updateSyncLive(); renderTransferTree();
+    } else if (o.type === 'paused') {
+      sync.paused = true; sync.pauseRequested = false; sync.speed = 0;
+      sync.phase = 'Передача на паузе'; sync.detail = 'Соединение сохранено. Нажми «Продолжить», чтобы продолжить с того же места.';
+      updateSyncStage(); renderTransferTree();
+    } else if (o.type === 'resumed') {
+      sync.paused = false; sync.pauseRequested = false;
+      sync.phase = 'Передача продолжена'; sync.detail = 'Продолжаю с того же файла'; sync.lastProgressAt = Date.now();
+      updateSyncStage(); renderTransferTree();
     } else if (o.type === 'fileerror') {
       syncLog(`⚠ ${o.file}: ${o.error}`);
       sync.errors.push({ file: o.file || 'Файл', error: o.error || 'Ошибка' });
@@ -1494,8 +1649,10 @@ function wireSyncEvents() {
       sync.step = o.errors ? 'error' : 'done'; sync.stepError = o.errors ? `${o.errors} ошибок` : '';
       sync.current = null; sync.speed = 0; sync.eta = null;
       sync.verify = null;
+      sync.paused = false; sync.pauseRequested = false;
+      if (sync.transferTree) sync.transferTree.proof = o.proof || [];
       syncLog(`${verb}: ${o.transferred || 0} файлов, ${fmtB(o.bytes || 0)}, ошибок ${o.errors || 0}`);
-      setSyncProgress(100, sync.detail); updateSyncStage(); updateSyncLive();
+      setSyncProgress(100, sync.detail); updateSyncStage(); updateSyncLive(); renderTransferTree();
       toast('Передача', `${verb}: ${fileCount(o.transferred)}${o.errors ? `, ошибок ${o.errors}` : ''}`, o.errors ? 'warn' : 'ok');
     } else if (o.type === 'error') {
       const transient = /timed out|timeout|etimedout|econnreset|socket|сервер.*не ответил/i.test(String(o.error || ''));
@@ -1508,7 +1665,7 @@ function wireSyncEvents() {
         return;
       }
       syncLog('ОШИБКА: ' + (o.error || 'Неизвестная ошибка'));
-      sync.busy = false; sync.indeterminate = false; sync.phase = 'Передача остановлена'; sync.detail = o.error || 'Неизвестная ошибка';
+      sync.busy = false; sync.indeterminate = false; sync.paused = false; sync.pauseRequested = false; sync.phase = 'Передача остановлена'; sync.detail = o.error || 'Неизвестная ошибка';
       sync.failedStep = ['scan', 'files', 'transfer', 'verify'].includes(sync.step) ? sync.step : 'scan';
       sync.step = 'error'; sync.stepError = sync.detail; sync.errors.push({ file: 'Передача', error: sync.detail });
       updateSyncStage(); updateSyncLive(); toast('Передача', o.error, 'warn'); renderSyncViewBody();
@@ -1516,7 +1673,7 @@ function wireSyncEvents() {
       syncLog(o.msg || 'Ошибка Python'); sync.errors.push({ file: 'Движок', error: o.msg || 'Ошибка Python' });
       renderSyncViewBody();
     } else if (o.type === 'closed') {
-      sync.busy = false; sync.indeterminate = false; renderSyncViewBody(); updateSyncStage(); updateSyncLive();
+      sync.busy = false; sync.indeterminate = false; sync.paused = false; sync.pauseRequested = false; renderSyncViewBody(); updateSyncStage(); updateSyncLive(); renderTransferTree();
     }
   });
 }
@@ -1564,6 +1721,14 @@ function updateSyncStage() {
       ? `последняя: ${new Date(sync.lastDone).toLocaleString('ru-RU', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}`
       : (sync.info ? `проверено за ${fmtDuration(sync.lastCheckSeconds)}` : 'ещё не запускалась'));
   const cancel = document.getElementById('sync-cancel'); if (cancel) cancel.hidden = !sync.busy;
+  const pause = document.getElementById('sync-pause');
+  if (pause) {
+    const canPause = sync.busy && ['files', 'transfer', 'verify'].includes(sync.step);
+    pause.hidden = !canPause;
+    pause.disabled = !!sync.pauseRequested;
+    pause.textContent = sync.pauseRequested ? 'Подожди…' : (sync.paused ? 'Продолжить' : 'Пауза');
+    pause.classList.toggle('resume', sync.paused);
+  }
   const push = document.getElementById('sync-push-all'); if (push) push.disabled = sync.busy;
   const pull = document.getElementById('sync-pull-all'); if (pull) pull.disabled = sync.busy;
   const speed = document.getElementById('sync-speed-value'); if (speed) speed.textContent = sync.speed ? `${fmtB(sync.speed)}/с` : '—';
@@ -1618,6 +1783,7 @@ function startSyncStatus() {
   sync.busy = true; sync.startedAt = Date.now(); sync.phase = 'Подключаюсь к серверу…'; sync.detail = 'Подготавливаю безопасное сравнение'; sync.pct = 0; sync.indeterminate = true;
   sync.lastProgressAt = Date.now(); sync.current = null; sync.speed = 0; sync.eta = null;
   sync.liveProjects = {}; sync.recentFiles = []; sync.blockedFiles = []; sync.verify = null;
+  sync.transferTree = null; sync.paused = false; sync.pauseRequested = false;
   setSyncProgress(0, ''); updateSyncStage();
   syncLog('Проверяю изменения на устройстве и сервере…');
   window.arra.syncRun('status', null, null);
@@ -1630,6 +1796,7 @@ function runSyncOp(mode, only, automaticRetry = false) {
   sync.busy = true; sync.startedAt = Date.now(); sync.pct = 0; sync.indeterminate = true;
   sync.lastProgressAt = Date.now(); sync.current = null; sync.speed = 0; sync.eta = null;
   sync.liveProjects = {}; sync.recentFiles = []; sync.blockedFiles = []; sync.verify = null;
+  sync.transferTree = null; sync.paused = false; sync.pauseRequested = false;
   setSyncProgress(0, ''); const lg = document.getElementById('sync-log'); if (lg) { lg.textContent = ''; lg.style.display = 'none'; }
   sync.phase = (mode === 'push' ? 'Готовлю отправку на сервер' : 'Готовлю получение с сервера') + (only ? ' · ' + only : '') + '…';
   sync.detail = 'Повторно проверяю файлы перед копированием'; updateSyncStage();
@@ -1690,6 +1857,11 @@ function renderBlockerPanel() {
 async function finishBlockerClose(result, retryRequest) {
   sync.blockersBusy = false;
   sync.closeResult = result;
+  if (result?.closedItems?.length) {
+    sync.closeHistory = result.closedItems;
+    syncLog(`Закрыты: ${result.closedItems.map((item) => item.title || item.name || `PID ${item.pid}`).join(', ')}`);
+    renderTransferTree();
+  }
   if (result?.remaining?.length) {
     sync.blockers = result.remaining.map((item) => ({ type: 'process', ...item }));
     sync.blockersChecked = true;
@@ -1981,7 +2153,10 @@ async function renderSyncV2() {
             <div><span>Прогресс</span><b id="sync-pct-value">0%</b></div>
           </div>
 
-          <button class="sync-stop-link" id="sync-cancel" hidden>Прервать</button>
+          <div class="sync-run-controls">
+            <button class="sync-pause-link" id="sync-pause" hidden>Пауза</button>
+            <button class="sync-stop-link" id="sync-cancel" hidden>Прервать</button>
+          </div>
           <div id="sync-metrics" class="sync-summary-strip"></div>
         </section>
 
@@ -1993,6 +2168,7 @@ async function renderSyncV2() {
           <div id="sync-journey" class="sync-journey"></div>
           <div id="sync-blocker-panel" class="sync-blocker-panel" hidden></div>
           <div id="sync-live" class="sync-live-compact" hidden></div>
+          <div id="sync-transfer-tree" class="sync-transfer-tree"></div>
           <div id="sync-errors-panel" class="sync-errors-panel" hidden>
             <div class="sync-errors-head"><b>Ошибки</b><span id="sync-error-count"></span></div>
             <div id="sync-error-list"></div>
@@ -2010,7 +2186,16 @@ async function renderSyncV2() {
     await window.arra.syncCancel(); sync.busy = false; sync.indeterminate = false;
     sync.phase = 'Передача прервана'; sync.detail = 'Уже переданные файлы сохранены'; updateSyncStage(); renderSyncV2Body();
   };
-  renderSyncV2Body(); renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney();
+  document.getElementById('sync-pause').onclick = async () => {
+    if (sync.pauseRequested) return;
+    sync.pauseRequested = true; updateSyncStage();
+    const result = sync.paused ? await window.arra.syncResume() : await window.arra.syncPause();
+    if (!result?.ok) {
+      sync.pauseRequested = false; updateSyncStage();
+      toast('Передача', result?.error || 'Не удалось изменить паузу', 'warn');
+    }
+  };
+  renderSyncV2Body(); renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney(); renderTransferTree();
 }
 
 function syncDeviceGlyph(kind) {
@@ -2037,7 +2222,7 @@ function renderSyncV2Body() {
 
   const metrics = document.getElementById('sync-metrics');
   if (metrics) metrics.innerHTML = hasCheck && i.conflicts ? `<span class="warn"><b>${fmt(i.conflicts)}</b> конфликтов</span>` : '';
-  renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney();
+  renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney(); renderTransferTree();
 }
 
 // Иконка + цвет по типу файла (своя ФОРМА для pdf, md, фото, кода, архива и т.д. — как в VS Code)

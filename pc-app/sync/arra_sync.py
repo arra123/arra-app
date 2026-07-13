@@ -55,6 +55,9 @@ REMOTE_STATE = "/home/tima/sync/noda-state.json"
 REMOTE_INDEX_ROOT = "/home/tima/sync/.noda-index"
 DEVICE_NAME = os.environ.get("NODA_DEVICE_NAME") or platform.node() or "Компьютер"
 DEVICE_ROLE = os.environ.get("NODA_DEVICE_ROLE") or "computer"
+RUN_GATE = threading.Event()
+RUN_GATE.set()
+CONTROL_STARTED = False
 
 SCOPES = (
     {"id": "projects", "label": "Проекты", "local": LOCAL_PROJECTS, "remote": REMOTE_PROJECTS},
@@ -97,6 +100,36 @@ def emit(obj):
     with EMIT_LOCK:
         REAL.write(json.dumps(obj, ensure_ascii=False) + "\n")
         REAL.flush()
+
+
+def start_control_listener():
+    """Listen for pause/resume commands from Electron without interrupting SFTP.
+
+    Blocking the transfer callback is intentional: the current connection and
+    temporary file stay alive, so Resume continues the same byte instead of
+    restarting the file.
+    """
+    global CONTROL_STARTED
+    if CONTROL_STARTED:
+        return
+    CONTROL_STARTED = True
+
+    def listen():
+        for raw in sys.stdin:
+            command = raw.strip().lower()
+            if command == "pause" and RUN_GATE.is_set():
+                RUN_GATE.clear()
+                emit({"type": "paused", "msg": "Передача на паузе"})
+            elif command == "resume" and not RUN_GATE.is_set():
+                RUN_GATE.set()
+                emit({"type": "resumed", "msg": "Передача продолжена"})
+
+    threading.Thread(target=listen, name="noda-sync-control", daemon=True).start()
+
+
+def wait_for_control():
+    while not RUN_GATE.wait(0.25):
+        pass
 
 
 def local_file_issue(path, require_exclusive=False):
@@ -184,6 +217,7 @@ def upload_fixed_prefix(sftp, local_path, remote_stream, start, end, progress_ca
     with open(local_path, "rb") as source:
         source.seek(sent)
         while remaining:
+            wait_for_control()
             chunk = source.read(min(1024 * 1024, remaining))
             if not chunk:
                 raise RuntimeError("файл стал короче во время отправки")
@@ -574,6 +608,7 @@ def backup_remote_file(sftp, remote_path, scope_id, rel, stamp):
 
 
 def transfer(mode, only, dry_run=False):
+    start_control_listener()
     client, sftp, scopes, started = scan_everything(mode)
     try:
         projects = next((scope for scope in scopes if scope["id"] == "projects"), None)
@@ -618,16 +653,87 @@ def transfer(mode, only, dry_run=False):
         total = len(operations)
         total_bytes = sum(op[3] for op in operations)
         project_plan = {}
+        scope_plan = {}
+
+        # The UI needs the complete hierarchy, not only the changed byte count.
+        # Build compact inventory rows for every source project/folder, then attach
+        # the actual changed files that will move in this run.
+        for scope in scopes:
+            source_map = scope["localMap"] if mode in ("push", "sync") else scope["remoteMap"]
+            target_map = scope["remoteMap"] if mode in ("push", "sync") else scope["localMap"]
+            scope_row = {
+                "id": scope["id"], "label": scope["label"],
+                "inventoryFiles": len(source_map), "targetFiles": len(target_map),
+                "files": 0, "bytes": 0, "verified": 0, "errors": 0,
+                "snapshotFiles": 0,
+            }
+            scope_plan[scope["id"]] = scope_row
+            for rel in source_map:
+                key = project_key(scope["id"], rel)
+                if only and key != only:
+                    continue
+                plan = project_plan.setdefault(key, {
+                    "name": key, "label": project_label(key),
+                    "scopeId": scope["id"], "scopeLabel": scope["label"],
+                    "files": 0, "bytes": 0, "inventoryFiles": 0,
+                    "targetFiles": 0, "folders": {},
+                })
+                plan["inventoryFiles"] += 1
+                short = change_path(scope["id"], rel, key)
+                folder = change_folder(short)
+                folder_row = plan["folders"].setdefault(folder, {
+                    "name": folder, "inventoryFiles": 0, "files": 0, "bytes": 0,
+                })
+                folder_row["inventoryFiles"] += 1
+            for rel in target_map:
+                key = project_key(scope["id"], rel)
+                if only and key != only:
+                    continue
+                plan = project_plan.get(key)
+                if plan:
+                    plan["targetFiles"] += 1
+
+        plan_items = []
         for direction, scope, rel, size in operations:
             key = project_key(scope["id"], rel)
             plan = project_plan.setdefault(key, {
-                "name": key, "label": project_label(key), "files": 0, "bytes": 0,
+                "name": key, "label": project_label(key),
+                "scopeId": scope["id"], "scopeLabel": scope["label"],
+                "files": 0, "bytes": 0, "inventoryFiles": 0,
+                "targetFiles": 0, "folders": {},
             })
             plan["files"] += 1
             plan["bytes"] += int(size or 0)
+            scope_plan[scope["id"]]["files"] += 1
+            scope_plan[scope["id"]]["bytes"] += int(size or 0)
+            short = change_path(scope["id"], rel, key)
+            folder = change_folder(short)
+            folder_row = plan["folders"].setdefault(folder, {
+                "name": folder, "inventoryFiles": 0, "files": 0, "bytes": 0,
+            })
+            folder_row["files"] += 1
+            folder_row["bytes"] += int(size or 0)
+            snapshot = is_append_only_session(scope, rel)
+            if snapshot:
+                scope_plan[scope["id"]]["snapshotFiles"] += 1
+            plan_items.append({
+                "scopeId": scope["id"], "scope": scope["label"],
+                "projectKey": key, "project": project_label(key),
+                "file": rel, "path": short, "folder": folder,
+                "bytes": int(size or 0),
+                "snapshot": snapshot,
+                "snapshotBytes": int((scope["localMap"] if direction == "push" else scope["remoteMap"])[rel][0]),
+            })
+
+        project_rows = []
+        for plan in project_plan.values():
+            plan["folders"] = sorted(plan["folders"].values(), key=lambda row: row["name"].casefold())
+            project_rows.append(plan)
+        project_rows.sort(key=lambda p: (p["scopeId"], p["label"].casefold()))
+        scope_rows = [scope_plan[scope["id"]] for scope in scopes]
         emit({"type": "plan", "direction": mode, "files": total, "bytes": total_bytes,
               "only": only or "", "conflicts": len(conflicts),
-              "projects": sorted(project_plan.values(), key=lambda p: p["label"].casefold())})
+              "scopes": scope_rows, "projects": project_rows, "items": plan_items})
         for scope, rel in conflicts[:100]:
             emit({"type": "fileerror", "file": f"{scope['label']} · {rel}",
                   "error": "конфликт: версии различаются, направление не определено — пропущено"})
@@ -636,6 +742,7 @@ def transfer(mode, only, dry_run=False):
             emit({"type": "done", "direction": mode, "transferred": 0, "errors": 0,
                   "bytes": 0, "planned": total, "plannedBytes": total_bytes,
                   "skipped": len(conflicts), "preview": True,
+                  "proof": scope_rows,
                   "elapsed": int(time.time() - started)})
             return
 
@@ -645,6 +752,7 @@ def transfer(mode, only, dry_run=False):
                 write_remote_indexes(sftp, scopes)
             emit({"type": "done", "direction": mode, "transferred": 0, "errors": 0,
                   "bytes": 0, "skipped": len(conflicts), "msg": "Уже актуально",
+                  "planned": 0, "verified": 0, "proof": scope_rows,
                   "elapsed": int(time.time() - started)})
             return
 
@@ -652,6 +760,7 @@ def transfer(mode, only, dry_run=False):
         emit({"type": "preflight", "checked": 0, "total": total, "blocked": 0,
               "msg": "Проверяю открытые и заблокированные файлы"})
         for index, (direction, scope, rel, _size) in enumerate(operations, 1):
+            wait_for_control()
             local_path = scope["local"] / Path(rel.replace("/", os.sep))
             issue = ""
             if direction == "push" or local_path.exists():
@@ -678,6 +787,7 @@ def transfer(mode, only, dry_run=False):
         successful = []
         recent_emit = [0.0]
         for direction, scope, rel, size in operations:
+            wait_for_control()
             local_path = scope["local"] / Path(rel.replace("/", os.sep))
             remote_path = f"{scope['remote']}/{rel}"
             key = project_key(scope["id"], rel)
@@ -689,6 +799,7 @@ def transfer(mode, only, dry_run=False):
             success_size = int(size)
 
             def progress_callback(transferred, file_total):
+                wait_for_control()
                 now = time.time()
                 if transferred < file_total and now - recent_emit[0] < 0.18:
                     return
@@ -697,7 +808,8 @@ def transfer(mode, only, dry_run=False):
                 speed = int(aggregate / max(now - t0, 0.001))
                 eta = int((total_bytes - aggregate) / speed) if speed else None
                 emit({
-                    "type": "progress", "direction": direction, "scope": scope["label"],
+                    "type": "progress", "direction": direction,
+                    "scopeId": scope["id"], "scope": scope["label"],
                     "project": label, "projectKey": key,
                     "done": done, "total": total, "bytes": aggregate, "totalBytes": total_bytes,
                     "file": rel, "fileBytes": int(transferred or 0), "fileTotal": int(file_total or size),
@@ -816,7 +928,8 @@ def transfer(mode, only, dry_run=False):
                 emit({"type": "fileerror", "file": rel, "error": last_error[:160]})
             speed = int(done_bytes / max(time.time() - t0, 0.001))
             eta = int((total_bytes - done_bytes) / speed) if speed else None
-            emit({"type": "progress", "direction": direction, "scope": scope["label"],
+            emit({"type": "progress", "direction": direction,
+                  "scopeId": scope["id"], "scope": scope["label"],
                   "project": label, "projectKey": key,
                   "done": done, "total": total, "bytes": done_bytes,
                   "totalBytes": total_bytes, "file": rel, "fileBytes": size if ok else 0,
@@ -828,7 +941,11 @@ def transfer(mode, only, dry_run=False):
         emit({"type": "verify", "done": 0, "total": len(successful), "msg": "Проверяю все переданные файлы"})
         verified = 0
         verify_errors = 0
+        verified_by_scope = {scope["id"]: 0 for scope in scopes}
+        errors_by_scope = {scope["id"]: 0 for scope in scopes}
         for index, (direction, scope, rel, expected_size, expected_mtime) in enumerate(successful, 1):
+            wait_for_control()
+            item_ok = False
             try:
                 if direction == "push":
                     meta = sftp.stat(f"{scope['remote']}/{rel}")
@@ -838,19 +955,32 @@ def transfer(mode, only, dry_run=False):
                 if actual[0] != expected_size or abs(actual[1] - expected_mtime) > 2:
                     raise RuntimeError(f"ожидалось {expected_size} байт, получено {actual[0]}")
                 verified += 1
+                verified_by_scope[scope["id"]] += 1
+                item_ok = True
             except Exception as ex:
                 verify_errors += 1
+                errors_by_scope[scope["id"]] += 1
                 emit({"type": "fileerror", "file": rel, "error": "проверка после передачи: " + str(ex)[:130]})
+            key = project_key(scope["id"], rel)
             emit({"type": "verify_progress", "done": index, "total": len(successful),
-                  "verified": verified, "errors": verify_errors, "file": rel})
+                  "verified": verified, "errors": verify_errors,
+                  "scopeId": scope["id"], "scope": scope["label"],
+                  "projectKey": key, "project": project_label(key),
+                  "file": rel, "ok": item_ok,
+                  "snapshot": is_append_only_session(scope, rel),
+                  "snapshotBytes": int(expected_size)})
 
         errors += verify_errors
+        for scope_row in scope_rows:
+            scope_row["verified"] = verified_by_scope.get(scope_row["id"], 0)
+            scope_row["errors"] = max(0, int(scope_row["files"]) - int(scope_row["verified"]))
         if mode in ("push", "pull"):
             record_server_state(sftp, mode, verified, done_bytes, errors)
             write_remote_indexes(sftp, scopes)
         emit({"type": "done", "direction": mode, "transferred": verified,
               "errors": errors, "bytes": done_bytes, "skipped": len(conflicts),
               "verified": verified, "planned": total,
+              "proof": scope_rows,
               "elapsed": int(time.time() - started)})
     finally:
         try:
