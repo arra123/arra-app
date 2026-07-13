@@ -202,9 +202,6 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
           <View style={[styles.dot, { backgroundColor: agentOnline ? theme.success : theme.textSecondary }]} />
           <View style={{ flex: 1 }}>
             <ThemedText type="smallBold">{selectedDevice?.name || (targetOnline ? 'Компьютер на связи' : 'Компьютер офлайн')}</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              {targetOnline ? 'Файл сразу уйдёт на выбранное устройство' : 'Открой Noda на выбранном устройстве'}
-            </ThemedText>
           </View>
         </GlassCard>
 

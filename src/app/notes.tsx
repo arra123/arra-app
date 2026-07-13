@@ -34,11 +34,11 @@ type Editing = Note | 'new' | null;
 
 // Категории-цвета заметок (подсветка)
 const NOTE_CATS: { color: string; label: string }[] = [
-  { color: '#72D99B', label: 'Работа' },
-  { color: '#9AC7A9', label: 'Личное' },
+  { color: '#7C85FF', label: 'Работа' },
+  { color: '#8798B8', label: 'Личное' },
   { color: '#D8B65A', label: 'Идеи' },
   { color: '#E06C75', label: 'Важное' },
-  { color: '#75B98D', label: 'Учёба' },
+  { color: '#6F9AE8', label: 'Учёба' },
 ];
 const catLabel = (c?: string | null) => NOTE_CATS.find((x) => x.color === c)?.label || '';
 
@@ -273,8 +273,12 @@ export default function NotesScreen() {
               style={[styles.bodyInput, { color: theme.text }]}
             />
           </ScrollView>
-          <View style={[styles.voiceDock, { paddingBottom: Math.max(insets.bottom, Spacing.two) }]}>
-            <VoiceRecorder onTranscript={appendVoice} hint="надиктовать в оригинал · вверх — зафиксировать" />
+          <View style={[styles.voiceDock, { paddingBottom: Math.max(insets.bottom, BottomTabInset) + Spacing.two, backgroundColor: theme.background }]}>
+            <View style={[styles.voiceComposer, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
+              <SymbolView name="waveform" tintColor={theme.textSecondary} size={18} />
+              <View style={{ flex: 1 }} />
+              <VoiceRecorder onTranscript={appendVoice} />
+            </View>
           </View>
           {saving && <ActivityIndicator style={{ marginBottom: insets.bottom + Spacing.two }} color={theme.tint} />}
         </KeyboardAvoidingView>
@@ -304,9 +308,6 @@ export default function NotesScreen() {
         ) : notes.length === 0 ? (
           <GlassCard radius={Radius.lg} style={styles.emptyCard}>
             <SymbolView name="note.text" tintColor={theme.textSecondary} size={34} />
-            <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
-              Пусто. Создайте заметку здесь или попросите Noda записать её в чате.
-            </ThemedText>
           </GlassCard>
         ) : (
           <View style={{ gap: Spacing.two }}>
@@ -352,13 +353,13 @@ export default function NotesScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0D100F' },
+  container: { flex: 1 },
   content: { paddingHorizontal: Spacing.three, paddingBottom: BottomTabInset + Spacing.five, gap: Spacing.three },
   headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   h1: { fontSize: 34, fontWeight: '700', lineHeight: 40, marginTop: Spacing.one },
   addBtn: { width: 42, height: 42, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
   emptyCard: { paddingVertical: Spacing.five, alignItems: 'center', gap: Spacing.two, marginTop: Spacing.two },
-  noteCard: { padding: Spacing.three, backgroundColor: '#151916', borderRadius: Radius.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.07)' },
+  noteCard: { padding: Spacing.three, backgroundColor: '#242428', borderRadius: Radius.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.07)' },
   noteTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   noteTime: { marginTop: Spacing.two, fontSize: 12 },
   catRow: { gap: 8, paddingVertical: Spacing.two, paddingRight: Spacing.three },
@@ -376,5 +377,6 @@ const styles = StyleSheet.create({
   structureBtn: { minHeight: 40, paddingHorizontal: 12, borderRadius: Radius.md, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 6 },
   titleInput: { fontSize: 26, fontWeight: '700', fontFamily: 'Inter_700Bold', paddingVertical: Spacing.two },
   bodyInput: { fontSize: 17, lineHeight: 25, fontFamily: 'Inter_400Regular', minHeight: 300, textAlignVertical: 'top' },
-  voiceDock: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two, backgroundColor: '#0D100F' },
+  voiceDock: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two },
+  voiceComposer: { minHeight: 52, borderRadius: 26, borderWidth: StyleSheet.hairlineWidth, padding: 5, paddingLeft: 15, flexDirection: 'row', alignItems: 'center', gap: 6 },
 });

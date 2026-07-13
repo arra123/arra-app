@@ -32,7 +32,7 @@ const DOMAINS: Record<string, string> = {
 };
 
 // Спокойная палитра (Linear-стиль), без кислотных цветов
-const PALETTE = ['#6E79E6', '#4CB782', '#4CB7A5', '#E0A33E', '#E06C75', '#9A7BE0', '#5B8DEF', '#5FB8CF', '#C98AB8', '#8A8F98'];
+const PALETTE = ['#6E79E6', '#6F9AE8', '#69A5C8', '#E0A33E', '#E06C75', '#9A7BE0', '#5B8DEF', '#5FB8CF', '#C98AB8', '#8A8F98'];
 function colorFor(name: string) {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
