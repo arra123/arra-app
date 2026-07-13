@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('arra', {
   getStatus: () => ipcRenderer.invoke('get-status'),
@@ -35,4 +35,26 @@ contextBridge.exposeInMainWorld('arra', {
   onPtyData: (cb) => ipcRenderer.on('pty-data', (_e, payload) => cb(payload)),
   onPtyExit: (cb) => ipcRenderer.on('pty-exit', (_e, payload) => cb(payload)),
   onClaudeDone: (cb) => ipcRenderer.on('claude-done', (_e, payload) => cb(payload)),
+  // Перенос (синхронизация рабочих файлов с сервером)
+  syncRun: (mode, only, role) => ipcRenderer.invoke('sync-run', { mode, only, role }),
+  syncCancel: () => ipcRenderer.invoke('sync-cancel'),
+  syncBlockers: () => ipcRenderer.invoke('sync-blockers'),
+  syncCloseBlockers: (pids) => ipcRenderer.invoke('sync-close-blockers', pids),
+  syncForceCloseBlockers: (pids) => ipcRenderer.invoke('sync-force-close-blockers', pids),
+  remoteSync: (deviceId, mode) => ipcRenderer.invoke('remote-sync', { deviceId, mode }),
+  onSyncEvent: (cb) => ipcRenderer.on('sync-event', (_e, o) => cb(o)),
+  onRemoteSyncEvent: (cb) => ipcRenderer.on('remote-sync-event', (_e, o) => cb(o)),
+  // Реальный путь перетащенного файла (в Electron 33 File.path удалён → только так)
+  filePath: (file) => { try { return webUtils.getPathForFile(file) || ''; } catch { return ''; } },
+  // Системные предупреждения (например, запуск от администратора)
+  onWarn: (cb) => ipcRenderer.on('app-warn', (_e, m) => cb(m)),
+  // Автообновление
+  onUpdate: (cb) => ipcRenderer.on('update-event', (_e, o) => cb(o)),
+  updateCheck: () => ipcRenderer.invoke('update-check'),
+  appVersion: () => ipcRenderer.invoke('app-version'),
+  log: (level, source, payload) => ipcRenderer.invoke('app-log', { level, source, payload }),
+  openLogs: () => ipcRenderer.invoke('open-logs'),
+  logPath: () => ipcRenderer.invoke('log-path'),
+  // Голосовой ввод помощника: аудио → текст
+  transcribe: (base64, mime) => ipcRenderer.invoke('transcribe', { base64, mime }),
 });

@@ -1,13 +1,74 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage, shell, Notification, desktopCapturer, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage, shell, Notification, desktopCapturer, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const https = require('https');
-const { execFile, spawn } = require('child_process');
+const { execFile, spawn, spawnSync } = require('child_process');
 const WebSocket = require('ws');
+const { initUpdater, checkNow: checkUpdatesNow } = require('./updater');
 
 const BASE = 'https://aura.5.42.122.102.sslip.io';
 const WS_URL = 'wss://aura.5.42.122.102.sslip.io/agent';
+const CLIENT_WS_URL = 'wss://aura.5.42.122.102.sslip.io/client';
+
+// Постоянный JSONL-журнал. Он нужен именно для случаев, когда окно уже закрылось
+// или операция зависла: записи остаются на диске и не пропадают вместе с UI.
+function logsDir() {
+  try { return path.join(app.getPath('userData'), 'logs'); }
+  catch { return path.join(os.tmpdir(), 'Noda', 'logs'); }
+}
+function logPath(date = new Date()) {
+  return path.join(logsDir(), `noda-${date.toISOString().slice(0, 10)}.jsonl`);
+}
+function redactLogText(value) {
+  return String(value ?? '')
+    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s"']+/ig, '$1<redacted>')
+    .replace(/([?&](?:token|jwt|password|secret|key)=)[^&\s]+/ig, '$1<redacted>')
+    .replace(/((?:token|jwt|password|secret|api[_-]?key)\s*[:=]\s*)[^,;\s"']+/ig, '$1<redacted>');
+}
+function sanitizeLogValue(value, depth = 0) {
+  if (depth > 5) return '[max-depth]';
+  if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') return redactLogText(value).slice(0, 12000);
+  if (value instanceof Error) return { name: value.name, message: redactLogText(value.message), stack: redactLogText(value.stack || '') };
+  if (Array.isArray(value)) return value.slice(0, 200).map((item) => sanitizeLogValue(item, depth + 1));
+  if (typeof value === 'object') {
+    const out = {};
+    for (const [key, item] of Object.entries(value).slice(0, 200)) {
+      out[key] = /token|jwt|password|secret|authorization|api[_-]?key/i.test(key)
+        ? '<redacted>'
+        : sanitizeLogValue(item, depth + 1);
+    }
+    return out;
+  }
+  return redactLogText(value);
+}
+function writeLog(level, source, payload = {}) {
+  try {
+    fs.mkdirSync(logsDir(), { recursive: true });
+    const row = { at: new Date().toISOString(), level, source, pid: process.pid, payload: sanitizeLogValue(payload) };
+    fs.appendFileSync(logPath(), JSON.stringify(row) + '\n', 'utf8');
+  } catch (error) {
+    try { console.error('[logger]', error); } catch {}
+  }
+}
+function pruneLogs() {
+  try {
+    fs.mkdirSync(logsDir(), { recursive: true });
+    const cutoff = Date.now() - 21 * 24 * 60 * 60 * 1000;
+    for (const name of fs.readdirSync(logsDir())) {
+      if (!/^noda-\d{4}-\d{2}-\d{2}\.jsonl$/.test(name)) continue;
+      const full = path.join(logsDir(), name);
+      if (fs.statSync(full).mtimeMs < cutoff) fs.unlinkSync(full);
+    }
+  } catch (error) { writeLog('warn', 'logger.prune', error); }
+}
+
+process.on('uncaughtException', (error) => {
+  writeLog('fatal', 'main.uncaughtException', error);
+  setTimeout(() => { try { app.exit(1); } catch { process.exit(1); } }, 50);
+});
+process.on('unhandledRejection', (error) => writeLog('error', 'main.unhandledRejection', error));
 
 const SETTINGS_PATH = () => path.join(app.getPath('userData'), 'settings.json');
 function loadSettings() {
@@ -19,12 +80,30 @@ function saveSettings() {
 
 let settings = {};
 let win = null;
+// Безопасная отправка в окно: если окно уже уничтожено (закрыли приложение, а WS ещё шлёт) —
+// НЕ падаем с «Object has been destroyed», а молча пропускаем.
+function winSend(channel, payload) {
+  try {
+    if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+      win.webContents.send(channel, payload);
+    }
+  } catch {}
+}
 let ws = null;
 let reconnectTimer = null;
 let online = false;
 let manualClose = false;
+let phoneOnline = false;
+let agentDeviceId = null;
+let phonePresenceTimer = null;
+function markPhonePresence() {
+  phoneOnline = true;
+  clearTimeout(phonePresenceTimer);
+  phonePresenceTimer = setTimeout(() => { phoneOnline = false; pushStatus(); }, 15000);
+  pushStatus();
+}
 
-function defaultFolder() { return path.join(app.getPath('downloads'), 'Arra'); }
+function defaultFolder() { return path.join(app.getPath('downloads'), 'Noda'); }
 function currentFolder() { return settings.folder || defaultFolder(); }
 function currentMode() { return settings.mode || 'path'; }
 
@@ -65,6 +144,47 @@ function psArgs(command) {
   return ['-NoProfile', '-NoLogo', '-NonInteractive', '-Command', pre + command];
 }
 
+// Определяем форм-фактор без доступа к экрану, камере или пользовательским данным.
+// Наличие батареи — самый надёжный признак ноутбука; chassis используется как
+// дополнительная подсказка. Результат лишь предлагается и может быть исправлен в UI.
+let deviceProfileCache = null;
+function detectDeviceProfile() {
+  if (deviceProfileCache) return deviceProfileCache;
+  const fallback = {
+    role: 'pc', confidence: 'low', reason: 'форм-фактор не определён',
+    hostname: os.hostname(), manufacturer: '', model: '', hasBattery: false,
+  };
+  if (process.platform !== 'win32') return (deviceProfileCache = fallback);
+  try {
+    const script = [
+      "$b = @(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue)",
+      "$e = Get-CimInstance Win32_SystemEnclosure -ErrorAction SilentlyContinue | Select-Object -First 1",
+      "$c = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue | Select-Object -First 1",
+      "[pscustomobject]@{hasBattery=($b.Count -gt 0);chassis=@($e.ChassisTypes);manufacturer=$c.Manufacturer;model=$c.Model}|ConvertTo-Json -Compress",
+    ].join('; ');
+    const result = spawnSync('powershell.exe', psArgs(script), { encoding: 'utf8', windowsHide: true, timeout: 7000 });
+    const data = JSON.parse(String(result.stdout || '').trim() || '{}');
+    const chassis = (Array.isArray(data.chassis) ? data.chassis : [data.chassis]).map(Number).filter(Boolean);
+    const laptopTypes = new Set([8, 9, 10, 11, 12, 14, 18, 21, 30, 31, 32]);
+    const chassisLaptop = chassis.some((n) => laptopTypes.has(n));
+    const hasBattery = !!data.hasBattery;
+    const role = hasBattery || chassisLaptop ? 'laptop' : 'pc';
+    deviceProfileCache = {
+      role,
+      confidence: hasBattery ? 'high' : (chassis.length ? 'medium' : 'low'),
+      reason: hasBattery ? 'Windows обнаружил батарею' : (chassisLaptop ? 'тип корпуса похож на ноутбук' : 'батарея не обнаружена'),
+      hostname: os.hostname(),
+      manufacturer: String(data.manufacturer || ''),
+      model: String(data.model || ''),
+      hasBattery,
+      chassis,
+    };
+  } catch {
+    deviceProfileCache = fallback;
+  }
+  return deviceProfileCache;
+}
+
 // Запустить процесс и стримить вывод через send()
 function runChild(reqId, command, cwd, send) {
   let child;
@@ -72,6 +192,7 @@ function runChild(reqId, command, cwd, send) {
     // stdin = ignore: команды (в т.ч. claude -p) не зависают в ожидании ввода
     child = spawn('powershell.exe', psArgs(command), { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
+    writeLog('error', 'terminal.spawn', { reqId, cwd, error: e });
     send({ type: 'term_exit', reqId, code: -1, cwd: getTermCwd(), error: e.message });
     return;
   }
@@ -79,10 +200,17 @@ function runChild(reqId, command, cwd, send) {
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
   child.stdout.on('data', (d) => send({ type: 'term_out', reqId, chunk: d }));
-  child.stderr.on('data', (d) => send({ type: 'term_out', reqId, chunk: d, err: true }));
-  child.on('error', (e) => send({ type: 'term_out', reqId, chunk: '\n[ошибка запуска] ' + e.message + '\n', err: true }));
+  child.stderr.on('data', (d) => {
+    writeLog('error', 'terminal.stderr', { reqId, cwd, message: String(d) });
+    send({ type: 'term_out', reqId, chunk: d, err: true });
+  });
+  child.on('error', (e) => {
+    writeLog('error', 'terminal.process', { reqId, cwd, error: e });
+    send({ type: 'term_out', reqId, chunk: '\n[ошибка запуска] ' + e.message + '\n', err: true });
+  });
   child.on('close', (code) => {
     procs.delete(reqId);
+    if (code) writeLog('error', 'terminal.exit', { reqId, cwd, code });
     send({ type: 'term_exit', reqId, code: code == null ? -1 : code, cwd: getTermCwd() });
   });
 }
@@ -305,7 +433,7 @@ function uploadFileToBackend(absPath, jwt) {
 // Несколько независимых сессий: ключ termId. 'local' — терминал самого ПК-приложения,
 // '1'/'2'/'3'… — терминалы, открытые с телефона. У каждой свой процесс и папка.
 let pty = null;
-try { pty = require('node-pty'); } catch (e) { console.error('node-pty недоступен:', e.message); }
+try { pty = require('node-pty'); } catch (e) { writeLog('error', 'pty.module', e); console.error('node-pty недоступен:', e.message); }
 const ptys = new Map(); // termId -> { proc, cwd, local, buf }
 
 // Отправить сообщение телефону (если подключён)
@@ -331,49 +459,43 @@ function startPty(termId, cols, rows, cwd, local) {
       env: process.env,
     });
   } catch (e) {
-    if (local) win?.webContents.send('pty-data', '\r\n[не удалось открыть терминал: ' + e.message + ']\r\n');
+    writeLog('error', 'pty.spawn', { termId, cwd: wantCwd, error: e });
+    if (local) winSend('pty-data', '\r\n[не удалось открыть терминал: ' + e.message + ']\r\n');
     return false;
   }
-  const side0 = local ? 'pc' : 'phone';
-  s = { proc, cwd: wantCwd, local: !!local, buf: '', activeSide: side0, dims: { [side0]: { cols: cols || 100, rows: rows || 30 } } };
+  s = { proc, cwd: wantCwd, local: !!local, buf: '', owner: local ? 'pc' : 'phone' };
   ptys.set(termId, s);
   // ОБЩАЯ сессия: вывод идёт И в окно ПК, И на телефон одновременно. Так можно начать
   // работу в приложении на ПК и продолжить ту же сессию с телефона (и наоборот).
   proc.onData((d) => {
     s.buf += d;
     if (s.buf.length > 120000) s.buf = s.buf.slice(-100000); // буфер прокрутки для подключения
-    win?.webContents.send('pty-data', { termId, data: d });
+    winSend('pty-data', { termId, data: d });
     wsSend({ to: 'client', type: 'pty_out', termId, data: d });
   });
   proc.onExit(() => {
     ptys.delete(termId);
-    win?.webContents.send('pty-data', { termId, data: '\r\n[сессия завершена]\r\n' });
-    win?.webContents.send('pty-exit', { termId });
+    winSend('pty-data', { termId, data: '\r\n[сессия завершена]\r\n' });
+    winSend('pty-exit', { termId });
     wsSend({ to: 'client', type: 'pty_exit', termId });
   });
   // сообщаем телефону, что появилась новая сессия (чтобы он мог показать её в списке)
   wsSend({ to: 'client', type: 'pty_opened', termId, cwd: wantCwd });
   return true;
 }
-// Размер общего терминала «следует за активным устройством»: PTY подстраивается под того,
-// кто последним печатал. dims хранит размеры обеих сторон; activeSide — чей размер применён.
-function activate(termId, side) {
-  const s = ptys.get(termId || 'local'); if (!s || !s.proc || s.activeSide === side) return;
-  s.activeSide = side;
-  const d = s.dims && s.dims[side];
-  if (d && d.cols && d.rows) { try { s.proc.resize(d.cols, d.rows); } catch {} }
-}
-function ptyWrite(termId, d, side) {
+// Размер PTY держит ВЛАДЕЛЕЦ (кто создал сессию): ПК-терминал — под ПК, телефонный — под телефон.
+// Чужие ресайзы игнорируем, поэтому подключение второго устройства НЕ ломает размер у первого.
+function ptyWrite(termId, d) {
   const s = ptys.get(termId || 'local'); if (!s || !s.proc) return;
-  if (side) activate(termId || 'local', side); // печать → это устройство становится активным
   try { s.proc.write(d); } catch {}
 }
 function ptyResize(termId, cols, rows, side) {
   const s = ptys.get(termId || 'local'); if (!s || !s.proc || !cols || !rows) return;
-  side = side || s.activeSide || 'pc';
-  s.dims[side] = { cols, rows };
-  if (s.activeSide === side) { try { s.proc.resize(cols, rows); } catch {} }
+  if (side && s.owner && side !== s.owner) return; // не владелец — не меняем размер
+  try { s.proc.resize(cols, rows); } catch {}
 }
+// Текущий размер сессии — чтобы подключившийся зритель подстроил свой xterm под него
+function ptySize(termId) { const s = ptys.get(termId); return s && s.proc ? { cols: s.proc.cols, rows: s.proc.rows } : null; }
 function killPty(termId) { const s = ptys.get(termId); if (s && s.proc) { try { s.proc.kill(); } catch {} } ptys.delete(termId); }
 function restartPty(termId, cols, rows, cwd, local) {
   const s = ptys.get(termId);
@@ -455,6 +577,18 @@ using System.Runtime.InteropServices;
 public class WinIO {
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int X,int Y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint dx,uint dy,uint d,IntPtr e);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+  [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public InputUnion U; }
+  [StructLayout(LayoutKind.Explicit)] public struct InputUnion { [FieldOffset(0)] public KEYBDINPUT ki; }
+  [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
+  public static void SendUnicode(string text) {
+    foreach (char ch in text) {
+      INPUT down = new INPUT(); down.type = 1; down.U.ki.wScan = ch; down.U.ki.dwFlags = 0x0004;
+      INPUT up = down; up.U.ki.dwFlags = 0x0004 | 0x0002;
+      INPUT[] inputs = new INPUT[] { down, up };
+      SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+    }
+  }
 }
 "@
 Add-Type -AssemblyName System.Windows.Forms
@@ -474,6 +608,7 @@ while ($true) {
       'U' { $a = $rest.Split(' '); [WinIO]::SetCursorPos([int]$a[0], [int]$a[1]) | Out-Null; [WinIO]::mouse_event($LU,0,0,0,[IntPtr]::Zero) }
       'S' { $a = $rest.Split(' '); [WinIO]::SetCursorPos([int]$a[0], [int]$a[1]) | Out-Null; [WinIO]::mouse_event($WH,0,0,[uint32][int]$a[2],[IntPtr]::Zero) }
       'K' { [System.Windows.Forms.SendKeys]::SendWait($rest) }
+      'P' { $txt=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($rest)); [WinIO]::SendUnicode($txt) }
     }
   } catch {}
 }
@@ -510,7 +645,11 @@ function screenInput(msg) {
       const map = { enter: '{ENTER}', backspace: '{BACKSPACE}', esc: '{ESC}', tab: '{TAB}', up: '{UP}', down: '{DOWN}', left: '{LEFT}', right: '{RIGHT}', delete: '{DELETE}', home: '{HOME}', end: '{END}', space: ' ' };
       let sk = null;
       if (msg.key && map[msg.key]) sk = map[msg.key];
-      else if (msg.text) sk = String(msg.text).replace(/[{}()[\]+^%~]/g, '{$&}');
+      else if (msg.text) {
+        const encoded = Buffer.from(String(msg.text).replace(/[\r\n]+/g, ''), 'utf8').toString('base64');
+        if (encoded) psCmd('P ' + encoded);
+        break;
+      }
       // SendKeys-строку шлём как одну команду 'K …'; переводы строк убираем (ломали бы построчный протокол)
       if (sk != null) psCmd('K ' + sk.replace(/[\r\n]+/g, ''));
       break;
@@ -521,6 +660,26 @@ function screenInput(msg) {
 
 function handleRelay(msg, send) {
   switch (msg.type) {
+    case 'phone_presence':
+      markPhonePresence();
+      break;
+    case 'sync_remote_push':
+      send({ type: 'sync_remote_ack', reqId: msg.reqId, message: 'Выгрузка запущена' });
+      runSyncProc('push', null, null, (event) => send({ type: 'sync_remote_event', reqId: msg.reqId, event }));
+      break;
+    case 'sync_remote_status':
+      runSyncProc('status', null, null, (event) => send({ type: 'sync_remote_event', reqId: msg.reqId, event }));
+      break;
+    case 'sync_remote_blockers':
+      listPotentialBlockers().then((items) => send({ type: 'sync_remote_blockers', reqId: msg.reqId, items }));
+      break;
+    case 'sync_remote_ack':
+      winSend('remote-sync-event', msg);
+      break;
+    case 'sync_remote_event':
+    case 'sync_remote_blockers':
+      winSend('remote-sync-event', msg);
+      break;
     case 'hello':
       send({ type: 'cwd', cwd: getTermCwd(), root: codeRoot() });
       break;
@@ -565,8 +724,11 @@ function handleRelay(msg, send) {
     case 'pty_attach': {
       // подключиться к существующей сессии: отдаём накопленный буфер (текущее содержимое экрана)
       const s = ptys.get(msg.termId);
-      if (s) { ptyResize(msg.termId, msg.cols, msg.rows, 'phone'); activate(msg.termId, 'phone'); send({ type: 'pty_out', termId: msg.termId, data: s.buf || '' }); }
-      else startPty(msg.termId, msg.cols, msg.rows, msg.cwd, false);
+      if (s) {
+        const sz = ptySize(msg.termId);
+        if (sz) send({ type: 'pty_size', termId: msg.termId, cols: sz.cols, rows: sz.rows }); // зритель подстроит свой xterm
+        send({ type: 'pty_out', termId: msg.termId, data: s.buf || '' });
+      } else startPty(msg.termId, msg.cols, msg.rows, msg.cwd, false);
       break;
     }
     case 'run':
@@ -694,21 +856,24 @@ async function handleNewFile(file) {
     // сохраняем историю на диск
     settings.history = [rec, ...(settings.history || [])].slice(0, 60);
     saveSettings();
-    win?.webContents.send('file-received', rec);
+    winSend('file-received', rec);
     // сообщаем телефону путь сохранённого файла — чтобы вставить его в терминал
     try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ to: 'client', type: 'file_saved', name: rec.name, path: dest })); } catch {}
     if (Notification.isSupported()) {
-      new Notification({ title: 'Arra · файл получен', body: `${rec.name} — в буфере (${what})` }).show();
+      new Notification({ title: 'Noda · файл получен', body: `${rec.name} — в буфере (${what})` }).show();
     }
   } catch (e) {
-    win?.webContents.send('file-error', { message: e.message });
+    writeLog('error', 'files.receive', { fileId: file?.id, name: file?.original_name, error: e });
+    winSend('file-error', { message: e.message });
   }
 }
 
 // ---- WebSocket ----
 function pushStatus() {
-  win?.webContents.send('status', {
+  winSend('status', {
     online,
+    phoneOnline,
+    deviceId: agentDeviceId || settings.deviceId || null,
     paired: !!settings.token,
     deviceName: settings.deviceName || '',
     login: settings.login || '',
@@ -726,21 +891,40 @@ function connectWS() {
   ws.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
+      if (msg.type === 'connected') {
+        agentDeviceId = msg.deviceId || agentDeviceId;
+        if (msg.deviceId) { settings.deviceId = msg.deviceId; saveSettings(); }
+        pushStatus();
+        return;
+      }
+      if (msg.type === 'presence') {
+        phoneOnline = !!msg.phoneOnline;
+        pushStatus();
+        return;
+      }
       if (msg.type === 'new_file' && msg.file) { handleNewFile(msg.file); return; }
       // Релей-команды с телефона (терминал/файлы/Claude)
       if (msg.to === 'pc') {
-        const send = (o) => { try { ws.send(JSON.stringify({ to: 'client', ...o })); } catch {} };
+        if (!msg.sourceDeviceId && msg.clientKind !== 'desktop') markPhonePresence();
+        const send = (o) => {
+          try {
+            ws.send(JSON.stringify(msg.sourceDeviceId
+              ? { to: 'agent', deviceId: msg.sourceDeviceId, ...o }
+              : { to: 'client', ...o }));
+          } catch {}
+        };
         handleRelay(msg, send);
       }
-    } catch {}
+    } catch (error) { writeLog('error', 'websocket.message', error); }
   });
   ws.on('close', () => {
     online = false;
+    phoneOnline = false;
     stopScreen();
     pushStatus();
     if (!manualClose) reconnectTimer = setTimeout(connectWS, 3000);
   });
-  ws.on('error', () => { /* close последует */ });
+  ws.on('error', (error) => { writeLog('error', 'websocket.agent', error); /* close последует */ });
 }
 
 // ---- Окно ----
@@ -752,31 +936,133 @@ function createWindow() {
     minHeight: 560,
     frame: false,
     backgroundColor: '#F4F5F7',
-    title: 'Arra',
+    title: 'Noda',
     icon: path.join(__dirname, 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
   });
+  win.webContents.on('did-fail-load', (_e, code, description, validatedURL, isMainFrame) => {
+    writeLog('error', 'renderer.did-fail-load', { code, description, validatedURL, isMainFrame });
+    console.error('[renderer load]', code, description);
+  });
+  win.webContents.on('console-message', (_e, ...args) => {
+    const d = args.length === 1 && typeof args[0] === 'object' ? args[0] : { level: args[0], message: args[1], lineNumber: args[2], sourceId: args[3] };
+    if ((d.level || 0) >= 2) {
+      writeLog((d.level || 0) >= 3 ? 'error' : 'warn', 'renderer.console', d);
+      console.error(`[renderer:${d.lineNumber || 0}] ${d.message || ''}`, d.sourceId || '');
+    }
+  });
+  win.webContents.on('preload-error', (_e, preloadPath, error) => {
+    writeLog('error', 'renderer.preload', { preloadPath, error });
+    console.error('[preload]', preloadPath, error);
+  });
+  win.webContents.on('render-process-gone', (_e, details) => writeLog('fatal', 'renderer.process-gone', details));
+  win.on('unresponsive', () => writeLog('error', 'window.unresponsive', {}));
+  win.webContents.once('did-finish-load', () => {
+    win.webContents.executeJavaScript(`({ title: document.title, body: document.body && document.body.innerText.slice(0,120), hasArra: !!window.arra })`)
+      .then((state) => console.log('[renderer ready]', state)).catch((e) => { writeLog('error', 'renderer.inspect', e); console.error('[renderer inspect]', e); });
+  });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  win.once('ready-to-show', () => { pushStatus(); win.maximize(); win.show(); });
+  win.once('ready-to-show', () => {
+    pushStatus();
+    // Занимаем рабочую область экрана ЯВНО (не win.maximize() — фреймлес-окно при maximize
+    // уезжает на пару пикселей под панель задач и срезает низ терминала).
+    try { const disp = screen.getDisplayMatching(win.getBounds()); win.setBounds(disp.workArea); } catch { win.maximize(); }
+    win.show();
+  });
 }
 
-app.whenReady().then(() => {
+// Запуск «от администратора» ломает ввод от обычных приложений (Handy не вставляет)
+// и drag-drop файлов из проводника (UIPI). Если запущены elevated — тихо перезапускаемся
+// без прав через explorer.exe (он стартует процесс от обычного пользователя).
+function whoamiElevated(cb) {
+  if (process.platform !== 'win32') return cb(false);
+  try {
+    execFile('whoami', ['/groups'], { windowsHide: true }, (err, out) => {
+      if (err || !out) return cb(false);
+      cb(/S-1-16-12288/.test(out)); // High Mandatory Level = elevated
+    });
+  } catch { cb(false); }
+}
+function deescalateIfElevated() {
+  // В dev process.execPath указывает на голый electron.exe. Перезапуск через
+  // explorer без пути к проекту открывал пустое белое окно вместо Arra.
+  if (!app.isPackaged) return Promise.resolve('ok');
+  return new Promise((resolve) => {
+    whoamiElevated((elev) => {
+      if (!elev) return resolve('ok');
+      const marker = path.join(app.getPath('userData'), '.deescalate');
+      try {
+        const last = fs.existsSync(marker) ? Number(fs.readFileSync(marker, 'utf8')) || 0 : 0;
+        if (Date.now() - last < 60000) return resolve('warn'); // защита от петли перезапуска
+        fs.writeFileSync(marker, String(Date.now()));
+      } catch {}
+      try {
+        spawn('explorer.exe', [process.execPath], { detached: true, stdio: 'ignore' }).unref();
+        resolve('relaunched');
+      } catch { resolve('warn'); }
+    });
+  });
+}
+
+// Явный AppUserModelID — чтобы Windows показывал иконку Arra в панели задач (а не дефолт Electron)
+// AppUserModelID намеренно сохраняем прежним: Windows обновит установленную Arra на Noda без второго дубля.
+try { app.setAppUserModelId('com.arratima.arra.desktop'); } catch {}
+
+app.whenReady().then(async () => {
+  pruneLogs();
+  writeLog('info', 'app.start', { version: app.getVersion(), packaged: app.isPackaged, platform: process.platform, arch: process.arch });
+  const elev = await deescalateIfElevated();
+  if (elev === 'relaunched') { app.quit(); return; } // поднимется не-админ копия
   settings = loadSettings();
+  // Разрешаем микрофон (голосовой ввод помощника); остальное — по умолчанию запрещаем
+  try {
+    session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
+      cb(permission === 'media' || permission === 'audioCapture' || permission === 'microphone');
+    });
+  } catch {}
   createWindow();
+  if (elev === 'warn') {
+    setTimeout(() => winSend('app-warn', 'Noda запущена от имени администратора — из-за этого Handy не вставляет текст и не работает перетаскивание файлов из проводника. Закрой приложение и открой обычным двойным кликом (без «Запуск от имени администратора»).'), 1800);
+  }
   if (settings.token) connectWS();
+  // Автообновление (только в упакованном приложении). Не блокирует старт.
+  try { initUpdater(() => win, winSend, writeLog); } catch (error) { writeLog('error', 'updater.init', error); }
 });
+
+// Ручная проверка обновления из UI.
+ipcMain.handle('update-check', () => {
+  try { checkUpdatesNow(); writeLog('info', 'updater.manual-check', {}); return { ok: true }; }
+  catch (error) { writeLog('error', 'updater.manual-check', error); return { ok: false, error: error.message }; }
+});
+ipcMain.handle('app-version', () => app.getVersion());
+ipcMain.handle('app-log', (_e, { level = 'info', source = 'renderer', payload = {} } = {}) => {
+  writeLog(String(level).slice(0, 16), String(source).slice(0, 120), payload);
+  return { ok: true };
+});
+ipcMain.handle('open-logs', async () => {
+  try {
+    fs.mkdirSync(logsDir(), { recursive: true });
+    const error = await shell.openPath(logsDir());
+    if (error) { writeLog('error', 'logs.open', { error }); return { ok: false, error }; }
+    return { ok: true, path: logsDir() };
+  } catch (error) { writeLog('error', 'logs.open', error); return { ok: false, error: error.message }; }
+});
+ipcMain.handle('log-path', () => ({ dir: logsDir(), file: logPath() }));
 
 app.on('window-all-closed', () => { manualClose = true; try { ws?.close(); } catch {} app.quit(); });
 
 // ---- IPC ----
 ipcMain.handle('get-status', () => ({
   online,
+  phoneOnline,
+  deviceId: agentDeviceId || settings.deviceId || null,
   paired: !!settings.token,
   hasAuth: !!(settings.jwt || (settings.login && settings.password)),
   deviceName: settings.deviceName || '',
   login: settings.login || '',
   folder: currentFolder(),
   mode: currentMode(),
+  deviceProfile: detectDeviceProfile(),
 }));
 
 ipcMain.handle('login', async (_e, { login, password, deviceName }) => {
@@ -802,6 +1088,7 @@ ipcMain.handle('login', async (_e, { login, password, deviceName }) => {
     connectWS();
     return { ok: true };
   } catch (e) {
+    writeLog('error', 'auth.login', e);
     return { ok: false, error: e.message };
   }
 });
@@ -846,15 +1133,54 @@ ipcMain.handle('api', async (_e, { method, path, body }) => {
       return { ok: true, data };
     }
   } catch (e) {
+    writeLog('error', 'api.request', { method: method || 'GET', path, error: e });
     return { ok: false, error: e.message };
   }
 });
+// Голос помощника: аудио с микрофона → /ai/transcribe → текст
+ipcMain.handle('transcribe', async (_e, { base64, mime }) => {
+  try {
+    const jwt = await getJwt();
+    if (!jwt) return { ok: false, error: 'Нет авторизации ПК' };
+    const buffer = Buffer.from(base64, 'base64');
+    const ext = (mime || '').includes('ogg') ? 'ogg' : (mime || '').includes('mp4') ? 'mp4' : 'webm';
+    const boundary = '----arra' + Date.now().toString(16);
+    const head = Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="voice.${ext}"\r\n` +
+      `Content-Type: ${mime || 'audio/webm'}\r\n\r\n`, 'utf8');
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
+    const payload = Buffer.concat([head, buffer, tail]);
+    const text = await new Promise((resolve, reject) => {
+      const u = new URL(BASE + '/ai/transcribe');
+      const req = https.request(u, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'multipart/form-data; boundary=' + boundary,
+          'Content-Length': payload.length,
+          Authorization: 'Bearer ' + jwt,
+        },
+      }, (res) => {
+        let buf = '';
+        res.on('data', (d) => (buf += d));
+        res.on('end', () => {
+          if (res.statusCode >= 400) return reject(new Error('HTTP ' + res.statusCode));
+          try { resolve(JSON.parse(buf).text || ''); } catch { reject(new Error('Плохой ответ сервера')); }
+        });
+      });
+      req.on('error', reject);
+      req.write(payload);
+      req.end();
+    });
+    return { ok: true, text };
+  } catch (e) { writeLog('error', 'voice.transcribe', e); return { ok: false, error: e.message }; }
+});
+
 ipcMain.handle('open-folder', () => shell.openPath(currentFolder()));
 ipcMain.handle('open-path', (_e, p) => shell.showItemInFolder(p));
 ipcMain.handle('open-file', (_e, p) => shell.openPath(p)); // открыть файл/папку дефолтным приложением
 ipcMain.handle('fs-delete', async (_e, p) => {
   try { await fs.promises.rm(p, { recursive: true, force: true }); return { ok: true }; }
-  catch (e) { return { ok: false, error: e.message }; }
+  catch (e) { writeLog('error', 'files.delete', { path: p, error: e }); return { ok: false, error: e.message }; }
 });
 ipcMain.handle('copy-path', (_e, p) => { clipboard.writeText(p); return true; });
 ipcMain.handle('clip-read', () => clipboard.readText());
@@ -869,10 +1195,283 @@ ipcMain.handle('logout', () => {
   return { ok: true };
 });
 
+// ---- Перенос (синхронизация рабочих файлов с сервером) ----
+// Тонкая обёртка над проверенным движком C:\Claude\_sync (Python/SFTP).
+// arra_sync.py отдаёт по строке JSON на событие — стримим их в рендерер.
+// Runtime поставляется вместе с Noda: на втором устройстве не требуется вручную
+// копировать C:\Claude\_sync. ARRA_SYNC_DIR оставлен только для отладки.
+const SYNC_DIR = process.env.ARRA_SYNC_DIR || (app.isPackaged
+  ? path.join(process.resourcesPath, 'app.asar.unpacked', 'sync')
+  : path.join(__dirname, 'sync'));
+let syncProc = null;
+function readEnvFile(file) {
+  try {
+    const values = {};
+    for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+      const match = raw.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (!match) continue;
+      let value = match[2].trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
+      values[match[1]] = value;
+    }
+    return values;
+  } catch { return {}; }
+}
+function syncConnectionEnv() {
+  const direct = {
+    host: process.env.NODA_SYNC_HOST || process.env.APP_SERVER_HOST || '',
+    user: process.env.NODA_SYNC_USER || process.env.APP_SERVER_USER || '',
+    password: process.env.NODA_SYNC_PASSWORD || process.env.APP_SERVER_PASSWORD || '',
+    source: 'process-env',
+  };
+  if (direct.password) return direct;
+  const root = codeRoot();
+  const candidates = [
+    path.join(root, 'Tima', '07_Appstore', '.env'),
+    path.join(root, 'Tima', '07_Appstore', 'server', '.env'),
+    path.resolve(__dirname, '..', '.env'),
+    path.resolve(__dirname, '..', 'server', '.env'),
+  ];
+  for (const file of [...new Set(candidates)]) {
+    const values = readEnvFile(file);
+    const password = values.NODA_SYNC_PASSWORD || values.APP_SERVER_PASSWORD || '';
+    if (password) return {
+      host: values.NODA_SYNC_HOST || values.APP_SERVER_HOST || '',
+      user: values.NODA_SYNC_USER || values.APP_SERVER_USER || '',
+      password,
+      source: file,
+    };
+  }
+  return direct;
+}
+function runSyncProc(mode, only, role, remoteEmit = null) {
+  const emit = (event) => {
+    if (event?.type === 'error' || event?.type === 'stderr' || event?.type === 'fileerror') writeLog('error', `sync.${event.type}`, { mode, only, event });
+    else if (event?.type === 'retry' || event?.type === 'blocked') writeLog('warn', `sync.${event.type}`, { mode, only, event });
+    else if (event?.type === 'done') writeLog(event.errors ? 'warn' : 'info', 'sync.done', { mode, only, event });
+    winSend('sync-event', event);
+    if (remoteEmit) { try { remoteEmit(event); } catch {} }
+  };
+  if (syncProc) {
+    writeLog('warn', 'sync.already-running', { mode, only });
+    emit({ type: 'error', error: 'На устройстве уже идёт проверка или передача.' });
+    return false;
+  }
+  const script = path.join(SYNC_DIR, 'arra_sync.py');
+  if (!fs.existsSync(script)) {
+    writeLog('error', 'sync.module-missing', { script, mode, only });
+    emit({ type: 'error', error: 'В установке Noda отсутствует модуль передачи: ' + script + '. Переустанови приложение.' });
+    return false;
+  }
+  const args = [script, mode];
+  if (only) args.push('--only', only);
+  const syncConnection = syncConnectionEnv();
+  if (!syncConnection.password) {
+    emit({ type: 'error', error: 'На этом устройстве не найдены локальные реквизиты переноса. Проверь файл .env проекта Noda.' });
+    return false;
+  }
+  writeLog('info', 'sync.credentials', { source: syncConnection.source, hostConfigured: !!syncConnection.host, userConfigured: !!syncConnection.user });
+  const tryExe = (exe, fallback) => {
+    const env = {
+      ...process.env,
+      PYTHONIOENCODING: 'utf-8',
+      ARRA_PROJECTS_DIR: codeRoot(),
+      NODA_DEVICE_NAME: settings.deviceName || os.hostname(),
+      NODA_DEVICE_ROLE: role || detectDeviceProfile().role,
+      NODA_SYNC_HOST: syncConnection.host || '186.246.2.140',
+      NODA_SYNC_USER: syncConnection.user || 'tima',
+      NODA_SYNC_PASSWORD: syncConnection.password,
+    };
+    let p;
+    try { p = spawn(exe, args, { cwd: SYNC_DIR, windowsHide: true, env }); }
+    catch (e) { if (fallback) return tryExe(fallback, null); writeLog('error', 'sync.spawn', { exe, mode, only, error: e }); emit({ type: 'error', error: 'Не удалось запустить Python: ' + e.message }); return; }
+    syncProc = p;
+    writeLog('info', 'sync.start', { mode, only, role: env.NODA_DEVICE_ROLE, root: env.ARRA_PROJECTS_DIR, executable: exe, childPid: p.pid });
+    let buf = '';
+    p.stdout.on('data', (d) => {
+      buf += d.toString('utf8');
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+        if (line) {
+          try { emit(JSON.parse(line)); }
+          catch (error) { writeLog('error', 'sync.output-json', { mode, only, line, error }); }
+        }
+      }
+    });
+    p.stderr.on('data', (d) => emit({ type: 'stderr', msg: d.toString('utf8').slice(0, 300) }));
+    p.on('close', (code, signal) => {
+      writeLog(code ? 'error' : 'info', 'sync.closed', { mode, only, code, signal });
+      emit({ type: 'closed', code }); syncProc = null;
+    });
+    p.on('error', (e) => {
+      syncProc = null;
+      if (e.code === 'ENOENT' && fallback) { tryExe(fallback, null); return; }
+      emit({ type: 'error', error: 'Python не запустился: ' + e.message + '. Проверь установку Python 3 и перезапусти проверку.' });
+    });
+    return true;
+  };
+  return tryExe('python', 'py');
+}
+ipcMain.handle('sync-run', (_e, { mode, only, role } = {}) => { runSyncProc(mode || 'status', only || null, role || null); return true; });
+ipcMain.handle('sync-cancel', () => {
+  if (syncProc) {
+    writeLog('warn', 'sync.cancel', { childPid: syncProc.pid });
+    try { syncProc.kill(); } catch (error) { writeLog('error', 'sync.cancel', error); }
+    syncProc = null;
+  }
+  return true;
+});
+
+function listPotentialBlockers() {
+  const terminalItems = [...ptys.entries()].map(([id, value]) => ({
+    type: 'terminal', name: `Терминал ${id}`, title: value.cwd || '', pid: value.proc?.pid || null,
+  }));
+  if (process.platform !== 'win32') return Promise.resolve(terminalItems);
+  const names = "'Code','Cursor','Claude','ChatGPT','WINWORD','EXCEL','POWERPNT','Acrobat','AcroRd32','devenv','notepad++','Obsidian'";
+  const command = `$names=@(${names}); Get-Process -ErrorAction SilentlyContinue | Where-Object { (($names -contains $_.ProcessName) -and $_.MainWindowHandle -ne 0) -or $_.ProcessName -like 'codex*' } | Select-Object ProcessName,Id,MainWindowTitle | ConvertTo-Json -Compress`;
+  return new Promise((resolve) => {
+    execFile('powershell.exe', psArgs(command), { encoding: 'utf8', windowsHide: true, timeout: 8000 }, (error, stdout) => {
+      if (error) writeLog('error', 'sync.blockers.list', error);
+      let rows = [];
+      try { const parsed = JSON.parse(String(stdout || '').trim() || '[]'); rows = Array.isArray(parsed) ? parsed : [parsed]; } catch {}
+      resolve([...terminalItems, ...rows.filter(Boolean).map((row) => {
+        const rawName = row.ProcessName || 'Процесс';
+        return {
+          type: 'process', name: /^(chatgpt|codex)/i.test(rawName) ? 'Codex' : rawName,
+          title: row.MainWindowTitle || '', pid: row.Id || null,
+        };
+      })]);
+    });
+  });
+}
+
+function normalizeProcessPids(pids) {
+  return [...new Set((Array.isArray(pids) ? pids : []).map(Number).filter((pid) => pid > 0 && pid !== process.pid))];
+}
+function inspectProcesses(pids) {
+  const safePids = normalizeProcessPids(pids);
+  if (!safePids.length || process.platform !== 'win32') return Promise.resolve([]);
+  const command = `$ids=@(${safePids.join(',')}); Get-Process -Id $ids -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,MainWindowTitle,Responding | ConvertTo-Json -Compress`;
+  return new Promise((resolve) => {
+    execFile('powershell.exe', psArgs(command), { encoding: 'utf8', windowsHide: true, timeout: 8000 }, (error, stdout) => {
+      if (error && !/Cannot find a process|Не удается найти процесс/i.test(String(error.message || ''))) {
+        writeLog('error', 'sync.blockers.inspect', { pids: safePids, error });
+      }
+      let rows = [];
+      try { const parsed = JSON.parse(String(stdout || '').trim() || '[]'); rows = Array.isArray(parsed) ? parsed : [parsed]; }
+      catch (parseError) { writeLog('error', 'sync.blockers.inspect-json', { pids: safePids, error: parseError, stdout }); }
+      resolve(rows.filter(Boolean).map((row) => ({
+        pid: Number(row.Id), name: String(row.ProcessName || 'Процесс'),
+        title: String(row.MainWindowTitle || ''), responding: row.Responding !== false,
+      })));
+    });
+  });
+}
+async function waitForProcessExit(pids, timeoutMs) {
+  const started = Date.now();
+  let remaining = await inspectProcesses(pids);
+  while (remaining.length && Date.now() - started < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    remaining = await inspectProcesses(pids);
+  }
+  return remaining;
+}
+
+ipcMain.handle('sync-blockers', () => listPotentialBlockers());
+ipcMain.handle('sync-close-blockers', async (_e, pids = []) => {
+  const safePids = normalizeProcessPids(pids);
+  if (!safePids.length) return { ok: true, requested: 0, closed: 0, remaining: [] };
+  if (process.platform !== 'win32') return { ok: false, error: 'Закрытие сессий поддерживается только в Windows' };
+  writeLog('info', 'sync.blockers.close-request', { pids: safePids });
+  const before = await inspectProcesses(safePids);
+
+  // node-pty не создаёт обычное окно Windows: закрываем его через собственный API,
+  // иначе CloseMainWindow всегда возвращает false и терминал навечно остаётся в списке.
+  for (const [termId, value] of [...ptys.entries()]) {
+    if (safePids.includes(Number(value.proc?.pid))) killPty(termId);
+  }
+
+  const command = [
+    `$items=Get-Process -Id @(${safePids.join(',')}) -ErrorAction SilentlyContinue`,
+    'foreach($p in $items){',
+    '  if($p.MainWindowHandle -ne 0){ [void]$p.CloseMainWindow() }',
+    '  else { Stop-Process -Id $p.Id -ErrorAction SilentlyContinue }',
+    '}',
+  ].join('; ');
+  const closeError = await new Promise((resolve) => {
+    execFile('powershell.exe', psArgs(command), { encoding: 'utf8', windowsHide: true, timeout: 12000 }, (error) => resolve(error || null));
+  });
+  if (closeError) writeLog('error', 'sync.blockers.close-command', { pids: safePids, error: closeError });
+
+  const remaining = await waitForProcessExit(safePids, 15000);
+  const remainingPids = new Set(remaining.map((item) => item.pid));
+  const closed = before.filter((item) => !remainingPids.has(item.pid));
+  const result = { ok: !closeError, requested: safePids.length, closed: closed.length, remaining, needsForce: remaining.length > 0 };
+  if (closeError) result.error = closeError.message;
+  writeLog(remaining.length ? 'warn' : 'info', 'sync.blockers.close-result', result);
+  return result;
+});
+ipcMain.handle('sync-force-close-blockers', async (_e, pids = []) => {
+  const safePids = normalizeProcessPids(pids);
+  if (!safePids.length) return { ok: true, requested: 0, closed: 0, remaining: [] };
+  if (process.platform !== 'win32') return { ok: false, error: 'Принудительное закрытие поддерживается только в Windows' };
+  writeLog('warn', 'sync.blockers.force-request', { pids: safePids });
+  const before = await inspectProcesses(safePids);
+  for (const [termId, value] of [...ptys.entries()]) {
+    if (safePids.includes(Number(value.proc?.pid))) killPty(termId);
+  }
+  const command = `Stop-Process -Id @(${safePids.join(',')}) -Force -ErrorAction SilentlyContinue`;
+  const forceError = await new Promise((resolve) => {
+    execFile('powershell.exe', psArgs(command), { encoding: 'utf8', windowsHide: true, timeout: 12000 }, (error) => resolve(error || null));
+  });
+  if (forceError) writeLog('error', 'sync.blockers.force-command', { pids: safePids, error: forceError });
+  const remaining = await waitForProcessExit(safePids, 6000);
+  const remainingPids = new Set(remaining.map((item) => item.pid));
+  const closed = before.filter((item) => !remainingPids.has(item.pid));
+  const result = { ok: !forceError && !remaining.length, requested: safePids.length, closed: closed.length, remaining };
+  if (forceError) result.error = forceError.message;
+  else if (remaining.length) result.error = 'Некоторые процессы не завершились даже принудительно';
+  writeLog(result.ok ? 'info' : 'error', 'sync.blockers.force-result', result);
+  return result;
+});
+ipcMain.handle('remote-sync', async (_e, { deviceId, mode = 'push' } = {}) => {
+  if (!deviceId) return { ok: false, error: 'Устройство не выбрано' };
+  const jwt = await getJwt();
+  if (!jwt) return { ok: false, error: 'Нет авторизации' };
+  const reqId = `sync-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  try {
+    const remoteWs = new WebSocket(`${CLIENT_WS_URL}?token=${encodeURIComponent(jwt)}`);
+    const timeout = setTimeout(() => { try { remoteWs.close(); } catch {} }, 30 * 60 * 1000);
+    remoteWs.on('open', () => remoteWs.send(JSON.stringify({
+      to: 'pc', deviceId, clientKind: 'desktop', type: mode === 'status' ? 'sync_remote_status' : 'sync_remote_push', reqId,
+    })));
+    remoteWs.on('message', (raw) => {
+      let message;
+      try { message = JSON.parse(raw.toString()); } catch { return; }
+      if (message.reqId !== reqId) return;
+      winSend('remote-sync-event', message);
+      const eventType = message.event?.type;
+      if (message.type === 'pc_offline' || eventType === 'done' || eventType === 'error' || eventType === 'closed') {
+        clearTimeout(timeout);
+        try { remoteWs.close(); } catch {}
+      }
+    });
+    remoteWs.on('error', (error) => {
+      writeLog('error', 'sync.remote-websocket', { deviceId, reqId, error });
+      winSend('remote-sync-event', { type: 'sync_remote_event', reqId, event: { type: 'error', error: error.message || 'Нет связи' } });
+    });
+    return { ok: true, reqId };
+  } catch (error) {
+    writeLog('error', 'sync.remote-start', { deviceId, reqId, error });
+    return { ok: false, error: error.message || 'Команда не отправлена' };
+  }
+});
+
 // ---- Терминал/код: локальное использование самим ПК-приложением ----
 ipcMain.on('term', (_e, msg) => {
   if (!msg || typeof msg !== 'object') return;
-  handleRelay(msg, (o) => win?.webContents.send('term-event', o));
+  handleRelay(msg, (o) => winSend('term-event', o));
 });
 
 ipcMain.handle('get-code-root', () => codeRoot());

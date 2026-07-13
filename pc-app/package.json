@@ -1,42 +1,58 @@
 {
-  "name": "arra-desktop",
-  "version": "1.1.9",
-  "description": "Arra — рабочее место на ПК: терминал, файлы, помощник (связь с телефоном)",
+  "name": "noda-desktop",
+  "version": "1.8.5",
+  "description": "Noda — терминал, файлы и передача проектов между ноутбуком, сервером и ПК",
   "main": "main.js",
-  "author": "Arra",
+  "author": "Noda",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win"
   },
   "devDependencies": {
     "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "rcedit": "^5.0.1"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "electron-updater": "^6.8.9",
     "node-pty": "^1.1.0",
     "ws": "^8.18.0"
   },
   "build": {
     "appId": "com.arratima.arra.desktop",
-    "productName": "Arra",
+    "productName": "Noda",
+    "afterPack": "build/after-pack.cjs",
+    "npmRebuild": false,
     "directories": {
       "output": "dist"
     },
     "files": [
       "main.js",
       "preload.js",
+      "updater.js",
+      "sync/**",
       "icon.png",
+      "icon.ico",
       "renderer/**",
       "node_modules/**"
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "arra123",
+        "repo": "arra-app"
+      }
+    ],
     "asarUnpack": [
-      "node_modules/node-pty/**"
+      "node_modules/node-pty/**",
+      "sync/**"
     ],
     "win": {
       "target": "nsis",
-      "icon": "icon.png"
+      "icon": "icon.ico",
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,
@@ -44,7 +60,13 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Arra"
+      "shortcutName": "Noda",
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
+      "runAfterFinish": true,
+      "installerHeader": "build/installerHeader.bmp",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp"
     }
   }
 }
