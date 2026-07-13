@@ -549,6 +549,8 @@ function startPty(termId, cols, rows, cwd, local) {
     wsSend({ to: 'client', type: 'pty_out', termId, data: d });
   });
   proc.onExit(() => {
+    if (s.exitNotified || ptys.get(termId) !== s) return;
+    s.exitNotified = true;
     ptys.delete(termId);
     winSend('pty-data', { termId, data: '\r\n[сессия завершена]\r\n' });
     winSend('pty-exit', { termId });
@@ -571,12 +573,25 @@ function ptyResize(termId, cols, rows, side) {
 }
 // Текущий размер сессии — чтобы подключившийся зритель подстроил свой xterm под него
 function ptySize(termId) { const s = ptys.get(termId); return s && s.proc ? { cols: s.proc.cols, rows: s.proc.rows } : null; }
-function killPty(termId) { const s = ptys.get(termId); if (s && s.proc) { try { s.proc.kill(); } catch {} } ptys.delete(termId); }
+function killPty(termId) {
+  const s = ptys.get(termId);
+  if (!s) return false;
+  s.exitNotified = true;
+  if (ptys.get(termId) === s) ptys.delete(termId);
+  winSend('pty-data', { termId, data: '\r\n[сессия завершена]\r\n' });
+  winSend('pty-exit', { termId });
+  wsSend({ to: 'client', type: 'pty_exit', termId });
+  if (s.proc) { try { s.proc.kill(); } catch (error) { writeLog('error', 'pty.kill', { termId, pid: s.proc.pid, error }); } }
+  return true;
+}
 function restartPty(termId, cols, rows, cwd, local) {
   const s = ptys.get(termId);
   const keepCwd = (cwd && fs.existsSync(cwd)) ? cwd : (s ? s.cwd : null);
-  if (s && s.proc) { try { s.proc.kill(); } catch {} }
-  ptys.delete(termId);
+  if (s) {
+    s.exitNotified = true;
+    if (s.proc) { try { s.proc.kill(); } catch {} }
+    if (ptys.get(termId) === s) ptys.delete(termId);
+  }
   return startPty(termId, cols, rows, keepCwd, local || (s && s.local));
 }
 
@@ -1528,7 +1543,7 @@ function normalizeProcessPids(pids) {
 function inspectProcesses(pids) {
   const safePids = normalizeProcessPids(pids);
   if (!safePids.length || process.platform !== 'win32') return Promise.resolve([]);
-  const command = `$ids=@(${safePids.join(',')}); Get-Process -Id $ids -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,MainWindowTitle,Responding | ConvertTo-Json -Compress`;
+  const command = `$ids=@(${safePids.join(',')}); Get-Process -ErrorAction SilentlyContinue | Where-Object { $ids -contains $_.Id } | Select-Object ProcessName,Id,MainWindowTitle,Responding | ConvertTo-Json -Compress`;
   return new Promise((resolve) => {
     execFile('powershell.exe', psArgs(command), { encoding: 'utf8', windowsHide: true, timeout: 8000 }, (error, stdout) => {
       if (error && !/Cannot find a process|Не удается найти процесс/i.test(String(error.message || ''))) {
@@ -1563,23 +1578,34 @@ async function closePotentialBlockers(pids = []) {
 
   // node-pty не создаёт обычное окно Windows: закрываем его через собственный API,
   // иначе CloseMainWindow всегда возвращает false и терминал навечно остаётся в списке.
+  const terminalPids = new Set();
   for (const [termId, value] of [...ptys.entries()]) {
-    if (safePids.includes(Number(value.proc?.pid))) killPty(termId);
+    const pid = Number(value.proc?.pid);
+    if (safePids.includes(pid)) {
+      terminalPids.add(pid);
+      killPty(termId);
+    }
   }
 
-  const command = [
-    `$items=Get-Process -Id @(${safePids.join(',')}) -ErrorAction SilentlyContinue`,
-    'foreach($p in $items){',
-    '  if($p.MainWindowHandle -ne 0){ [void]$p.CloseMainWindow() }',
-    '  else { Stop-Process -Id $p.Id -ErrorAction SilentlyContinue }',
-    '}',
-  ].join('; ');
-  const closeError = await new Promise((resolve) => {
-    execFile('powershell.exe', psArgs(command), { encoding: 'utf8', windowsHide: true, timeout: 12000 }, (error) => resolve(error || null));
-  });
-  if (closeError) writeLog('error', 'sync.blockers.close-command', { pids: safePids, error: closeError });
+  const processPids = safePids.filter((pid) => !terminalPids.has(pid));
+  let closeError = null;
+  if (processPids.length) {
+    const command = [
+      `$ids=@(${processPids.join(',')})`,
+      '$items=Get-Process -ErrorAction SilentlyContinue | Where-Object { $ids -contains $_.Id }',
+      'foreach($p in $items){',
+      '  if($p.MainWindowHandle -ne 0){ [void]$p.CloseMainWindow() }',
+      '  else { Stop-Process -Id $p.Id -ErrorAction SilentlyContinue }',
+      '}',
+    ].join('; ');
+    closeError = await new Promise((resolve) => {
+      execFile('powershell.exe', psArgs(command), { encoding: 'utf8', windowsHide: true, timeout: 12000 }, (error) => resolve(error || null));
+    });
+  }
 
   const remaining = await waitForProcessExit(safePids, 15000);
+  if (closeError && !remaining.some((item) => processPids.includes(item.pid))) closeError = null;
+  if (closeError) writeLog('error', 'sync.blockers.close-command', { pids: processPids, error: closeError });
   const remainingPids = new Set(remaining.map((item) => item.pid));
   const closed = before.filter((item) => !remainingPids.has(item.pid));
   const result = { ok: !closeError, requested: safePids.length, closed: closed.length, remaining, needsForce: remaining.length > 0 };
@@ -1594,15 +1620,25 @@ async function forceClosePotentialBlockers(pids = []) {
   if (process.platform !== 'win32') return { ok: false, error: 'Принудительное закрытие поддерживается только в Windows' };
   writeLog('warn', 'sync.blockers.force-request', { pids: safePids });
   const before = await inspectProcesses(safePids);
+  const terminalPids = new Set();
   for (const [termId, value] of [...ptys.entries()]) {
-    if (safePids.includes(Number(value.proc?.pid))) killPty(termId);
+    const pid = Number(value.proc?.pid);
+    if (safePids.includes(pid)) {
+      terminalPids.add(pid);
+      killPty(termId);
+    }
   }
-  const command = `Stop-Process -Id @(${safePids.join(',')}) -Force -ErrorAction SilentlyContinue`;
-  const forceError = await new Promise((resolve) => {
-    execFile('powershell.exe', psArgs(command), { encoding: 'utf8', windowsHide: true, timeout: 12000 }, (error) => resolve(error || null));
-  });
-  if (forceError) writeLog('error', 'sync.blockers.force-command', { pids: safePids, error: forceError });
+  const processPids = safePids.filter((pid) => !terminalPids.has(pid));
+  let forceError = null;
+  if (processPids.length) {
+    const command = `$ids=@(${processPids.join(',')}); Get-Process -ErrorAction SilentlyContinue | Where-Object { $ids -contains $_.Id } | Stop-Process -Force -ErrorAction SilentlyContinue`;
+    forceError = await new Promise((resolve) => {
+      execFile('powershell.exe', psArgs(command), { encoding: 'utf8', windowsHide: true, timeout: 12000 }, (error) => resolve(error || null));
+    });
+  }
   const remaining = await waitForProcessExit(safePids, 6000);
+  if (forceError && !remaining.some((item) => processPids.includes(item.pid))) forceError = null;
+  if (forceError) writeLog('error', 'sync.blockers.force-command', { pids: processPids, error: forceError });
   const remainingPids = new Set(remaining.map((item) => item.pid));
   const closed = before.filter((item) => !remainingPids.has(item.pid));
   const result = { ok: !forceError && !remaining.length, requested: safePids.length, closed: closed.length, remaining };
