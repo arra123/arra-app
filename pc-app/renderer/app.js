@@ -447,23 +447,21 @@ async function triggerUpdateCheck() {
   try { await window.arra.updateCheck(); }
   catch { setUpdateButton('', 'Проверить обновление'); }
 }
-// ---- цветовая палитра: светлая / серая (как VS Code Dark Modern) ----
+// ---- единая тёмная палитра ----
 const XTERM_THEMES = {
-  light: { background: '#0E1014', foreground: '#D4D7DE', cursor: '#7C86F0', selectionBackground: 'rgba(124,134,240,0.35)' },
-  dark:  { background: '#1F1F1F', foreground: '#CCCCCC', cursor: '#AEB3C2', selectionBackground: 'rgba(124,134,240,0.35)' },
+  dark: { background: '#151922', foreground: '#E4E8F1', cursor: '#9DA8FF', selectionBackground: 'rgba(124,134,240,0.35)' },
 };
-function curTheme() { return document.body.dataset.theme === 'dark' ? 'dark' : 'light'; }
-function applyTheme(t) {
-  if (t === 'dark') document.body.dataset.theme = 'dark';
-  else delete document.body.dataset.theme;
-  try { localStorage.setItem('arra-theme', t); } catch {}
+function curTheme() { return 'dark'; }
+function applyTheme() {
+  document.body.dataset.theme = 'dark';
+  try { localStorage.setItem('arra-theme', 'dark'); } catch {}
   // перекрасить уже открытые терминалы
   for (const id in xts) { try { xts[id].term.options.theme = XTERM_THEMES[curTheme()]; } catch {} }
   const b = document.getElementById('themebtn');
-  if (b) b.title = curTheme() === 'dark' ? 'Тема: серая (VS Code) — нажми для светлой' : 'Тема: светлая — нажми для серой (VS Code)';
+  if (b) b.remove();
 }
-document.getElementById('themebtn').onclick = () => applyTheme(curTheme() === 'dark' ? 'light' : 'dark');
-try { applyTheme(localStorage.getItem('arra-theme') || 'light'); } catch { applyTheme('light'); }
+document.getElementById('themebtn')?.remove();
+applyTheme();
 // Гамбургер — скрыть/показать левый сайдбар (как в VS Code). Терминал переподгоняем под новую ширину.
 document.getElementById('navtoggle').onclick = () => {
   document.body.classList.toggle('nav-collapsed');
@@ -527,7 +525,23 @@ async function renderNav() {
       <div><span class="dot ${state.presence.laptop ? 'on' : ''}"></span><span>Ноутбук</span><small>${currentRole === 'laptop' ? 'это устройство' : (state.presence.laptop ? 'в сети' : 'не в сети')}</small></div>
       <div><span class="dot ${state.presence.pc ? 'on' : ''}"></span><span>ПК</span><small>${currentRole === 'pc' ? 'это устройство' : (state.presence.pc ? 'в сети' : 'не в сети')}</small></div>
     </div>`;
-  nav.querySelectorAll('button.navitem').forEach((b) => (b.onclick = () => { state.section = b.dataset.s; renderNav(); route(); }));
+  const placeNavGlider = () => {
+    const active = nav.querySelector('button.navitem.active');
+    if (!active) return;
+    nav.style.setProperty('--nav-active-y', `${active.offsetTop}px`);
+    nav.style.setProperty('--nav-active-h', `${active.offsetHeight}px`);
+  };
+  requestAnimationFrame(placeNavGlider);
+  nav.querySelectorAll('button.navitem').forEach((b) => (b.onclick = () => {
+    if (state.section === b.dataset.s) return;
+    state.section = b.dataset.s;
+    nav.querySelector('button.navitem.active')?.classList.remove('active');
+    b.classList.add('active');
+    placeNavGlider();
+    const change = () => route();
+    if (document.startViewTransition && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) document.startViewTransition(change);
+    else change();
+  }));
   const su = document.getElementById('side-update');
   if (su) su.onclick = triggerUpdateCheck;
 }
