@@ -97,4 +97,4 @@ export const BottomTabInset = Platform.select({ ios: 50, android: 80, web: 64 })
 export const MaxContentWidth = 800;
 
 /** Пользовательская версия Noda. Меняется только вместе с нативной TestFlight-сборкой. */
-export const APP_BUILD = 73;
+export const APP_BUILD = 74;

@@ -21,16 +21,16 @@ const LIQUID_ICON = {
 function liquidIcon(name) { return LIQUID_ICON[name] || LIQUID_ICON.sparkle; }
 function liquidCompanyMark(className = '') { return `<img class="liquid-company-mark ${className}" src="assets/company-reimbursement-2d-256.png" alt="" decoding="async"/>`; }
 const FINANCE_BRANDS = [
-  { test: /belka|белк/i, title: 'BelkaCar', asset: 'belkacar.svg' },
-  { test: /city\s*drive|citydrive|ситидрайв|сити\s*драйв/i, title: 'Ситидрайв', asset: 'citydrive.png' },
-  { test: /delimobil|делимоб|дели\b/i, title: 'Делимобиль', asset: 'delimobil.png' },
-  { test: /яндекс[.\s-]*(драйв|drive)|yandex[.\s-]*drive/i, title: 'Яндекс Драйв', asset: 'yandex-drive.png' },
-  { test: /chat\s*gpt|open\s*ai|gpt(?:-|\s|\d|$)|codex/i, title: 'OpenAI', asset: 'openai.svg' },
-  { test: /anthropic|claude|клод/i, title: 'Anthropic', asset: 'anthropic.svg' },
-  { test: /proxy\s*api|прокси\s*апи/i, title: 'ProxyAPI', asset: 'proxyapi.png' },
+  { test: /belka|белк/i, title: 'BelkaCar', merchant: 'belkacar' },
+  { test: /city\s*drive|citydrive|ситидрайв|сити\s*драйв/i, title: 'Ситидрайв', merchant: 'citydrive' },
+  { test: /delimobil|делимоб|дели\b/i, title: 'Делимобиль', merchant: 'delimobil' },
+  { test: /яндекс[.\s-]*(драйв|drive)|yandex[.\s-]*drive/i, title: 'Яндекс Драйв', merchant: 'яндекс драйв' },
+  { test: /chat\s*gpt|open\s*ai|gpt(?:-|\s|\d|$)|codex/i, title: 'OpenAI', merchant: 'openai' },
+  { test: /anthropic|claude|клод/i, title: 'Anthropic', merchant: 'anthropic' },
+  { test: /proxy\s*api|прокси\s*апи/i, title: 'ProxyAPI', merchant: 'proxyapi' },
 ];
 function financeBrandIcon(brand) {
-  return `<span class="finance-brand-icon" title="${esc(brand.title)}"><img src="assets/brands/${brand.asset}" alt="" decoding="async"/></span>`;
+  return merchantLogo(brand.merchant, 38).replace('class="mlogo"', `class="mlogo finance-brand-icon" title="${esc(brand.title)}"`);
 }
 function financeServiceIcon(item = {}) {
   const source = [item.purpose, item.merchant, item.company, item.counterparty, item.note].filter(Boolean).join(' ').toLowerCase();

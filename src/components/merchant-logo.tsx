@@ -55,13 +55,13 @@ export function MerchantLogo({ merchant, size = 40 }: { merchant: string; size?:
   const domain = domainFor(merchant);
   const radius = size / 2; // круглые иконки, как в банках
 
-  // Логотип берём из сервиса фавиконов Google (Clearbit закрыли в 2025).
-  // Работает в РФ без ключа, отдаёт реальный логотип для крупных брендов.
+  // Unavatar ищет актуальный знак по домену сразу у нескольких провайдеров.
+  // При отсутствии изображения показываем нейтральную иконку компании.
   if (domain && !failed) {
     return (
       <View style={[styles.tile, { width: size, height: size, borderRadius: radius, backgroundColor: '#fff' }]}>
         <Image
-          source={{ uri: `https://www.google.com/s2/favicons?domain=${domain}&sz=128` }}
+          source={{ uri: `https://unavatar.io/domain/${encodeURIComponent(domain)}?fallback=false&size=128` }}
           style={{ width: size * 0.86, height: size * 0.86 }}
           contentFit="contain"
           onError={() => setFailed(true)}

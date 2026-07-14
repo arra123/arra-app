@@ -1003,7 +1003,7 @@ function openDebtModal(db) {
 
 // Добавить/изменить операцию вручную (на ПК — полноценное редактирование, как просили)
 const TX_CATS = ['Продукты', 'Кафе и рестораны', 'Кофе', 'Доставка', 'Алкоголь', 'Транспорт', 'Такси', 'Каршеринг', 'Топливо', 'Парковка', 'Маркетплейс', 'Техника', 'Одежда', 'Аптека', 'Здоровье', 'Спорт', 'Красота', 'Кино', 'Игры', 'Музыка', 'Подписки', 'ЖКХ', 'Связь', 'Дом', 'Образование', 'Путешествия', 'Налоги', 'Зарплата', 'Прочее'];
-// --- Реальные логотипы брендов (как на телефоне): Google favicons ---
+// --- Реальные логотипы брендов по домену через Unavatar ---
 const DOMAINS = {
   'озон': 'ozon.ru', 'ozon': 'ozon.ru', 'ozon банк': 'ozon.ru',
   'вайлдберриз': 'wildberries.ru', 'wildberries': 'wildberries.ru', 'вб': 'wildberries.ru',
@@ -1035,7 +1035,10 @@ function colorFor(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31
 function domainFor(m) { const k = (m || '').trim().toLowerCase(); if (DOMAINS[k]) return DOMAINS[k]; for (const x of Object.keys(DOMAINS)) if (k.includes(x)) return DOMAINS[x]; return null; }
 function merchantLogo(name, size = 38) {
   const d = domainFor(name);
-  if (d) return `<div class="mlogo" style="width:${size}px;height:${size}px"><span class="mlogo-fallback" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V7.5L12 3l8 4.5V20M8 20v-5h8v5M8 9h.01M12 9h.01M16 9h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span><img src="https://www.google.com/s2/favicons?domain=${d}&sz=128" alt="" decoding="async" onerror="this.hidden=true" /></div>`;
+  if (d) {
+    const source = `https://unavatar.io/domain/${encodeURIComponent(d)}?fallback=false&size=128`;
+    return `<div class="mlogo" style="width:${size}px;height:${size}px"><span class="mlogo-fallback" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V7.5L12 3l8 4.5V20M8 20v-5h8v5M8 9h.01M12 9h.01M16 9h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span><img src="${source}" alt="" decoding="async" onerror="this.hidden=true" /></div>`;
+  }
   return `<div class="cicon merchant-generic" style="width:${size}px;height:${size}px"><svg viewBox="0 0 24 24"><path d="M4 20V7.5L12 3l8 4.5V20M8 20v-5h8v5M8 9h.01M12 9h.01M16 9h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></div>`;
 }
 
