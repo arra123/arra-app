@@ -13,9 +13,35 @@ const LIQUID_ICON = {
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg>',
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14"/></svg>',
+  receipt: '<svg viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>',
+  car: '<svg viewBox="0 0 24 24"><path d="m5 16-1-3 2-5h12l2 5-1 3z"/><path d="M6 16v3M18 16v3M4 13h16M7 13h.01M17 13h.01"/></svg>',
+  cloud: '<svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.8-7.9A6 6 0 0 1 17.7 9 4.5 4.5 0 0 1 18 18z"/></svg>',
+  food: '<svg viewBox="0 0 24 24"><path d="M7 3v8M4 3v5a3 3 0 0 0 6 0V3M7 11v10M16 3v18M16 3c4 2 5 6 0 9"/></svg>',
 };
 function liquidIcon(name) { return LIQUID_ICON[name] || LIQUID_ICON.sparkle; }
-function liquidCompanyMark(className = '') { return `<img class="liquid-company-mark ${className}" src="company-mark.svg" alt=""/>`; }
+function liquidCompanyMark(className = '') { return `<img class="liquid-company-mark ${className}" src="assets/company-reimbursement-2d-256.png" alt="" decoding="async"/>`; }
+const FINANCE_BRANDS = [
+  { test: /belka|белк/i, title: 'BelkaCar', asset: 'belkacar.svg' },
+  { test: /city\s*drive|citydrive|ситидрайв|сити\s*драйв/i, title: 'Ситидрайв', asset: 'citydrive.png' },
+  { test: /delimobil|делимоб|дели\b/i, title: 'Делимобиль', asset: 'delimobil.png' },
+  { test: /яндекс[.\s-]*(драйв|drive)|yandex[.\s-]*drive/i, title: 'Яндекс Драйв', asset: 'yandex-drive.png' },
+  { test: /chat\s*gpt|open\s*ai|gpt(?:-|\s|\d|$)|codex/i, title: 'OpenAI', asset: 'openai.svg' },
+  { test: /anthropic|claude|клод/i, title: 'Anthropic', asset: 'anthropic.svg' },
+  { test: /proxy\s*api|прокси\s*апи/i, title: 'ProxyAPI', asset: 'proxyapi.png' },
+];
+function financeBrandIcon(brand) {
+  return `<span class="finance-brand-icon" title="${esc(brand.title)}"><img src="assets/brands/${brand.asset}" alt="" decoding="async"/></span>`;
+}
+function financeServiceIcon(item = {}) {
+  const source = [item.purpose, item.merchant, item.company, item.counterparty, item.note].filter(Boolean).join(' ').toLowerCase();
+  const brand = FINANCE_BRANDS.find((entry) => entry.test.test(source));
+  if (brand) return financeBrandIcon(brand);
+  if (typeof domainFor === 'function' && typeof merchantLogo === 'function' && domainFor(source)) return merchantLogo(source, 38);
+  if (/каршер|такси|авто|drive/.test(source)) return `<span class="finance-service-icon car">${liquidIcon('car')}</span>`;
+  if (/еда|food|ресторан|кафе|напит|ингредиент/.test(source)) return `<span class="finance-service-icon food">${liquidIcon('food')}</span>`;
+  if (/cloud|облак|сервер|hosting|хостинг/.test(source)) return `<span class="finance-service-icon cloud">${liquidIcon('cloud')}</span>`;
+  return `<span class="finance-service-icon receipt">${liquidIcon('receipt')}</span>`;
+}
 function liquidDate(value) {
   try { return new Date(value).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }); } catch { return ''; }
 }
@@ -110,7 +136,7 @@ function bindLiquidRecorder(button, onText) {
 
 const liquidFinance = {
   tab: 'add', target: 'reimbursement', raw: '', userRaw: '', parsed: null, parsing: false, saved: null, listMode: 'active',
-  loaded: false, reimbursements: [], debts: [],
+  loaded: false, loadedAt: 0, loading: null, reimbursements: [], debts: [],
 };
 function financeStatusLabel(status) {
   return ({ pending: 'Новая', submitted: 'Передана', reimbursed: 'Возвращено', rejected: 'Отклонено' })[status] || status;
@@ -133,34 +159,47 @@ function financeDraftHtml(parsed) {
 function financeIsClosed(type, item) {
   return type === 'reimbursement' ? ['reimbursed', 'rejected'].includes(item.status) : !!item.settled;
 }
+function financeIsCompanyDebt(item) {
+  return item?.direction !== 'i_owe' && /^(компания|company)$/i.test(String(item?.counterparty || '').trim());
+}
 function financeGroups() {
   const active = liquidFinance.listMode === 'active';
   const visible = (type, item) => active ? !financeIsClosed(type, item) : financeIsClosed(type, item);
   return [
-    { key: 'company', label: 'Компания', icon: liquidCompanyMark('small'), items: liquidFinance.reimbursements.filter((item) => visible('reimbursement', item)).map((item) => ({ type: 'reimbursement', item })) },
-    { key: 'owed', label: 'Мне должны', icon: liquidIcon('people'), items: liquidFinance.debts.filter((item) => item.direction !== 'i_owe' && visible('debt', item)).map((item) => ({ type: 'debt', item })) },
+    { key: 'company', label: 'Компания', icon: liquidCompanyMark('small'), items: [
+      ...liquidFinance.reimbursements.filter((item) => visible('reimbursement', item)).map((item) => ({ type: 'reimbursement', item })),
+      ...liquidFinance.debts.filter((item) => financeIsCompanyDebt(item) && visible('debt', item)).map((item) => ({ type: 'debt', item })),
+    ] },
+    { key: 'owed', label: 'Мне должны', icon: liquidIcon('people'), items: liquidFinance.debts.filter((item) => item.direction !== 'i_owe' && !financeIsCompanyDebt(item) && visible('debt', item)).map((item) => ({ type: 'debt', item })) },
     { key: 'owe', label: 'Я должен', icon: liquidIcon('people'), items: liquidFinance.debts.filter((item) => item.direction === 'i_owe' && visible('debt', item)).map((item) => ({ type: 'debt', item })) },
   ];
+}
+function financeReason(type, item) {
+  const generic = /^(компания|компенсация|личный долг|долг|без названия)$/i;
+  const candidates = type === 'reimbursement'
+    ? [item.merchant, item.purpose, item.note]
+    : [item.note, item.purpose, item.merchant];
+  return candidates.map((value) => String(value || '').trim()).find((value) => value && !generic.test(value)) || 'Без описания';
 }
 function financeTableHtml() {
   const groups = financeGroups().filter((group) => group.items.length);
   if (!groups.length) return `<div class="liquid-empty finance-empty">${liquidFinance.listMode === 'active' ? 'Активных записей нет' : 'Закрытых записей нет'}</div>`;
   return `<div class="liquid-money-table-shell"><table class="liquid-money-table">
-    <thead><tr><th>Запись</th><th>Статус</th><th>Когда</th><th>Организация</th><th class="money">Сумма</th><th aria-label="Действие"></th></tr></thead>
+    <thead><tr><th>Источник</th><th>За что</th><th>Когда</th><th>Статус</th><th class="money">Сумма</th><th aria-label="Действие"></th></tr></thead>
     ${groups.map((group) => {
       const total = group.items.reduce((sum, record) => sum + Number(record.item.amount || 0), 0);
       return `<tbody class="finance-group ${group.key}"><tr class="finance-group-row"><td colspan="4"><span class="finance-group-icon">${group.icon}</span><b>${group.label}</b><small>${group.items.length}</small></td><td class="money"><strong>${fmt(total)} ₽</strong></td><td></td></tr>
         ${group.items.map(({ type, item }) => {
-          const company = type === 'reimbursement'; const closed = financeIsClosed(type, item);
-          const title = company ? item.purpose : item.counterparty;
-          const status = company ? financeStatusLabel(item.status) : (closed ? 'Закрыт' : 'Открыт');
-          const statusClass = company ? `status-${item.status || 'pending'}` : (closed ? 'status-reimbursed' : 'status-pending');
-          const organization = company ? [item.company, item.merchant].filter(Boolean).join(' · ') : (item.note || '—');
-          const description = company ? (item.note || 'Компенсация') : (item.direction === 'i_owe' ? 'Личный долг' : 'Ожидаю возврат');
+          const reimbursement = type === 'reimbursement'; const company = reimbursement || financeIsCompanyDebt(item); const closed = financeIsClosed(type, item);
+          const source = company ? 'Компания' : (item.counterparty || (item.direction === 'i_owe' ? 'Кому должен' : 'Кто должен'));
+          const reason = financeReason(type, item);
+          const status = reimbursement ? financeStatusLabel(item.status) : (closed ? 'Закрыт' : 'Открыт');
+          const statusClass = reimbursement ? `status-${item.status || 'pending'}` : (closed ? 'status-reimbursed' : 'status-pending');
           return `<tr class="finance-record ${closed ? 'closed' : ''}" data-type="${type}" data-id="${esc(item.id)}">
-            <td><div class="finance-record-title"><b>${esc(title || 'Без названия')}</b><small>${esc(description)}</small></div></td>
+            <td><div class="finance-source">${company ? liquidCompanyMark('row') : `<span class="finance-person-icon">${liquidIcon('people')}</span>`}<b>${esc(source)}</b></div></td>
+            <td><div class="finance-purpose">${financeServiceIcon(item)}<div><b>${esc(reason)}</b>${item.company && !/^компания$/i.test(item.company) ? `<small>${esc(item.company)}</small>` : ''}</div></div></td>
+            <td><time>${liquidDate(item.occurred_at || item.created_at)}</time></td>
             <td><span class="finance-status ${statusClass}"><i></i>${esc(status)}</span></td>
-            <td><time>${liquidDate(item.occurred_at || item.created_at)}</time></td><td><span class="finance-org">${esc(organization || '—')}</span></td>
             <td class="money"><strong>${fmt(item.amount)} ₽</strong></td><td><button class="liquid-row-check" data-close="1" title="${closed ? 'Вернуть в активные' : 'Закрыть'}">${closed ? '↺' : liquidIcon('check')}</button></td>
           </tr>`;
         }).join('')}</tbody>`;
@@ -187,8 +226,9 @@ function renderFinanceTable() {
 }
 function renderFinanceList() {
   const body = document.getElementById('finance-body'); if (!body) return;
-  const companyTotal = liquidFinance.reimbursements.filter((item) => !financeIsClosed('reimbursement', item)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const owedTotal = liquidFinance.debts.filter((item) => !item.settled && item.direction !== 'i_owe').reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const companyTotal = liquidFinance.reimbursements.filter((item) => !financeIsClosed('reimbursement', item)).reduce((sum, item) => sum + Number(item.amount || 0), 0)
+    + liquidFinance.debts.filter((item) => !item.settled && financeIsCompanyDebt(item)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const owedTotal = liquidFinance.debts.filter((item) => !item.settled && item.direction !== 'i_owe' && !financeIsCompanyDebt(item)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const oweTotal = liquidFinance.debts.filter((item) => !item.settled && item.direction === 'i_owe').reduce((sum, item) => sum + Number(item.amount || 0), 0);
   body.innerHTML = `<div class="liquid-finance-overview">
     <div class="finance-total company"><span>${liquidCompanyMark()}</span><div><small>Компания</small><strong>${fmt(companyTotal)} ₽</strong></div></div>
@@ -209,10 +249,17 @@ function renderFinanceAdd() {
       ${liquidFinance.saved ? `<div class="liquid-ai-row"><span class="liquid-ai-mark ok">${liquidIcon('check')}</span><div class="liquid-saved"><b>${esc(liquidFinance.saved.title)}</b><strong>${fmt(liquidFinance.saved.amount)} ₽</strong></div></div>` : ''}
       ${liquidFinance.userRaw ? `<div class="liquid-user-row"><div>${esc(liquidFinance.userRaw)}</div></div>` : ''}
       ${liquidFinance.parsing ? `<div class="liquid-ai-row"><span class="liquid-ai-mark">${liquidIcon('sparkle')}</span><div class="liquid-typing"><i></i><i></i><i></i></div></div>` : financeDraftHtml(liquidFinance.parsed)}
-    </div><div class="liquid-composer-wrap"><select id="finance-target" class="liquid-target" aria-label="Куда записать"><option value="reimbursement">Компания</option><option value="owes_me">Мне должны</option><option value="i_owe">Я должен</option></select>
+    </div><div class="liquid-composer-wrap"><div class="liquid-finance-context" role="group" aria-label="К кому относится запись">
+      <button type="button" data-fin-target="reimbursement" class="${liquidFinance.target === 'reimbursement' ? 'active' : ''}">${liquidCompanyMark('context')}<span>Компания</span></button>
+      <button type="button" data-fin-target="owes_me" class="${liquidFinance.target === 'owes_me' ? 'active' : ''}">${liquidIcon('people')}<span>Мне должны</span></button>
+      <button type="button" data-fin-target="i_owe" class="${liquidFinance.target === 'i_owe' ? 'active' : ''}">${liquidIcon('people')}<span>Я должен</span></button>
+    </div>
       <div class="liquid-composer"><button id="finance-attach" title="Фото">${liquidIcon('clip')}</button><input id="finance-photo" type="file" accept="image/*" hidden/><textarea id="finance-input" rows="1" placeholder="Сообщение"></textarea><button id="finance-send" class="liquid-send" hidden>${liquidIcon('send')}</button><button id="finance-mic" class="liquid-mic">${liquidIcon('mic')}</button></div></div></div>`;
-  const target = document.getElementById('finance-target'); target.value = liquidFinance.target;
-  target.onchange = () => { liquidFinance.target = target.value; liquidFinance.parsed = null; };
+  document.querySelectorAll('[data-fin-target]').forEach((button) => button.onclick = () => {
+    if (liquidFinance.target === button.dataset.finTarget) return;
+    liquidFinance.target = button.dataset.finTarget; liquidFinance.parsed = null;
+    document.querySelector('[data-fin-target].active')?.classList.remove('active'); button.classList.add('active');
+  });
   const input = document.getElementById('finance-input'); const send = document.getElementById('finance-send'); const mic = document.getElementById('finance-mic');
   const updateSend = () => { send.hidden = !input.value.trim(); mic.hidden = !!input.value.trim(); };
   input.oninput = updateSend;
@@ -221,7 +268,12 @@ function renderFinanceAdd() {
     liquidFinance.userRaw = cleaned || 'Фото'; liquidFinance.parsing = true; liquidFinance.parsed = null; liquidFinance.saved = null; renderFinanceAdd();
     try {
       const result = await api('POST', '/reimbursements/parse', { text: cleaned, image, preferredKind: liquidFinance.target === 'reimbursement' ? 'reimbursement' : 'debt' });
-      liquidFinance.parsed = result.parsed || {}; if (liquidFinance.target !== 'reimbursement') { liquidFinance.parsed.kind = 'debt'; liquidFinance.parsed.direction = liquidFinance.target; }
+      liquidFinance.parsed = result.parsed || {};
+      if (liquidFinance.target === 'reimbursement') {
+        // The selected context is authoritative: "Компания" can never be
+        // accidentally reclassified by the parser as a personal debt.
+        liquidFinance.parsed.kind = 'reimbursement'; liquidFinance.parsed.company = 'Компания'; delete liquidFinance.parsed.direction;
+      } else { liquidFinance.parsed.kind = 'debt'; liquidFinance.parsed.direction = liquidFinance.target; }
     } catch (error) { toast('Возвраты', error.message, 'warn'); }
     liquidFinance.parsing = false; renderFinanceAdd();
   };
@@ -250,6 +302,18 @@ function renderFinanceAdd() {
 function renderFinanceBody() {
   if (liquidFinance.tab === 'list') renderFinanceList(); else renderFinanceAdd();
 }
+async function loadFinanceData(force = false) {
+  if (!force && liquidFinance.loaded && Date.now() - liquidFinance.loadedAt < 60_000) return;
+  if (liquidFinance.loading) return liquidFinance.loading;
+  liquidFinance.loading = Promise.all([api('GET', '/reimbursements?includeClosed=1'), api('GET', '/debts?all=true')])
+    .then(([r, d]) => {
+      liquidFinance.reimbursements = r.reimbursements || []; liquidFinance.debts = d.debts || [];
+      liquidFinance.loaded = true; liquidFinance.loadedAt = Date.now();
+      if (state.section === 'fin') renderFinanceBody();
+    })
+    .finally(() => { liquidFinance.loading = null; });
+  return liquidFinance.loading;
+}
 renderFin = async function renderLiquidFinance() {
   app.innerHTML = `<div class="liquid-page finance-liquid"><header class="liquid-head"><h1>Возвраты</h1>
     <nav class="liquid-tabs" data-active="${liquidFinance.tab}"><button data-fin-tab="add" class="${liquidFinance.tab === 'add' ? 'active' : ''}">Записать</button><button data-fin-tab="list" class="${liquidFinance.tab === 'list' ? 'active' : ''}">Список</button></nav></header>
@@ -261,39 +325,54 @@ renderFin = async function renderLiquidFinance() {
     tabs.querySelector('.active')?.classList.remove('active'); button.classList.add('active'); renderFinanceBody();
   });
   if (liquidFinance.loaded) renderFinanceBody();
-  try {
-    const [r, d] = await Promise.all([api('GET', '/reimbursements?includeClosed=1'), api('GET', '/debts?all=true')]);
-    liquidFinance.reimbursements = r.reimbursements || []; liquidFinance.debts = d.debts || []; liquidFinance.loaded = true; renderFinanceBody();
-  } catch (error) { const body = document.getElementById('finance-body'); if (body) body.innerHTML = `<div class="liquid-empty error">${esc(error.message)}</div>`; }
+  loadFinanceData().catch((error) => {
+    const body = document.getElementById('finance-body');
+    if (body && !liquidFinance.loaded) body.innerHTML = `<div class="liquid-empty error">${esc(error.message)}</div>`;
+  });
 };
 
-renderChat = async function renderLiquidChat() {
+const liquidChat = { messages: [], loaded: false, loadedAt: 0, loading: null };
+function chatMessagesHtml() {
+  return liquidChat.messages.length
+    ? liquidChat.messages.map((message) => `<div class="liquid-message-row ${message.role === 'user' ? 'user' : 'assistant'}"><div>${esc(message.content)}</div></div>`).join('')
+    : `<div class="liquid-chat-empty">${liquidIcon('sparkle')}</div>`;
+}
+async function loadChatMessages(force = false) {
+  if (!force && liquidChat.loaded && Date.now() - liquidChat.loadedAt < 30_000) return;
+  if (liquidChat.loading) return liquidChat.loading;
+  liquidChat.loading = api('GET', '/ai/messages').then((result) => {
+    liquidChat.messages = result.messages || []; liquidChat.loaded = true; liquidChat.loadedAt = Date.now();
+    const feed = document.getElementById('liquid-chat-feed');
+    if (feed && state.section === 'chat') { feed.innerHTML = chatMessagesHtml(); feed.scrollTop = feed.scrollHeight; }
+  }).finally(() => { liquidChat.loading = null; });
+  return liquidChat.loading;
+}
+renderChat = function renderLiquidChat() {
   app.innerHTML = `<div class="liquid-page assistant-liquid"><header class="liquid-head"><h1>Noda</h1><span class="liquid-online"></span></header>
-    <section class="liquid-chat-feed" id="liquid-chat-feed"><div class="liquid-loading"></div></section>
+    <section class="liquid-chat-feed" id="liquid-chat-feed">${liquidChat.loaded ? chatMessagesHtml() : '<div class="liquid-loading"></div>'}</section>
     <footer class="liquid-chat-dock"><div class="liquid-composer"><button id="chat-attach">${liquidIcon('clip')}</button><input id="chat-photo" type="file" accept="image/*" hidden/><textarea id="chat-input" rows="1" placeholder="Сообщение"></textarea><button id="chat-send" class="liquid-send" hidden>${liquidIcon('send')}</button><button id="chat-mic" class="liquid-mic">${liquidIcon('mic')}</button></div></footer></div>`;
   const feed = document.getElementById('liquid-chat-feed'); const input = document.getElementById('chat-input'); const send = document.getElementById('chat-send'); const mic = document.getElementById('chat-mic'); let image = '';
-  const refresh = async () => {
-    try {
-      const result = await api('GET', '/ai/messages');
-      feed.innerHTML = result.messages?.length ? result.messages.map((message) => `<div class="liquid-message-row ${message.role === 'user' ? 'user' : 'assistant'}"><div>${esc(message.content)}</div></div>`).join('') : `<div class="liquid-chat-empty">${liquidIcon('sparkle')}</div>`;
-      feed.scrollTop = feed.scrollHeight;
-    } catch (error) { feed.innerHTML = `<div class="liquid-empty error">${esc(error.message)}</div>`; }
-  };
+  if (liquidChat.loaded) feed.scrollTop = feed.scrollHeight;
   const update = () => { const has = !!input.value.trim() || !!image; send.hidden = !has; mic.hidden = has; };
   input.oninput = update;
   const sendMessage = async () => {
     const text = input.value.trim(); if (!text && !image) return; input.value = ''; send.hidden = true; mic.hidden = false;
     feed.innerHTML += `<div class="liquid-message-row user"><div>${esc(text || 'Фото')}</div></div><div class="liquid-message-row assistant pending"><div class="liquid-typing"><i></i><i></i><i></i></div></div>`; feed.scrollTop = feed.scrollHeight;
-    try { await api('POST', '/ai/assistant', { text, image }); image = ''; await refresh(); } catch (error) { toast('Noda', error.message, 'warn'); await refresh(); }
+    try { await api('POST', '/ai/assistant', { text, image }); image = ''; await loadChatMessages(true); }
+    catch (error) { toast('Noda', error.message, 'warn'); await loadChatMessages(true).catch(() => {}); }
   };
   send.onclick = sendMessage; input.onkeydown = (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); } };
-  bindLiquidRecorder(mic, async (text) => { input.value = text; update(); await sendMessage(); });
+  bindLiquidRecorder(mic, (text) => {
+    // Voice is a draft, not an action. Let the user review/correct the
+    // transcript and explicitly press Send.
+    input.value = text; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus();
+  });
   const photo = document.getElementById('chat-photo'); document.getElementById('chat-attach').onclick = () => photo.click();
   photo.onchange = async () => { if (photo.files?.[0]) { image = await dataUrlFromFile(photo.files[0]); update(); } };
-  await refresh();
+  loadChatMessages().catch((error) => { if (!liquidChat.loaded && feed.isConnected) feed.innerHTML = `<div class="liquid-empty error">${esc(error.message)}</div>`; });
 };
 
-const liquidNotes = { notes: [], selectedId: null, query: '', mode: 'original', loaded: false, saveTimers: new Map() };
+const liquidNotes = { notes: [], selectedId: null, query: '', mode: 'original', loaded: false, loadedAt: 0, loading: null, saveTimers: new Map() };
 function noteListHtml() {
   const query = liquidNotes.query.toLowerCase();
   const rows = liquidNotes.notes.filter((note) => !query || `${note.title || ''} ${note.body || ''}`.toLowerCase().includes(query));
@@ -374,16 +453,34 @@ function renderNoteEditor() {
     liquidNotes.notes = liquidNotes.notes.filter((item) => item.id !== note.id); liquidNotes.selectedId = liquidNotes.notes[0]?.id || null; liquidNotes.mode = 'original'; renderNoteList(); renderNoteEditor();
   };
 }
-renderNotes = async function renderLiquidNotes() {
-  app.innerHTML = `<div class="liquid-page notes-liquid"><aside class="liquid-notes-list"><header><h1>Заметки</h1><button id="liquid-new-note" title="Новая заметка">${liquidIcon('plus')}</button></header><label class="liquid-search">${liquidIcon('search')}<input id="liquid-note-search" placeholder="Поиск" value="${esc(liquidNotes.query)}"/></label><div id="liquid-note-list">${liquidNotes.loaded ? noteListHtml() : '<div class="liquid-loading"></div>'}</div></aside><section id="liquid-note-editor" class="liquid-note-editor"></section></div>`;
-  if (liquidNotes.loaded) { bindNoteList(); renderNoteEditor(); }
-  try { const result = await api('GET', '/notes'); liquidNotes.notes = result.notes || []; liquidNotes.loaded = true; if (!liquidNotes.notes.some((note) => note.id === liquidNotes.selectedId)) liquidNotes.selectedId = liquidNotes.notes[0]?.id || null; }
-  catch (error) { document.getElementById('liquid-note-list').innerHTML = `<div class="liquid-empty error">${esc(error.message)}</div>`; return; }
-  renderNoteList(); renderNoteEditor();
-  const search = document.getElementById('liquid-note-search'); search.oninput = () => { liquidNotes.query = search.value; renderNoteList(); };
-  document.getElementById('liquid-new-note').onclick = async () => {
-    syncNoteDraftFromEditor(); const result = await api('POST', '/notes', { title: '', body: '', color: '#7C86F0' }); liquidNotes.notes.unshift(result.note); liquidNotes.selectedId = result.note.id; liquidNotes.mode = 'original'; renderNoteList(); renderNoteEditor(); document.getElementById('note-title')?.focus();
+function bindNotesShell() {
+  const search = document.getElementById('liquid-note-search');
+  if (search) search.oninput = () => { liquidNotes.query = search.value; renderNoteList(); };
+  const add = document.getElementById('liquid-new-note');
+  if (add) add.onclick = async () => {
+    syncNoteDraftFromEditor(); const result = await api('POST', '/notes', { title: '', body: '', color: '#7C86F0' });
+    liquidNotes.notes.unshift(result.note); liquidNotes.selectedId = result.note.id; liquidNotes.mode = 'original'; liquidNotes.loadedAt = Date.now();
+    renderNoteList(); renderNoteEditor(); document.getElementById('note-title')?.focus();
   };
+}
+async function loadNotesData(force = false) {
+  if (!force && liquidNotes.loaded && Date.now() - liquidNotes.loadedAt < 60_000) return;
+  if (liquidNotes.loading) return liquidNotes.loading;
+  liquidNotes.loading = api('GET', '/notes').then((result) => {
+    liquidNotes.notes = result.notes || []; liquidNotes.loaded = true; liquidNotes.loadedAt = Date.now();
+    if (!liquidNotes.notes.some((note) => note.id === liquidNotes.selectedId)) liquidNotes.selectedId = liquidNotes.notes[0]?.id || null;
+    if (state.section === 'notes') { renderNoteList(); renderNoteEditor(); }
+  }).finally(() => { liquidNotes.loading = null; });
+  return liquidNotes.loading;
+}
+renderNotes = function renderLiquidNotes() {
+  app.innerHTML = `<div class="liquid-page notes-liquid"><aside class="liquid-notes-list"><header><h1>Заметки</h1><button id="liquid-new-note" title="Новая заметка">${liquidIcon('plus')}</button></header><label class="liquid-search">${liquidIcon('search')}<input id="liquid-note-search" placeholder="Поиск" value="${esc(liquidNotes.query)}"/></label><div id="liquid-note-list">${liquidNotes.loaded ? noteListHtml() : '<div class="liquid-loading"></div>'}</div></aside><section id="liquid-note-editor" class="liquid-note-editor"></section></div>`;
+  bindNotesShell();
+  if (liquidNotes.loaded) { bindNoteList(); renderNoteEditor(); }
+  loadNotesData().catch((error) => {
+    const list = document.getElementById('liquid-note-list');
+    if (list && !liquidNotes.loaded) list.innerHTML = `<div class="liquid-empty error">${esc(error.message)}</div>`;
+  });
 };
 
 // If one of these pages was active while the override loaded, repaint it immediately.

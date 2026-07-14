@@ -1,10 +1,10 @@
 import { Image } from 'expo-image';
+import { SymbolView } from 'expo-symbols';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { ThemedText } from '@/components/themed-text';
-
-// Известные бренды -> домен (логотип берём с logo.clearbit.com)
+// Известные бренды -> домен. Иконку берём по домену, поэтому это настоящий
+// знак сервиса, а не сгенерированная буква на цветном фоне.
 const DOMAINS: Record<string, string> = {
   'озон': 'ozon.ru', 'ozon': 'ozon.ru',
   'вайлдберриз': 'wildberries.ru', 'wildberries': 'wildberries.ru', 'вб': 'wildberries.ru',
@@ -18,12 +18,15 @@ const DOMAINS: Record<string, string> = {
   'мтс': 'mts.ru', 'билайн': 'beeline.ru', 'мегафон': 'megafon.ru', 'теле2': 'tele2.ru',
   'netflix': 'netflix.com', 'spotify': 'spotify.com', 'youtube': 'youtube.com',
   'apple': 'apple.com', 'icloud': 'apple.com', 'google': 'google.com',
+  'openai': 'openai.com', 'open ai': 'openai.com', 'chatgpt': 'chatgpt.com', 'chat gpt': 'chatgpt.com', 'gpt': 'chatgpt.com', 'codex': 'openai.com',
+  'anthropic': 'anthropic.com', 'claude': 'claude.ai', 'клод': 'claude.ai',
+  'proxyapi': 'proxyapi.ru', 'proxy api': 'proxyapi.ru',
   'aliexpress': 'aliexpress.ru', 'али': 'aliexpress.ru',
   // каршеринги
   'белка': 'belkacar.ru', 'belkacar': 'belkacar.ru', 'белкакар': 'belkacar.ru',
   'ситидрайв': 'citydrive.ru', 'сити драйв': 'citydrive.ru', 'citydrive': 'citydrive.ru', 'city drive': 'citydrive.ru',
   'делимобиль': 'delimobil.ru', 'delimobil': 'delimobil.ru', 'дели': 'delimobil.ru',
-  'яндекс драйв': 'yandex.ru', 'яндекс.драйв': 'yandex.ru', 'yandex drive': 'yandex.ru', 'драйв': 'yandex.ru',
+  'яндекс драйв': 'drive.yandex.ru', 'яндекс.драйв': 'drive.yandex.ru', 'yandex drive': 'drive.yandex.ru', 'драйв': 'drive.yandex.ru',
   'kfc': 'kfc.ru', 'бургер кинг': 'burgerking.ru', 'burger king': 'burgerking.ru',
   'вкусно и точка': 'vkusnoitochka.ru', 'starbucks': 'starbucks.com', 'додо': 'dodopizza.ru',
   'delivery': 'delivery-club.ru', 'деливери': 'delivery-club.ru',
@@ -71,9 +74,7 @@ export function MerchantLogo({ merchant, size = 40 }: { merchant: string; size?:
   const color = colorFor(merchant);
   return (
     <View style={[styles.tile, { width: size, height: size, borderRadius: radius, backgroundColor: color }]}>
-      <ThemedText style={{ color: '#fff', fontWeight: '700', fontSize: size * 0.42 }}>
-        {merchant.trim()[0]?.toUpperCase() || '?'}
-      </ThemedText>
+      <SymbolView name="building.2.fill" size={size * 0.48} tintColor="#fff" />
     </View>
   );
 }

@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import ProfileScreen from '@/app/profile';
 import { DebtsModal, type Debt } from '@/components/debts-modal';
+import { MerchantLogo } from '@/components/merchant-logo';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { VoiceRecorder } from '@/components/voice-recorder';
@@ -68,6 +69,7 @@ const STATUS: Record<ReimbursementStatus, { label: string; color: string }> = {
   rejected: { label: 'Отклонено', color: '#EB6A6A' },
 };
 const fmt = (value: number) => Math.round(value).toLocaleString('ru-RU');
+const COMPANY_ICON = require('../../assets/images/company-reimbursement-2d-256.png');
 const dateInput = (value?: string | null) => value ? value.slice(0, 10) : '';
 const dateLabel = (value?: string | null) => value
   ? new Date(value).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -363,7 +365,7 @@ export default function MoneyScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.tint} />}>
             <View style={[styles.hero, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
               <View style={styles.heroTop}>
-                <View style={[styles.heroIcon, { backgroundColor: `${theme.tint}1F` }]}><SymbolView name="building.2.fill" tintColor={theme.tint} size={20} /></View>
+                <View style={styles.heroIcon}><Image source={COMPANY_ICON} style={styles.companyIcon} resizeMode="contain" /></View>
                 <ThemedText type="smallBold" style={{ color: theme.tint }}>{activeItems.length} активных</ThemedText>
               </View>
               <ThemedText style={[styles.heroValue, { color: theme.text }]}>{fmt(toReturn)} ₽</ThemedText>
@@ -401,9 +403,9 @@ export default function MoneyScreen() {
               <View style={styles.list}>
                 {visibleItems.map((item) => (
                   <TouchableOpacity key={item.id} activeOpacity={0.8} onPress={() => setEditing(item)} style={[styles.item, { backgroundColor: theme.backgroundElement }]}>
-                    <View style={[styles.itemIcon, { backgroundColor: `${STATUS[item.status].color}1F` }]}>
-                      <SymbolView name="doc.text.fill" tintColor={STATUS[item.status].color} size={20} />
-                    </View>
+                    {item.merchant
+                      ? <MerchantLogo merchant={item.merchant} size={40} />
+                      : <View style={styles.itemIcon}><Image source={COMPANY_ICON} style={styles.companyIcon} resizeMode="contain" /></View>}
                     <View style={{ flex: 1, gap: 3 }}>
                       <ThemedText type="smallBold" numberOfLines={1}>{item.purpose}</ThemedText>
                       <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
@@ -476,12 +478,10 @@ export default function MoneyScreen() {
                   </View>
                   <View style={[styles.form, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
                     <View style={styles.formCardHeader}>
-                      <View style={[styles.formIcon, { backgroundColor: `${theme.tint}1F` }]}>
-                        <SymbolView
-                          name={kind === 'reimbursement' ? 'building.2.fill' : 'person.2.fill'}
-                          tintColor={theme.tint}
-                          size={18}
-                        />
+                      <View style={[styles.formIcon, kind !== 'reimbursement' && { backgroundColor: `${theme.tint}1F` }]}>
+                        {kind === 'reimbursement'
+                          ? <Image source={COMPANY_ICON} style={styles.companyIcon} resizeMode="contain" />
+                          : <SymbolView name="person.2.fill" tintColor={theme.tint} size={18} />}
                       </View>
                       <ThemedText type="smallBold" style={{ flex: 1 }}>
                         {kind === 'reimbursement' ? 'Компенсация' : kind === 'owes_me' ? 'Мне должны' : 'Я должен'}
@@ -685,6 +685,7 @@ const styles = StyleSheet.create({
   hero: { borderRadius: Radius.xl, padding: Spacing.four, minHeight: 154, justifyContent: 'flex-end', borderWidth: StyleSheet.hairlineWidth },
   heroTop: { position: 'absolute', left: Spacing.four, top: Spacing.three, right: Spacing.four, flexDirection: 'row', alignItems: 'center', gap: 8 },
   heroIcon: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  companyIcon: { width: '100%', height: '100%' },
   heroValue: { fontSize: 38, lineHeight: 43, fontWeight: '800', letterSpacing: -1.5, fontVariant: ['tabular-nums'] },
   statsRow: { flexDirection: 'row', gap: Spacing.two },
   moneyStat: { flex: 1, borderRadius: Radius.md, padding: 12, gap: 2 },

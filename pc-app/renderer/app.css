@@ -21,7 +21,7 @@
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 4px 14px rgba(16, 24, 40, 0.06);
   --shadow-lg: 0 8px 30px rgba(16, 24, 40, 0.14);
   --sidebar-w: 218px;
-  --term-bg: #0E1014;       /* терминал всегда тёмный (как в IDE) */
+  --term-bg: #151922;       /* совпадает с фоном xterm, без чёрной рамки */
 }
 
 /* Тема «Серая» — точная палитра VS Code Dark Modern (#1F1F1F редактор, #181818 панели) */
@@ -45,7 +45,7 @@ body[data-theme="dark"] {
   --hair-2: rgba(255, 255, 255, 0.06);
   --shadow: none;
   --shadow-lg: 0 10px 34px rgba(0, 0, 0, 0.55);
-  --term-bg: #1F1F1F;
+  --term-bg: #151922;
 }
 body[data-theme="dark"] main::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.16); }
 body[data-theme="dark"] .treebox::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.16); }
@@ -115,7 +115,7 @@ main::-webkit-scrollbar-thumb { background: rgba(20,24,31,0.14); border-radius: 
 .page-head .grow { flex: 1; }
 
 /* Режим терминала: контент не скроллится, рабочее пространство занимает ровно доступное место */
-body.term-mode main { overflow: hidden; display: flex; flex-direction: column; padding: 12px 16px 14px; }
+body.term-mode main { overflow: hidden; display: flex; flex-direction: column; padding: 12px 16px 0; background:#11141c; }
 /* На странице терминала прячем ЛЮБЫЕ полосы прокрутки (как в VS Code) */
 body.term-mode ::-webkit-scrollbar { width: 0 !important; height: 0 !important; }
 body.term-mode .workspace { flex: 1; min-height: 0; height: auto; }
@@ -164,8 +164,11 @@ textarea { resize: none; line-height: 1.5; }
 /* Иконки категорий (цветной кружок + SVG) и реальные логотипы брендов */
 .cicon { border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .cicon svg { width: 52%; height: 52%; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-.mlogo { border-radius: 50%; background: #fff; border: 1px solid var(--hair); display: inline-flex; align-items: center; justify-content: center; flex: none; overflow: hidden; box-shadow: var(--shadow); }
-.mlogo img { width: 82%; height: 82%; object-fit: contain; }
+.mlogo { position: relative; border-radius: 50%; background: #fff; border: 1px solid var(--hair); display: inline-flex; align-items: center; justify-content: center; flex: none; overflow: hidden; box-shadow: var(--shadow); }
+.mlogo img { position: relative; z-index: 1; width: 82%; height: 82%; object-fit: contain; }
+.mlogo-fallback { position: absolute; inset: 0; display: grid; place-items: center; color: #7f8795; background: #f4f5f7; }
+.mlogo-fallback svg { width: 52%; height: 52%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.merchant-generic { background: rgba(126,138,239,.12); color: #a6afff; }
 .track { height: 7px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
 .track i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, #6E79E6, #5E6AD2); }
 
@@ -260,7 +263,7 @@ body.chat-mode .chat { flex: 1; min-height: 0; overflow-y: auto; padding-right: 
 .treerow svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; flex: none; }
 .treerow.dragover { background: var(--tint-soft); outline: 1.5px dashed var(--tint); outline-offset: -2px; }
 
-.ws-right { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.ws-right { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding:8px 8px 0; border-radius:10px 10px 0 0; background:var(--term-bg); }
 .term-launchbar { display: flex; align-items: center; gap: 7px; flex: none; padding: 2px 0; }
 .term-launch-label { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .035em; text-transform: uppercase; margin-right: 2px; }
 .term-preset { height: 30px; padding: 0 11px; border: 1px solid var(--hair); border-radius: 7px; background: var(--surface); color: var(--text-2); font: 600 12px/1 inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; transition: background .15s, color .15s, border-color .15s, transform .08s; }
@@ -283,9 +286,9 @@ body.chat-mode .chat { flex: 1; min-height: 0; overflow-y: auto; padding-right: 
 .ttag { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); padding: 5px 11px; border-radius: 6px; background: var(--surface-2); }
 .ttag .dot { box-shadow: none; }
 
-.xterm-host { position: relative; flex: 1; min-height: 0; background: var(--term-bg); border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; }
+.xterm-host { position: relative; flex: 1; min-height: 0; background: var(--term-bg); border: 0; border-radius: 0; overflow: hidden; }
 /* Запас справа 14px — чтобы последний столбец не резался (FitAddon меряет до загрузки шрифта) */
-.xterm-pane { position: absolute; inset: 8px 14px 8px 12px; }
+.xterm-pane { position: absolute; inset: 4px 10px 4px 8px; background:var(--term-bg); }
 .xterm-host .xterm { height: 100%; }
 /* Полосу прокрутки терминала прячем ТОЛЬКО косметически (xterm.css сам раскладывает viewport/строки).
    НЕ ставим overflow:hidden на viewport — это ломает раскладку xterm (строки уезжают, низ режется). */

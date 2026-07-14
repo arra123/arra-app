@@ -538,9 +538,10 @@ async function renderNav() {
     nav.querySelector('button.navitem.active')?.classList.remove('active');
     b.classList.add('active');
     placeNavGlider();
-    const change = () => route();
-    if (document.startViewTransition && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) document.startViewTransition(change);
-    else change();
+    // View Transitions snapshot the entire Electron window (including xterm) and
+    // make rapid section changes noticeably heavier. The sidebar glider already
+    // communicates the state change, so route immediately.
+    route();
   }));
   const su = document.getElementById('side-update');
   if (su) su.onclick = triggerUpdateCheck;
@@ -1016,11 +1017,13 @@ const DOMAINS = {
   'мтс': 'mts.ru', 'билайн': 'beeline.ru', 'мегафон': 'megafon.ru', 'теле2': 'tele2.ru',
   'netflix': 'netflix.com', 'spotify': 'spotify.com', 'youtube': 'youtube.com',
   'apple': 'apple.com', 'icloud': 'apple.com', 'google': 'google.com',
+  'openai': 'openai.com', 'open ai': 'openai.com', 'chatgpt': 'chatgpt.com', 'chat gpt': 'chatgpt.com', 'gpt': 'chatgpt.com', 'codex': 'openai.com',
+  'anthropic': 'anthropic.com', 'claude': 'claude.ai', 'клод': 'claude.ai',
   'aliexpress': 'aliexpress.ru', 'али': 'aliexpress.ru',
   'белка': 'belkacar.ru', 'belkacar': 'belkacar.ru', 'белкакар': 'belkacar.ru',
   'ситидрайв': 'citydrive.ru', 'сити драйв': 'citydrive.ru', 'citydrive': 'citydrive.ru', 'city drive': 'citydrive.ru',
   'делимобиль': 'delimobil.ru', 'delimobil': 'delimobil.ru', 'дели': 'delimobil.ru',
-  'яндекс драйв': 'yandex.ru', 'яндекс.драйв': 'yandex.ru', 'драйв': 'yandex.ru',
+  'яндекс драйв': 'drive.yandex.ru', 'яндекс.драйв': 'drive.yandex.ru', 'yandex drive': 'drive.yandex.ru', 'драйв': 'drive.yandex.ru',
   'kfc': 'kfc.ru', 'бургер кинг': 'burgerking.ru', 'burger king': 'burgerking.ru',
   'вкусно и точка': 'vkusnoitochka.ru', 'starbucks': 'starbucks.com', 'додо': 'dodopizza.ru',
   'delivery': 'delivery-club.ru', 'деливери': 'delivery-club.ru',
@@ -1032,9 +1035,8 @@ function colorFor(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31
 function domainFor(m) { const k = (m || '').trim().toLowerCase(); if (DOMAINS[k]) return DOMAINS[k]; for (const x of Object.keys(DOMAINS)) if (k.includes(x)) return DOMAINS[x]; return null; }
 function merchantLogo(name, size = 38) {
   const d = domainFor(name);
-  if (d) return `<div class="mlogo" style="width:${size}px;height:${size}px"><img src="https://www.google.com/s2/favicons?domain=${d}&sz=128" onerror="this.parentElement.style.display='none'" /></div>`;
-  const c = colorFor(name || '?');
-  return `<div class="cicon" style="width:${size}px;height:${size}px;background:${c};color:#fff"><span style="font-weight:700;font-size:${Math.round(size * 0.42)}px">${esc((name || '?').trim()[0] || '?').toUpperCase()}</span></div>`;
+  if (d) return `<div class="mlogo" style="width:${size}px;height:${size}px"><span class="mlogo-fallback" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 20V7.5L12 3l8 4.5V20M8 20v-5h8v5M8 9h.01M12 9h.01M16 9h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></span><img src="https://www.google.com/s2/favicons?domain=${d}&sz=128" alt="" decoding="async" onerror="this.hidden=true" /></div>`;
+  return `<div class="cicon merchant-generic" style="width:${size}px;height:${size}px"><svg viewBox="0 0 24 24"><path d="M4 20V7.5L12 3l8 4.5V20M8 20v-5h8v5M8 9h.01M12 9h.01M16 9h.01M8 12h.01M12 12h.01M16 12h.01"/></svg></div>`;
 }
 
 // --- Иконки категорий: цветной кружок + чистая SVG-иконка (без эмодзи) ---
