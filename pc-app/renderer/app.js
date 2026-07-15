@@ -857,13 +857,14 @@ function wireRemoteCanvas() {
   canvas.onkeydown = (event) => {
     const map = { Enter: 'enter', Backspace: 'backspace', Escape: 'esc', Tab: 'tab', ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Delete: 'delete', Home: 'home', End: 'end', ' ': 'space' };
     const key = map[event.key];
+    const modifiers = { ctrl: event.ctrlKey || event.metaKey, alt: event.altKey, shift: event.shiftKey };
     if (key) {
       event.preventDefault();
-      sendRemoteInput({ action: 'key', key });
+      sendRemoteInput({ action: 'key', key, ...modifiers });
     } else if (event.key.length === 1) {
       event.preventDefault();
       if (event.ctrlKey || event.altKey || event.metaKey) {
-        sendRemoteInput({ action: 'key', key: event.key, ctrl: event.ctrlKey || event.metaKey, alt: event.altKey, shift: event.shiftKey });
+        sendRemoteInput({ action: 'key', key: event.key, code: event.code, ...modifiers });
       } else {
         sendRemoteInput({ action: 'key', text: event.key });
       }

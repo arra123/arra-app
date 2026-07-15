@@ -1,6 +1,6 @@
 {
   "name": "noda-desktop",
-  "version": "1.10.13",
+  "version": "1.10.14",
   "description": "Noda — терминал, файлы и передача проектов между ноутбуком, сервером и ПК",
   "main": "main.js",
   "author": "Noda",

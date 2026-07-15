@@ -931,6 +931,7 @@ using System.Runtime.InteropServices;
 public class WinIO {
   [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
   [DllImport("user32.dll")] public static extern int GetSystemMetrics(int nIndex);
+  [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint mapType);
   [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public InputUnion U; }
   [StructLayout(LayoutKind.Explicit)] public struct InputUnion {
     [FieldOffset(0)] public MOUSEINPUT mi;
@@ -962,7 +963,10 @@ public class WinIO {
     return sent;
   }
   private static INPUT KeyInput(ushort vk, uint flags) {
-    INPUT input = new INPUT(); input.type = 1; input.U.ki.wVk = vk; input.U.ki.dwFlags = flags; return input;
+    INPUT input = new INPUT(); input.type = 1;
+    input.U.ki.wScan = (ushort)MapVirtualKey(vk, 0);
+    input.U.ki.dwFlags = flags | 0x0008;
+    return input;
   }
   public static uint Key(ushort vk, bool ctrl, bool alt, bool shift) {
     List<INPUT> inputs = new List<INPUT>();
@@ -1133,12 +1137,14 @@ function screenInput(msg, send) {
     case 'scroll': command(`S ${seq} ${x} ${y} ${Math.round(msg.dy || 0)}`); break;
     case 'key': {
       const map = { enter: 0x0D, backspace: 0x08, esc: 0x1B, tab: 0x09, up: 0x26, down: 0x28, left: 0x25, right: 0x27, delete: 0x2E, home: 0x24, end: 0x23, space: 0x20 };
-      const punctuation = { ';': 0xBA, '=': 0xBB, ',': 0xBC, '-': 0xBD, '.': 0xBE, '/': 0xBF, '`': 0xC0, '[': 0xDB, '\\': 0xDC, ']': 0xDD, "'": 0xDE };
+      const codeMap = { Semicolon: 0xBA, Equal: 0xBB, Comma: 0xBC, Minus: 0xBD, Period: 0xBE, Slash: 0xBF, Backquote: 0xC0, BracketLeft: 0xDB, Backslash: 0xDC, BracketRight: 0xDD, Quote: 0xDE };
       let vk = msg.key && map[msg.key] ? map[msg.key] : null;
+      if (vk == null && /^Key[A-Z]$/.test(String(msg.code || ''))) vk = String(msg.code).charCodeAt(3);
+      if (vk == null && /^Digit[0-9]$/.test(String(msg.code || ''))) vk = String(msg.code).charCodeAt(5);
+      if (vk == null && msg.code && codeMap[msg.code]) vk = codeMap[msg.code];
       if (vk == null && msg.key && String(msg.key).length === 1 && (msg.ctrl || msg.alt || msg.shift)) {
         const key = String(msg.key).toUpperCase();
         if (/^[A-Z0-9]$/.test(key)) vk = key.charCodeAt(0);
-        else vk = punctuation[String(msg.key)] || null;
       }
       if (vk != null) {
         command(`K ${seq} ${vk} ${msg.ctrl ? 1 : 0} ${msg.alt ? 1 : 0} ${msg.shift ? 1 : 0}`);
