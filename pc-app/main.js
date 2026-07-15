@@ -656,7 +656,9 @@ function restartPty(termId, cols, rows, cwd, local) {
 // Единый диспетчер релей-команд (msg от телефона ИЛИ от локального терминала ПК)
 // ---- Удалённый экран (трансляция + управление мышью) ----
 let screenTimer = null;
-let screenCfg = { displayId: null, quality: 55, fps: 15, width: 1280 };
+// Prefer readable text over excessive frame rate. The remote desktop is used
+// mainly for editors and terminals, where a sharp 1920px frame matters more.
+let screenCfg = { displayId: null, quality: 80, fps: 8, width: 1920 };
 let screenBusy = false;
 let lastCaptureMs = 0;
 let captureEngine = 'electron';
