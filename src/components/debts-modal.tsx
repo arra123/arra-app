@@ -25,11 +25,15 @@ export type Debt = {
   counterparty: string;
   amount: string;
   direction: 'owes_me' | 'i_owe';
+  recipient?: 'Тима' | 'Даня' | 'Женя' | 'Дани' | null;
   note?: string | null;
   settled: boolean;
   due_date?: string | null;
   occurred_at?: string | null;
 };
+type DebtRecipient = 'Тима' | 'Даня' | 'Женя';
+const DEBT_RECIPIENTS: DebtRecipient[] = ['Тима', 'Даня', 'Женя'];
+const debtRecipient = (value?: string | null): DebtRecipient => String(value || '').toLowerCase().includes('жен') ? 'Женя' : String(value || '').toLowerCase().includes('дан') ? 'Даня' : 'Тима';
 
 const fmt = (n: number) => n.toLocaleString('ru-RU');
 const whenExact = (iso?: string | null) => {
@@ -48,7 +52,7 @@ const dueLabel = (iso?: string | null) => {
   return `до ${date}`;
 };
 
-export function DebtsModal({ visible, onClose, onChanged }: { visible: boolean; onClose: () => void; onChanged: () => void }) {
+export function DebtsModal({ visible, onClose, onChanged, initialDebtId = null }: { visible: boolean; onClose: () => void; onChanged: () => void; initialDebtId?: string | null }) {
   const theme = useTheme();
   const [debts, setDebts] = useState<Debt[]>([]);
   const [open, setOpen] = useState<string | null>(null); // раскрытый должник
@@ -58,8 +62,9 @@ export function DebtsModal({ visible, onClose, onChanged }: { visible: boolean; 
     try {
       const r = await api<{ debts: Debt[] }>('/debts?all=true');
       setDebts(r.debts);
+      if (initialDebtId) setEdit(r.debts.find((debt) => debt.id === initialDebtId) || null);
     } catch { /* тихо */ }
-  }, []);
+  }, [initialDebtId]);
 
   useEffect(() => {
     if (visible) load();
@@ -194,6 +199,7 @@ function DebtEditor({
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   const [direction, setDirection] = useState<'owes_me' | 'i_owe'>('owes_me');
+  const [recipient, setRecipient] = useState<DebtRecipient>('Тима');
   const [note, setNote] = useState('');
   const [due, setDue] = useState('');
   const [when, setWhen] = useState('');
@@ -203,6 +209,7 @@ function DebtEditor({
     setName(debt.counterparty || '');
     setAmount(debt.amount ? String(Math.round(Number(debt.amount))) : '');
     setDirection(debt.direction);
+    setRecipient(debtRecipient(debt.recipient));
     setNote(debt.note || '');
     setDue(debt.due_date ? debt.due_date.slice(0, 10) : '');
     setWhen(debt.occurred_at ? debt.occurred_at.slice(0, 10) : (debt.id ? '' : new Date().toISOString().slice(0, 10)));
@@ -212,7 +219,7 @@ function DebtEditor({
     if (!debt) return;
     const amt = Number(amount.replace(',', '.'));
     if (!name.trim() || !amt) { Alert.alert('Заполни имя и сумму'); return; }
-    const body = { counterparty: name.trim(), amount: amt, direction, note: note.trim() || null, due_date: due.trim() || '', occurred_at: when.trim() || undefined };
+    const body = { counterparty: name.trim(), amount: amt, direction, recipient, note: note.trim() || null, due_date: due.trim() || '', occurred_at: when.trim() || undefined };
     try {
       if (debt.id) await api(`/debts/${debt.id}`, { method: 'PATCH', body });
       else await api('/debts', { body });
@@ -245,6 +252,15 @@ function DebtEditor({
             </Field>
             <Field label="Сумма, ₽">
               <TextInput value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text }]} />
+            </Field>
+            <Field label="Кому">
+              <View style={styles.seg}>
+                {DEBT_RECIPIENTS.map((name) => (
+                  <Pressable key={name} style={[styles.segBtn, recipient === name && { backgroundColor: theme.tint }]} onPress={() => setRecipient(name)}>
+                    <ThemedText type="smallBold" style={{ color: recipient === name ? '#fff' : theme.textSecondary }}>{name}</ThemedText>
+                  </Pressable>
+                ))}
+              </View>
             </Field>
             <Field label="Когда возник (ГГГГ-ММ-ДД)">
               <TextInput value={when} onChangeText={setWhen} placeholder="дата долга" placeholderTextColor={theme.textSecondary} autoCapitalize="none" style={[styles.input, { color: theme.text }]} />

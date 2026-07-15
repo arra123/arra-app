@@ -24,7 +24,7 @@ type Props = {
   disabled?: boolean;
 };
 
-const BARS = 25;
+const BARS = 19;
 const mmss = (ms: number) => {
   const seconds = Math.floor(ms / 1000);
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
@@ -39,7 +39,7 @@ export function VoiceRecorder({ onTranscript, disabled = false }: Props) {
   const theme = useTheme();
   const options = useMemo(() => ({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true }), []);
   const recorder = useAudioRecorder(options);
-  const recorderState = useAudioRecorderState(recorder, 80);
+  const recorderState = useAudioRecorderState(recorder, 100);
   const [phase, setPhase] = useState<Phase>('idle');
   const [locked, setLocked] = useState(false);
   const [cancelled, setCancelled] = useState(false);
@@ -54,6 +54,7 @@ export function VoiceRecorder({ onTranscript, disabled = false }: Props) {
   const startedAt = useRef(0);
   const drag = useRef(new Animated.ValueXY()).current;
   const activeAnim = useRef(new Animated.Value(0)).current;
+  const smoothedLevel = useRef(0.08);
 
   const movePhase = (next: Phase) => {
     phaseRef.current = next;
@@ -82,8 +83,10 @@ export function VoiceRecorder({ onTranscript, disabled = false }: Props) {
   useEffect(() => {
     if (phase !== 'recording') return;
     const db = typeof recorderState.metering === 'number' ? recorderState.metering : -60;
-    const normalized = Math.max(0.08, Math.min(1, (db + 58) / 48));
-    setLevels((current) => [...current.slice(1), normalized]);
+    const clampedDb = Math.max(-60, Math.min(0, db));
+    const rawLevel = Math.max(0.06, Math.min(1, Math.pow(10, clampedDb / 28)));
+    smoothedLevel.current = smoothedLevel.current * 0.58 + rawLevel * 0.42;
+    setLevels((current) => [...current.slice(1), smoothedLevel.current]);
   }, [phase, recorderState.durationMillis, recorderState.metering]);
 
   async function begin() {
@@ -148,6 +151,7 @@ export function VoiceRecorder({ onTranscript, disabled = false }: Props) {
     moveCancelled(false);
     drag.setValue({ x: 0, y: 0 });
     setLevels(Array(BARS).fill(0.08));
+    smoothedLevel.current = 0.08;
 
     if (!shouldSend || !uri || elapsed < 500) {
       movePhase('idle');

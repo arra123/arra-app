@@ -149,22 +149,30 @@ function bindLiquidRecorder(button, onText) {
 
 const liquidFinance = {
   tab: 'add', target: 'reimbursement', raw: '', userRaw: '', parsed: null, parsing: false, saved: null,
-  recipient: localStorage.getItem('noda-finance-recipient') === 'Дани' ? 'Дани' : 'Тима',
+  recipient: normalizeFinanceRecipient(localStorage.getItem('noda-finance-recipient')),
   month: localStorage.getItem('noda-finance-month') || '',
+  statusMode: localStorage.getItem('noda-finance-status') === 'closed' ? 'closed' : 'active',
   dateSort: localStorage.getItem('noda-finance-date-sort') === 'asc' ? 'asc' : 'desc',
   groupMode: localStorage.getItem('noda-finance-group-mode') === 'service' ? 'service' : 'week',
   expandedServices: new Set(),
   loaded: false, loadedAt: 0, loading: null, reimbursements: [], debts: [],
 };
+function normalizeFinanceRecipient(value) {
+  const text = String(value || '').toLowerCase();
+  if (text.includes('жен')) return 'Женя';
+  if (text.includes('дан')) return 'Даня';
+  return 'Тима';
+}
+const FINANCE_RECIPIENTS = ['Тима', 'Даня', 'Женя'];
 function financeRecipientButtons(selected = liquidFinance.recipient) {
+  selected = normalizeFinanceRecipient(selected);
   return `<div class="finance-recipient-switch" role="tablist" data-recipient="${esc(selected)}">
     <i aria-hidden="true"></i>
-    <button type="button" data-fin-recipient="Тима" class="${selected === 'Тима' ? 'active' : ''}">Тима</button>
-    <button type="button" data-fin-recipient="Дани" class="${selected === 'Дани' ? 'active' : ''}">Дани</button>
+    ${FINANCE_RECIPIENTS.map((name) => `<button type="button" data-fin-recipient="${name}" class="${selected === name ? 'active' : ''}">${name}</button>`).join('')}
   </div>`;
 }
 function selectFinanceRecipient(value) {
-  liquidFinance.recipient = value === 'Дани' ? 'Дани' : 'Тима';
+  liquidFinance.recipient = normalizeFinanceRecipient(value);
   localStorage.setItem('noda-finance-recipient', liquidFinance.recipient);
   document.querySelectorAll('.finance-recipient-switch').forEach((switcher) => {
     switcher.dataset.recipient = liquidFinance.recipient;
@@ -231,16 +239,19 @@ function financeRecords() {
   ].map((record) => {
     const { type, item } = record; const reimbursement = type === 'reimbursement'; const company = reimbursement || financeIsCompanyDebt(item);
     const date = financeRecordDate(item);
-    let source = 'Компания'; let recipient = item.recipient || 'Тима';
+    let source = 'Компания'; let recipient = normalizeFinanceRecipient(item.recipient);
     if (!company && item.direction === 'i_owe') { source = 'Тима'; recipient = item.counterparty || '—'; }
-    else if (!company) { source = item.counterparty || '—'; recipient = item.recipient || 'Тима'; }
+    else if (!company) { source = item.counterparty || '—'; recipient = normalizeFinanceRecipient(item.recipient); }
     return { ...record, date, dateMs: date.getTime(), month: financeMonthKey(date), reimbursement, company,
       closed: financeIsClosed(type, item), source, recipient, reason: financeReason(type, item), amount: Number(item.amount || 0) };
   });
 }
 function financeMonthRecords() {
   ensureFinanceMonth();
-  return financeRecords().filter((record) => record.month === liquidFinance.month);
+  return financeRecords().filter((record) => record.month === liquidFinance.month && record.closed === (liquidFinance.statusMode === 'closed'));
+}
+function financeOutstandingRecords() {
+  return financeRecords().filter((record) => !record.closed && (record.reimbursement || record.item.direction !== 'i_owe'));
 }
 function financeWeekStart(date) {
   const result = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -306,7 +317,8 @@ function financeMonthOptions() {
   return [...new Set(options)].sort().reverse();
 }
 function financePeriodHtml(records, withGrouping = false) {
-  const total = records.reduce((sum, record) => sum + record.amount, 0);
+  const monthOwed = records.filter((record) => record.reimbursement || record.item.direction !== 'i_owe').reduce((sum, record) => sum + record.amount, 0);
+  const outstanding = financeOutstandingRecords().reduce((sum, record) => sum + record.amount, 0);
   return `<div class="finance-list-toolbar">
     <div class="finance-month-picker">
       <button type="button" data-fin-month-step="-1" title="Предыдущий месяц">${liquidIcon('left')}</button>
@@ -318,8 +330,8 @@ function financePeriodHtml(records, withGrouping = false) {
       </div>
       <button type="button" data-fin-month-step="1" title="Следующий месяц">${liquidIcon('right')}</button>
     </div>
-    ${withGrouping ? `<nav class="finance-view-switch" aria-label="Группировка"><button type="button" data-fin-group="week" class="${liquidFinance.groupMode === 'week' ? 'active' : ''}">По неделям</button><button type="button" data-fin-group="service" class="${liquidFinance.groupMode === 'service' ? 'active' : ''}">По сервисам</button></nav>` : ''}
-    <div class="finance-period-total"><small>За ${financeMonthLabel(liquidFinance.month)}</small><strong>${fmt(total)} ₽</strong><span>${records.length} ${records.length === 1 ? 'запись' : records.length > 1 && records.length < 5 ? 'записи' : 'записей'}</span></div>
+    ${withGrouping ? `<nav class="finance-view-switch finance-status-switch" aria-label="Статус"><button type="button" data-fin-status="active" class="${liquidFinance.statusMode === 'active' ? 'active' : ''}">Остаток</button><button type="button" data-fin-status="closed" class="${liquidFinance.statusMode === 'closed' ? 'active' : ''}">Возвращено</button></nav><nav class="finance-view-switch" aria-label="Группировка"><button type="button" data-fin-group="week" class="${liquidFinance.groupMode === 'week' ? 'active' : ''}">Недели</button><button type="button" data-fin-group="service" class="${liquidFinance.groupMode === 'service' ? 'active' : ''}">Сервисы</button></nav>` : ''}
+    <div class="finance-period-total"><small>Остаток</small><strong>${fmt(outstanding)} ₽</strong><span>${liquidFinance.statusMode === 'closed' ? 'Возвращено' : `За ${financeMonthLabel(liquidFinance.month)}: ${fmt(monthOwed)} ₽`} · ${records.length}</span></div>
   </div>`;
 }
 function financeRecordRow(record) {
@@ -328,7 +340,7 @@ function financeRecordRow(record) {
   return `<tr class="finance-record ${closed ? 'closed' : ''}" data-type="${type}" data-id="${esc(item.id)}" data-fin-edit-row="1" title="Нажмите, чтобы изменить">
     <td><div class="finance-source"><span class="finance-source-mark ${record.company ? 'company' : 'person'}" aria-hidden="true">${record.company ? '' : liquidIcon('people')}</span><b>${esc(record.source)}</b></div></td>
     <td><div class="finance-purpose">${financeServiceIcon(item)}<div><b>${esc(record.reason)}</b>${subtitle ? `<small>${esc(subtitle)}</small>` : ''}</div></div></td>
-    <td><span class="finance-recipient-badge ${record.recipient === 'Дани' ? 'dani' : 'tima'}">${esc(record.recipient)}</span></td>
+    <td><span class="finance-recipient-badge ${record.recipient === 'Даня' ? 'dani' : record.recipient === 'Женя' ? 'zhenya' : 'tima'}">${esc(record.recipient)}</span></td>
     <td><time datetime="${record.date.toISOString()}">${liquidDate(record.date)}</time></td>
     <td class="money"><strong>${fmt(record.amount)} ₽</strong></td>
     <td><div class="finance-row-actions"><button class="finance-row-edit" type="button" data-fin-edit="1" title="Изменить">${liquidIcon('edit')}</button><button class="liquid-row-check ${closed ? 'checked' : ''}" type="button" data-close="1" title="${closed ? 'Вернуть' : 'Отметить возвращённым'}">${liquidIcon('check')}</button></div></td>
@@ -361,10 +373,10 @@ function openFinanceEditor(type, id) {
       <div class="finance-edit-grid">
         ${reimbursement ? `<label class="wide"><span>За что</span><input name="purpose" value="${esc(item.purpose || '')}" required/></label>
           <label><span>Сервис или магазин</span><input name="merchant" value="${esc(item.merchant || '')}"/></label>
-          <label><span>Кому</span><select name="recipient"><option ${item.recipient !== 'Дани' ? 'selected' : ''}>Тима</option><option ${item.recipient === 'Дани' ? 'selected' : ''}>Дани</option></select></label>`
+          <label><span>Кому</span><select name="recipient">${FINANCE_RECIPIENTS.map((name) => `<option ${normalizeFinanceRecipient(item.recipient) === name ? 'selected' : ''}>${name}</option>`).join('')}</select></label>`
           : `<label class="wide"><span>Кто или кому</span><input name="counterparty" value="${esc(item.counterparty || '')}" required/></label>
           <label><span>Направление</span><select name="direction"><option value="owes_me" ${item.direction !== 'i_owe' ? 'selected' : ''}>Мне должны</option><option value="i_owe" ${item.direction === 'i_owe' ? 'selected' : ''}>Я должен</option></select></label>
-          <label><span>Кому внутри команды</span><select name="recipient"><option ${item.recipient !== 'Дани' ? 'selected' : ''}>Тима</option><option ${item.recipient === 'Дани' ? 'selected' : ''}>Дани</option></select></label>`}
+          <label><span>Кому внутри команды</span><select name="recipient">${FINANCE_RECIPIENTS.map((name) => `<option ${normalizeFinanceRecipient(item.recipient) === name ? 'selected' : ''}>${name}</option>`).join('')}</select></label>`}
         <label><span>Когда</span><input name="occurred_at" type="datetime-local" value="${financeLocalDateTime(item.occurred_at || item.created_at)}" required/></label>
         <label><span>Сумма</span><div class="finance-edit-money"><input name="amount" type="number" min="0.01" step="0.01" value="${esc(item.amount)}" required/><i>₽</i></div></label>
         <label class="wide"><span>Комментарий</span><input name="note" value="${esc(item.note || '')}"/></label>
@@ -448,6 +460,11 @@ function renderFinanceList() {
     if (liquidFinance.groupMode === 'service') liquidFinance.expandedServices.clear();
     renderFinanceList();
   });
+  body.querySelectorAll('[data-fin-status]').forEach((button) => button.onclick = () => {
+    liquidFinance.statusMode = button.dataset.finStatus === 'closed' ? 'closed' : 'active';
+    localStorage.setItem('noda-finance-status', liquidFinance.statusMode);
+    renderFinanceList();
+  });
   bindFinancePeriod(renderFinanceList); bindFinanceTableActions();
 }
 function financeCategory(record) {
@@ -464,11 +481,11 @@ function renderFinanceAnalytics() {
   const weeks = financeWeekGroups(records).sort((a, b) => a.start - b.start);
   const categoryMap = new Map(); records.forEach((record) => categoryMap.set(financeCategory(record), (categoryMap.get(financeCategory(record)) || 0) + record.amount));
   const categories = [...categoryMap.entries()].sort((a, b) => b[1] - a[1]);
-  const recipients = ['Тима', 'Дани'].map((name) => ({ name, total: records.filter((record) => record.recipient === name).reduce((sum, record) => sum + record.amount, 0) })).filter((item) => item.total);
+  const recipients = FINANCE_RECIPIENTS.map((name) => ({ name, total: records.filter((record) => record.recipient === name).reduce((sum, record) => sum + record.amount, 0) })).filter((item) => item.total);
   body.innerHTML = `${financePeriodHtml(records)}<div class="finance-analytics">
     <section class="finance-analytics-panel"><header><span>${liquidIcon('calendar')}</span><div><b>По неделям</b><small>Динамика расходов</small></div></header><div class="finance-week-bars">${weeks.length ? weeks.map((group) => `<div><label><span>${financeWeekLabel(group.start)}</span><strong>${fmt(group.total)} ₽</strong></label><i><b style="width:${Math.max(3, group.total / max * 100)}%"></b></i></div>`).join('') : '<p>Нет данных</p>'}</div></section>
     <section class="finance-analytics-panel"><header><span>${liquidIcon('chart')}</span><div><b>За что</b><small>Основные направления</small></div></header><div class="finance-category-list">${categories.length ? categories.map(([name, amount]) => `<div><span>${esc(name)}</span><b>${fmt(amount)} ₽</b><small>${total ? Math.round(amount / total * 100) : 0}%</small></div>`).join('') : '<p>Нет данных</p>'}</div></section>
-    <section class="finance-recipient-summary"><b>Кому</b>${recipients.length ? recipients.map((item) => `<span><i class="${item.name === 'Дани' ? 'dani' : 'tima'}"></i>${item.name}<strong>${fmt(item.total)} ₽</strong></span>`).join('') : '<small>Нет данных</small>'}</section>
+    <section class="finance-recipient-summary"><b>Кому</b>${recipients.length ? recipients.map((item) => `<span><i class="${item.name === 'Даня' ? 'dani' : item.name === 'Женя' ? 'zhenya' : 'tima'}"></i>${item.name}<strong>${fmt(item.total)} ₽</strong></span>`).join('') : '<small>Нет данных</small>'}</section>
   </div>`;
   bindFinancePeriod(renderFinanceAnalytics);
 }
@@ -512,7 +529,11 @@ function renderFinanceAdd() {
   };
   send.onclick = () => parseEntry(input.value);
   input.onkeydown = (event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); parseEntry(input.value); } };
-  bindLiquidRecorder(mic, (text) => parseEntry(text));
+  bindLiquidRecorder(mic, (text) => {
+    input.value = text;
+    updateSend();
+    input.focus();
+  });
   const photo = document.getElementById('finance-photo'); document.getElementById('finance-attach').onclick = () => photo.click();
   photo.onchange = async () => { if (photo.files?.[0]) parseEntry('', await dataUrlFromFile(photo.files[0])); };
   const form = document.getElementById('finance-form');

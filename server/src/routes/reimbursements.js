@@ -1,5 +1,6 @@
 import { parseReimbursementInput } from '../ai.js';
 import { one, query } from '../db.js';
+import { normalizeRecipient } from '../recipients.js';
 
 const COLS = `id, amount, currency, purpose, merchant, location, company, recipient,
   occurred_at, due_date, status, note, source, raw_input,
@@ -10,7 +11,6 @@ const clean = (value) => {
   const text = value == null ? '' : String(value).trim();
   return text || null;
 };
-const recipient = (value) => /^дани(?:ил)?$/i.test(String(value || '').trim()) ? 'Дани' : 'Тима';
 
 export default async function reimbursementRoutes(app) {
   app.get('/reimbursements', { preHandler: app.auth }, async (request) => {
@@ -29,7 +29,7 @@ export default async function reimbursementRoutes(app) {
     const text = clean(request.body?.text);
     const image = clean(request.body?.image);
     const preferredKind = request.body?.preferredKind === 'debt' ? 'debt' : 'reimbursement';
-    const preferredRecipient = recipient(request.body?.preferredRecipient);
+    const preferredRecipient = normalizeRecipient(request.body?.preferredRecipient);
     if (!text && !image) return reply.code(400).send({ error: 'Нужен текст, голос или фото' });
     const parsed = await parseReimbursementInput({ text, image, preferredKind, preferredRecipient });
     return { parsed };
@@ -50,7 +50,7 @@ export default async function reimbursementRoutes(app) {
        VALUES ($1,$2,'RUB',$3,$4,$5,$6,$7,COALESCE($8::timestamptz,now()),$9::date,$10,$11,$12,$13,
                CASE WHEN $10='reimbursed' THEN now() ELSE NULL END)
        RETURNING ${COLS}`,
-      [request.user.id, amount, purpose, clean(b.merchant), clean(b.location), clean(b.company) || 'Компания', recipient(b.recipient),
+      [request.user.id, amount, purpose, clean(b.merchant), clean(b.location), clean(b.company) || 'Компания', normalizeRecipient(b.recipient),
        clean(b.occurred_at), clean(b.due_date), status, clean(b.note), source, clean(b.raw_input)],
     );
     return { reimbursement: item };
@@ -80,7 +80,7 @@ export default async function reimbursementRoutes(app) {
        RETURNING ${COLS}`,
       [b.amount == null ? null : Math.abs(Number(b.amount) || 0), clean(b.purpose),
        Object.hasOwn(b, 'merchant'), clean(b.merchant), Object.hasOwn(b, 'location'), clean(b.location),
-       clean(b.company), b.recipient == null ? null : recipient(b.recipient), clean(b.occurred_at),
+       clean(b.company), b.recipient == null ? null : normalizeRecipient(b.recipient), clean(b.occurred_at),
        Object.hasOwn(b, 'due_date'), clean(b.due_date), status,
        Object.hasOwn(b, 'note'), clean(b.note), request.params.id, request.user.id],
     );
