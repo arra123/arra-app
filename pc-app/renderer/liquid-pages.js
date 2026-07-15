@@ -255,6 +255,11 @@ function financeWeekLabel(start) {
     ? `${start.getDate()}–${end.getDate()} ${endMonth}`
     : `${start.getDate()} ${startMonth} — ${end.getDate()} ${endMonth}`;
 }
+function financeOperationCount(count) {
+  const lastTwo = count % 100; const last = count % 10;
+  const word = lastTwo >= 11 && lastTwo <= 14 ? 'операций' : last === 1 ? 'операция' : last >= 2 && last <= 4 ? 'операции' : 'операций';
+  return `${count} ${word}`;
+}
 function financeWeekGroups(records = financeMonthRecords()) {
   const groups = new Map();
   records.forEach((record) => {
@@ -305,7 +310,12 @@ function financePeriodHtml(records, withGrouping = false) {
   return `<div class="finance-list-toolbar">
     <div class="finance-month-picker">
       <button type="button" data-fin-month-step="-1" title="Предыдущий месяц">${liquidIcon('left')}</button>
-      <label><small>Период</small><select id="finance-month-select">${financeMonthOptions().map((key) => `<option value="${key}" ${key === liquidFinance.month ? 'selected' : ''}>${financeMonthLabel(key, true)}</option>`).join('')}</select></label>
+      <div class="finance-period-select">
+        <button type="button" id="finance-month-toggle" class="finance-month-toggle" aria-haspopup="listbox" aria-expanded="false"><small>Месяц</small><span>${financeMonthLabel(liquidFinance.month, true)}</span><i>${liquidIcon('right')}</i></button>
+        <div class="finance-month-menu" id="finance-month-menu" role="listbox" aria-label="Выбрать месяц">
+          ${financeMonthOptions().map((key) => `<button type="button" role="option" aria-selected="${key === liquidFinance.month}" data-fin-month-option="${key}" class="${key === liquidFinance.month ? 'active' : ''}"><span>${financeMonthLabel(key, true)}</span>${key === liquidFinance.month ? liquidIcon('check') : ''}</button>`).join('')}
+        </div>
+      </div>
       <button type="button" data-fin-month-step="1" title="Следующий месяц">${liquidIcon('right')}</button>
     </div>
     ${withGrouping ? `<nav class="finance-view-switch" aria-label="Группировка"><button type="button" data-fin-group="week" class="${liquidFinance.groupMode === 'week' ? 'active' : ''}">По неделям</button><button type="button" data-fin-group="service" class="${liquidFinance.groupMode === 'service' ? 'active' : ''}">По сервисам</button></nav>` : ''}
@@ -316,7 +326,7 @@ function financeRecordRow(record) {
   const { type, item, closed } = record;
   const subtitle = record.reimbursement && item.merchant && item.merchant.toLowerCase() !== record.reason.toLowerCase() ? item.merchant : '';
   return `<tr class="finance-record ${closed ? 'closed' : ''}" data-type="${type}" data-id="${esc(item.id)}" data-fin-edit-row="1" title="Нажмите, чтобы изменить">
-    <td><div class="finance-source">${record.company ? liquidCompanyMark('row') : `<span class="finance-person-icon">${liquidIcon('people')}</span>`}<b>${esc(record.source)}</b></div></td>
+    <td><div class="finance-source"><span class="finance-source-mark ${record.company ? 'company' : 'person'}" aria-hidden="true">${record.company ? '' : liquidIcon('people')}</span><b>${esc(record.source)}</b></div></td>
     <td><div class="finance-purpose">${financeServiceIcon(item)}<div><b>${esc(record.reason)}</b>${subtitle ? `<small>${esc(subtitle)}</small>` : ''}</div></div></td>
     <td><span class="finance-recipient-badge ${record.recipient === 'Дани' ? 'dani' : 'tima'}">${esc(record.recipient)}</span></td>
     <td><time datetime="${record.date.toISOString()}">${liquidDate(record.date)}</time></td>
@@ -331,7 +341,7 @@ function financeTableHtml() {
     <thead><tr><th>Кто</th><th>За что</th><th>Кому</th><th><button class="finance-date-sort" type="button" title="Изменить порядок">Когда <span>${liquidFinance.dateSort === 'desc' ? '↓' : '↑'}</span></button></th><th class="money">Сумма</th><th aria-label="Действия"></th></tr></thead>
     ${liquidFinance.groupMode === 'service'
       ? groups.map((group) => { const expanded = liquidFinance.expandedServices.has(group.key); return `<tbody class="finance-service-group ${expanded ? 'expanded' : ''}"><tr class="finance-service-row" data-fin-service-toggle="${esc(group.key)}" tabindex="0" role="button" aria-expanded="${expanded}"><td colspan="4"><div>${group.icon}<b>${esc(group.label)}</b><small>${group.records.length}</small></div></td><td class="money"><strong>${fmt(group.total)} ₽</strong></td><td><span class="finance-service-chevron">${liquidIcon('right')}</span></td></tr>${expanded ? group.records.map(financeRecordRow).join('') : ''}</tbody>`; }).join('')
-      : groups.map((group) => `<tbody class="finance-week-group"><tr class="finance-week-row"><td colspan="4"><div><span>${liquidIcon('calendar')}</span><b>${financeWeekLabel(group.start)}</b><small>${group.records.length}</small></div></td><td class="money"><strong>${fmt(group.total)} ₽</strong></td><td></td></tr>${group.records.map(financeRecordRow).join('')}</tbody>`).join('')}
+      : groups.map((group) => `<tbody class="finance-week-group"><tr class="finance-week-row"><td colspan="4"><div><em>Неделя</em><b>${financeWeekLabel(group.start)}</b><small>${financeOperationCount(group.records.length)}</small></div></td><td class="money"><strong>${fmt(group.total)} ₽</strong></td><td></td></tr>${group.records.map(financeRecordRow).join('')}</tbody>`).join('')}
     </table></div>`;
 }
 function financeLocalDateTime(value) {
@@ -396,7 +406,19 @@ async function toggleFinanceClosed(row, button) {
 }
 function bindFinancePeriod(onChange) {
   document.querySelectorAll('[data-fin-month-step]').forEach((button) => button.onclick = () => { financeMoveMonth(Number(button.dataset.finMonthStep)); onChange(); });
-  const select = document.getElementById('finance-month-select'); if (select) select.onchange = () => { liquidFinance.month = select.value; localStorage.setItem('noda-finance-month', liquidFinance.month); onChange(); };
+  const picker = document.querySelector('.finance-period-select'); const toggle = document.getElementById('finance-month-toggle'); const menu = document.getElementById('finance-month-menu');
+  const closeMenu = () => { picker?.classList.remove('open'); toggle?.setAttribute('aria-expanded', 'false'); };
+  if (picker && toggle && menu) {
+    toggle.onclick = (event) => {
+      event.stopPropagation(); const open = !picker.classList.contains('open');
+      picker.classList.toggle('open', open); toggle.setAttribute('aria-expanded', String(open));
+      if (open) setTimeout(() => document.addEventListener('click', closeMenu, { once: true }), 0);
+    };
+    picker.onkeydown = (event) => { if (event.key === 'Escape') { event.preventDefault(); closeMenu(); toggle.focus(); } };
+    menu.querySelectorAll('[data-fin-month-option]').forEach((button) => button.onclick = () => {
+      liquidFinance.month = button.dataset.finMonthOption; localStorage.setItem('noda-finance-month', liquidFinance.month); onChange();
+    });
+  }
 }
 function bindFinanceTableActions() {
   const host = document.getElementById('finance-table-host'); if (!host) return;
