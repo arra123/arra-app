@@ -1,6 +1,7 @@
 import { one, query } from '../db.js';
 
-const DEBT_COLS = 'id, counterparty, amount, currency, direction, note, settled, settled_at, due_date, occurred_at, created_at';
+const DEBT_COLS = 'id, counterparty, amount, currency, direction, recipient, note, settled, settled_at, due_date, occurred_at, created_at';
+const recipient = (value) => /^дани(?:ил)?$/i.test(String(value || '').trim()) ? 'Дани' : 'Тима';
 
 export default async function debtRoutes(app) {
   // Список долгов. По умолчанию активные (обратная совместимость со старым приложением).
@@ -10,7 +11,7 @@ export default async function debtRoutes(app) {
     const { rows } = await query(
       `SELECT ${DEBT_COLS}
        FROM debts WHERE user_id = $1 ${includeSettled ? '' : 'AND settled = false'}
-       ORDER BY settled ASC, COALESCE(due_date, '9999-12-31') ASC, created_at DESC`,
+       ORDER BY occurred_at DESC, created_at DESC`,
       [request.user.id],
     );
     return { debts: rows };
@@ -23,8 +24,8 @@ export default async function debtRoutes(app) {
       return reply.code(400).send({ error: 'Нужны имя и сумма' });
     }
     const debt = await one(
-      `INSERT INTO debts (user_id, counterparty, amount, currency, direction, note, due_date, occurred_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, now()))
+      `INSERT INTO debts (user_id, counterparty, amount, currency, direction, recipient, note, due_date, occurred_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9, now()))
        RETURNING ${DEBT_COLS}`,
       [
         request.user.id,
@@ -32,6 +33,7 @@ export default async function debtRoutes(app) {
         Math.abs(Number(b.amount)),
         b.currency || 'RUB',
         b.direction === 'i_owe' ? 'i_owe' : 'owes_me',
+        recipient(b.recipient),
         b.note || null,
         b.due_date || null,
         b.occurred_at || null,
@@ -55,21 +57,23 @@ export default async function debtRoutes(app) {
          counterparty = COALESCE($1, counterparty),
          amount       = COALESCE($2, amount),
          direction    = COALESCE($3, direction),
-         note         = COALESCE($4, note),
-         due_date     = CASE WHEN $5::text IS NULL THEN due_date
-                             WHEN $5 = '' THEN NULL
-                             ELSE $5::date END,
-         settled      = COALESCE($6, settled),
-         settled_at   = CASE WHEN $6 IS TRUE THEN now()
-                             WHEN $6 IS FALSE THEN NULL
+         recipient    = COALESCE($4, recipient),
+         note         = COALESCE($5, note),
+         due_date     = CASE WHEN $6::text IS NULL THEN due_date
+                             WHEN $6 = '' THEN NULL
+                             ELSE $6::date END,
+         settled      = COALESCE($7, settled),
+         settled_at   = CASE WHEN $7 IS TRUE THEN now()
+                             WHEN $7 IS FALSE THEN NULL
                              ELSE settled_at END,
-         occurred_at  = COALESCE($9::timestamptz, occurred_at)
-       WHERE id = $7 AND user_id = $8
+         occurred_at  = COALESCE($10::timestamptz, occurred_at)
+       WHERE id = $8 AND user_id = $9
        RETURNING ${DEBT_COLS}`,
       [
         b.counterparty ?? null,
         b.amount != null ? Math.abs(Number(b.amount)) : null,
         b.direction === 'i_owe' || b.direction === 'owes_me' ? b.direction : null,
+        b.recipient == null ? null : recipient(b.recipient),
         b.note ?? null,
         b.due_date === undefined ? null : (b.due_date || ''),
         settled,

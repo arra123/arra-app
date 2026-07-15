@@ -14,14 +14,21 @@ const LIQUID_ICON = {
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14"/></svg>',
   receipt: '<svg viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>',
+  edit: '<svg viewBox="0 0 24 24"><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10z"/><path d="m14 7 3 3"/></svg>',
+  calendar: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>',
+  chart: '<svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  left: '<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',
+  right: '<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>',
   car: '<svg viewBox="0 0 24 24"><path d="m5 16-1-3 2-5h12l2 5-1 3z"/><path d="M6 16v3M18 16v3M4 13h16M7 13h.01M17 13h.01"/></svg>',
   cloud: '<svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.8-7.9A6 6 0 0 1 17.7 9 4.5 4.5 0 0 1 18 18z"/></svg>',
   food: '<svg viewBox="0 0 24 24"><path d="M7 3v8M4 3v5a3 3 0 0 0 6 0V3M7 11v10M16 3v18M16 3c4 2 5 6 0 9"/></svg>',
 };
 function liquidIcon(name) { return LIQUID_ICON[name] || LIQUID_ICON.sparkle; }
-function liquidCompanyMark(className = '') { return `<img class="liquid-company-mark ${className}" src="assets/company-reimbursement-2d-256.png" alt="" decoding="async"/>`; }
+function liquidCompanyMark(className = '') {
+  return `<span class="liquid-company-mark ${className}" aria-hidden="true">${liquidIcon('company')}</span>`;
+}
 const FINANCE_BRANDS = [
-  { test: /belka|белк/i, title: 'BelkaCar', merchant: 'belkacar' },
+  { test: /belka|белк/i, title: 'BelkaCar', merchant: 'belkacar', logo: 'https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/00/f3/3c/00f33c50-919e-25b2-58a4-2316eca1a104/ReleaseBelkacarAppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/100x100bb.jpg' },
   { test: /city\s*drive|citydrive|ситидрайв|сити\s*драйв/i, title: 'Ситидрайв', merchant: 'citydrive' },
   { test: /delimobil|делимоб|дели\b/i, title: 'Делимобиль', merchant: 'delimobil' },
   { test: /яндекс[.\s-]*(драйв|drive)|yandex[.\s-]*drive/i, title: 'Яндекс Драйв', merchant: 'яндекс драйв' },
@@ -30,6 +37,7 @@ const FINANCE_BRANDS = [
   { test: /proxy\s*api|прокси\s*апи/i, title: 'ProxyAPI', merchant: 'proxyapi' },
 ];
 function financeBrandIcon(brand) {
+  if (brand.logo) return `<span class="finance-brand-icon bundled" title="${esc(brand.title)}"><img src="${brand.logo}" alt="" decoding="async"/></span>`;
   return merchantLogo(brand.merchant, 38).replace('class="mlogo"', `class="mlogo finance-brand-icon" title="${esc(brand.title)}"`);
 }
 function financeServiceIcon(item = {}) {
@@ -135,8 +143,10 @@ function bindLiquidRecorder(button, onText) {
 }
 
 const liquidFinance = {
-  tab: 'add', target: 'reimbursement', raw: '', userRaw: '', parsed: null, parsing: false, saved: null, listMode: 'active',
+  tab: 'add', target: 'reimbursement', raw: '', userRaw: '', parsed: null, parsing: false, saved: null,
   recipient: localStorage.getItem('noda-finance-recipient') === 'Дани' ? 'Дани' : 'Тима',
+  month: localStorage.getItem('noda-finance-month') || '',
+  dateSort: localStorage.getItem('noda-finance-date-sort') === 'asc' ? 'asc' : 'desc',
   loaded: false, loadedAt: 0, loading: null, reimbursements: [], debts: [],
 };
 function financeRecipientButtons(selected = liquidFinance.recipient) {
@@ -154,9 +164,6 @@ function selectFinanceRecipient(value) {
     switcher.querySelector('.active')?.classList.remove('active');
     switcher.querySelector(`[data-fin-recipient="${liquidFinance.recipient}"]`)?.classList.add('active');
   });
-}
-function financeStatusLabel(status) {
-  return ({ pending: 'Новая', submitted: 'Передана', reimbursed: 'Возвращено', rejected: 'Отклонено' })[status] || status;
 }
 function financeDraftHtml(parsed) {
   if (!parsed) return '';
@@ -180,18 +187,6 @@ function financeIsClosed(type, item) {
 function financeIsCompanyDebt(item) {
   return item?.direction !== 'i_owe' && /^(компания|company)$/i.test(String(item?.counterparty || '').trim());
 }
-function financeGroups() {
-  const active = liquidFinance.listMode === 'active';
-  const visible = (type, item) => active ? !financeIsClosed(type, item) : financeIsClosed(type, item);
-  return [
-    { key: 'company', label: 'Компания', icon: liquidCompanyMark('small'), items: [
-      ...liquidFinance.reimbursements.filter((item) => visible('reimbursement', item)).map((item) => ({ type: 'reimbursement', item })),
-      ...liquidFinance.debts.filter((item) => financeIsCompanyDebt(item) && visible('debt', item)).map((item) => ({ type: 'debt', item })),
-    ] },
-    { key: 'owed', label: 'Мне должны', icon: liquidIcon('people'), items: liquidFinance.debts.filter((item) => item.direction !== 'i_owe' && !financeIsCompanyDebt(item) && visible('debt', item)).map((item) => ({ type: 'debt', item })) },
-    { key: 'owe', label: 'Я должен', icon: liquidIcon('people'), items: liquidFinance.debts.filter((item) => item.direction === 'i_owe' && visible('debt', item)).map((item) => ({ type: 'debt', item })) },
-  ];
-}
 function financeReason(type, item) {
   const generic = /^(компания|компенсация|личный долг|долг|без названия)$/i;
   const candidates = type === 'reimbursement'
@@ -199,70 +194,213 @@ function financeReason(type, item) {
     : [item.note, item.purpose, item.merchant];
   return candidates.map((value) => String(value || '').trim()).find((value) => value && !generic.test(value)) || 'Без описания';
 }
-function financeTableHtml() {
-  const groups = financeGroups().filter((group) => group.items.length);
-  if (!groups.length) return `<div class="liquid-empty finance-empty">${liquidFinance.listMode === 'active' ? 'Активных записей нет' : 'Закрытых записей нет'}</div>`;
-  return `<div class="liquid-money-table-shell"><table class="liquid-money-table">
-    <thead><tr><th>Источник</th><th>За что</th><th>Кому</th><th>Когда</th><th>Статус</th><th class="money">Сумма</th><th aria-label="Действие"></th></tr></thead>
-    ${groups.map((group) => {
-      const total = group.items.reduce((sum, record) => sum + Number(record.item.amount || 0), 0);
-      return `<tbody class="finance-group ${group.key}"><tr class="finance-group-row"><td colspan="5"><span class="finance-group-icon">${group.icon}</span><b>${group.label}</b><small>${group.items.length}</small></td><td class="money"><strong>${fmt(total)} ₽</strong></td><td></td></tr>
-        ${group.items.map(({ type, item }) => {
-          const reimbursement = type === 'reimbursement'; const company = reimbursement || financeIsCompanyDebt(item); const closed = financeIsClosed(type, item);
-          const source = company ? 'Компания' : (item.counterparty || (item.direction === 'i_owe' ? 'Кому должен' : 'Кто должен'));
-          const reason = financeReason(type, item);
-          const status = reimbursement ? financeStatusLabel(item.status) : (closed ? 'Закрыт' : 'Открыт');
-          const statusClass = reimbursement ? `status-${item.status || 'pending'}` : (closed ? 'status-reimbursed' : 'status-pending');
-          return `<tr class="finance-record ${closed ? 'closed' : ''}" data-type="${type}" data-id="${esc(item.id)}">
-            <td><div class="finance-source">${company ? liquidCompanyMark('row') : `<span class="finance-person-icon">${liquidIcon('people')}</span>`}<b>${esc(source)}</b></div></td>
-            <td><div class="finance-purpose">${financeServiceIcon(item)}<div><b>${esc(reason)}</b>${item.company && !/^компания$/i.test(item.company) ? `<small>${esc(item.company)}</small>` : ''}</div></div></td>
-            <td>${reimbursement ? `<span class="finance-recipient-badge ${item.recipient === 'Дани' ? 'dani' : 'tima'}">${esc(item.recipient || 'Тима')}</span>` : '<span class="finance-muted">—</span>'}</td>
-            <td><time>${liquidDate(item.occurred_at || item.created_at)}</time></td>
-            <td><span class="finance-status ${statusClass}"><i></i>${esc(status)}</span></td>
-            <td class="money"><strong>${fmt(item.amount)} ₽</strong></td><td><button class="liquid-row-check" data-close="1" title="${closed ? 'Вернуть в активные' : 'Закрыть'}">${closed ? '↺' : liquidIcon('check')}</button></td>
-          </tr>`;
-        }).join('')}</tbody>`;
-    }).join('')}</table></div>`;
+function financeRecordDate(item) {
+  const date = new Date(item?.occurred_at || item?.created_at || Date.now());
+  return Number.isNaN(date.getTime()) ? new Date() : date;
 }
-function bindFinanceTableActions() {
-  document.querySelectorAll('#finance-table-host .liquid-row-check').forEach((button) => button.onclick = async () => {
-    const row = button.closest('[data-id]'); const closed = row.classList.contains('closed'); button.disabled = true;
-    try {
-      if (row.dataset.type === 'reimbursement') {
-        await api('PATCH', `/reimbursements/${row.dataset.id}`, { status: closed ? 'pending' : 'reimbursed' });
-        const item = liquidFinance.reimbursements.find((record) => String(record.id) === row.dataset.id); if (item) item.status = closed ? 'pending' : 'reimbursed';
-      } else {
-        await api('PATCH', `/debts/${row.dataset.id}`, { settled: !closed });
-        const item = liquidFinance.debts.find((record) => String(record.id) === row.dataset.id); if (item) item.settled = !closed;
-      }
-      renderFinanceTable();
-    } catch (error) { toast('Возвраты', error.message, 'warn'); button.disabled = false; }
+function financeMonthKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+function financeMonthLabel(key, long = false) {
+  const [year, month] = String(key || '').split('-').map(Number);
+  if (!year || !month) return '';
+  return new Date(year, month - 1, 1).toLocaleDateString('ru-RU', { month: long ? 'long' : 'short', year: 'numeric' }).replace(' г.', '');
+}
+function financeMoveMonth(offset) {
+  const [year, month] = liquidFinance.month.split('-').map(Number);
+  const date = new Date(year || new Date().getFullYear(), (month || new Date().getMonth() + 1) - 1 + offset, 1);
+  liquidFinance.month = financeMonthKey(date);
+  localStorage.setItem('noda-finance-month', liquidFinance.month);
+}
+function ensureFinanceMonth() {
+  if (/^\d{4}-\d{2}$/.test(liquidFinance.month)) return;
+  const dates = [...liquidFinance.reimbursements, ...liquidFinance.debts].map(financeRecordDate).sort((a, b) => b - a);
+  liquidFinance.month = financeMonthKey(dates[0] || new Date());
+}
+function financeRecords() {
+  return [
+    ...liquidFinance.reimbursements.map((item) => ({ type: 'reimbursement', item })),
+    ...liquidFinance.debts.map((item) => ({ type: 'debt', item })),
+  ].map((record) => {
+    const { type, item } = record; const reimbursement = type === 'reimbursement'; const company = reimbursement || financeIsCompanyDebt(item);
+    const date = financeRecordDate(item);
+    let source = 'Компания'; let recipient = item.recipient || 'Тима';
+    if (!company && item.direction === 'i_owe') { source = 'Тима'; recipient = item.counterparty || '—'; }
+    else if (!company) { source = item.counterparty || '—'; recipient = item.recipient || 'Тима'; }
+    return { ...record, date, dateMs: date.getTime(), month: financeMonthKey(date), reimbursement, company,
+      closed: financeIsClosed(type, item), source, recipient, reason: financeReason(type, item), amount: Number(item.amount || 0) };
   });
 }
-function renderFinanceTable() {
+function financeMonthRecords() {
+  ensureFinanceMonth();
+  return financeRecords().filter((record) => record.month === liquidFinance.month);
+}
+function financeWeekStart(date) {
+  const result = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  result.setDate(result.getDate() - ((result.getDay() + 6) % 7));
+  return result;
+}
+function financeWeekLabel(start) {
+  const end = new Date(start); end.setDate(end.getDate() + 6);
+  const monthName = (date) => date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }).replace(/^\d+\s*/, '');
+  const startMonth = monthName(start); const endMonth = monthName(end);
+  return start.getMonth() === end.getMonth()
+    ? `${start.getDate()}–${end.getDate()} ${endMonth}`
+    : `${start.getDate()} ${startMonth} — ${end.getDate()} ${endMonth}`;
+}
+function financeWeekGroups(records = financeMonthRecords()) {
+  const groups = new Map();
+  records.forEach((record) => {
+    const start = financeWeekStart(record.date); const key = start.toISOString().slice(0, 10);
+    if (!groups.has(key)) groups.set(key, { key, start, records: [] });
+    groups.get(key).records.push(record);
+  });
+  const direction = liquidFinance.dateSort === 'asc' ? 1 : -1;
+  return [...groups.values()].sort((a, b) => (a.start - b.start) * direction).map((group) => ({
+    ...group,
+    records: group.records.sort((a, b) => (a.dateMs - b.dateMs) * direction),
+    total: group.records.reduce((sum, record) => sum + record.amount, 0),
+  }));
+}
+function financeMonthOptions() {
+  const dates = financeRecords().map((record) => new Date(record.date.getFullYear(), record.date.getMonth(), 1));
+  dates.push(new Date());
+  let min = new Date(Math.min(...dates.map((date) => date.getTime()))); let max = new Date(Math.max(...dates.map((date) => date.getTime())));
+  const options = [];
+  while (max >= min && options.length < 60) { options.push(financeMonthKey(max)); max = new Date(max.getFullYear(), max.getMonth() - 1, 1); }
+  if (!options.includes(liquidFinance.month)) options.push(liquidFinance.month);
+  return [...new Set(options)].sort().reverse();
+}
+function financePeriodHtml(records) {
+  const total = records.reduce((sum, record) => sum + record.amount, 0);
+  return `<div class="finance-list-toolbar">
+    <div class="finance-month-picker">
+      <button type="button" data-fin-month-step="-1" title="Предыдущий месяц">${liquidIcon('left')}</button>
+      <label><small>Период</small><select id="finance-month-select">${financeMonthOptions().map((key) => `<option value="${key}" ${key === liquidFinance.month ? 'selected' : ''}>${financeMonthLabel(key, true)}</option>`).join('')}</select></label>
+      <button type="button" data-fin-month-step="1" title="Следующий месяц">${liquidIcon('right')}</button>
+    </div>
+    <div class="finance-period-total"><small>За ${financeMonthLabel(liquidFinance.month)}</small><strong>${fmt(total)} ₽</strong><span>${records.length} ${records.length === 1 ? 'запись' : records.length > 1 && records.length < 5 ? 'записи' : 'записей'}</span></div>
+  </div>`;
+}
+function financeTableHtml() {
+  const groups = financeWeekGroups();
+  if (!groups.length) return `<div class="liquid-empty finance-empty">За ${financeMonthLabel(liquidFinance.month, true)} записей нет</div>`;
+  return `<div class="liquid-money-table-shell"><table class="liquid-money-table finance-week-table">
+    <thead><tr><th>Кто</th><th>За что</th><th>Кому</th><th><button class="finance-date-sort" type="button" title="Изменить порядок">Когда <span>${liquidFinance.dateSort === 'desc' ? '↓' : '↑'}</span></button></th><th class="money">Сумма</th><th aria-label="Действия"></th></tr></thead>
+    ${groups.map((group) => `<tbody class="finance-week-group"><tr class="finance-week-row"><td colspan="4"><div><span>${liquidIcon('calendar')}</span><b>${financeWeekLabel(group.start)}</b><small>${group.records.length}</small></div></td><td class="money"><strong>${fmt(group.total)} ₽</strong></td><td></td></tr>
+      ${group.records.map((record) => {
+        const { type, item, closed } = record;
+        const subtitle = record.reimbursement && item.merchant && item.merchant.toLowerCase() !== record.reason.toLowerCase() ? item.merchant : '';
+        return `<tr class="finance-record ${closed ? 'closed' : ''}" data-type="${type}" data-id="${esc(item.id)}" data-fin-edit-row="1" title="Нажмите, чтобы изменить">
+          <td><div class="finance-source">${record.company ? liquidCompanyMark('row') : `<span class="finance-person-icon">${liquidIcon('people')}</span>`}<b>${esc(record.source)}</b></div></td>
+          <td><div class="finance-purpose">${financeServiceIcon(item)}<div><b>${esc(record.reason)}</b>${subtitle ? `<small>${esc(subtitle)}</small>` : ''}</div></div></td>
+          <td><span class="finance-recipient-badge ${record.recipient === 'Дани' ? 'dani' : 'tima'}">${esc(record.recipient)}</span></td>
+          <td><time datetime="${record.date.toISOString()}">${liquidDate(record.date)}</time></td>
+          <td class="money"><strong>${fmt(record.amount)} ₽</strong></td>
+          <td><div class="finance-row-actions"><button class="finance-row-edit" type="button" data-fin-edit="1" title="Изменить">${liquidIcon('edit')}</button><button class="liquid-row-check ${closed ? 'checked' : ''}" type="button" data-close="1" title="${closed ? 'Вернуть' : 'Отметить возвращённым'}">${liquidIcon('check')}</button></div></td>
+        </tr>`;
+      }).join('')}</tbody>`).join('')}</table></div>`;
+}
+function financeLocalDateTime(value) {
+  const date = financeRecordDate({ occurred_at: value });
+  const pad = (number) => String(number).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+function closeFinanceEditor() { document.querySelector('.finance-editor-backdrop')?.remove(); }
+function openFinanceEditor(type, id) {
+  const collection = type === 'reimbursement' ? liquidFinance.reimbursements : liquidFinance.debts;
+  const item = collection.find((record) => String(record.id) === String(id)); if (!item) return;
+  const reimbursement = type === 'reimbursement';
+  closeFinanceEditor();
+  document.body.insertAdjacentHTML('beforeend', `<div class="finance-editor-backdrop"><section class="finance-editor" role="dialog" aria-modal="true" aria-labelledby="finance-editor-title">
+    <header><div><small>Запись</small><h2 id="finance-editor-title">Изменить</h2></div><button type="button" data-fin-edit-close title="Закрыть">${liquidIcon('close')}</button></header>
+    <form id="finance-edit-form">
+      <div class="finance-edit-grid">
+        ${reimbursement ? `<label class="wide"><span>За что</span><input name="purpose" value="${esc(item.purpose || '')}" required/></label>
+          <label><span>Сервис или магазин</span><input name="merchant" value="${esc(item.merchant || '')}"/></label>
+          <label><span>Кому</span><select name="recipient"><option ${item.recipient !== 'Дани' ? 'selected' : ''}>Тима</option><option ${item.recipient === 'Дани' ? 'selected' : ''}>Дани</option></select></label>`
+          : `<label class="wide"><span>Кто или кому</span><input name="counterparty" value="${esc(item.counterparty || '')}" required/></label>
+          <label><span>Направление</span><select name="direction"><option value="owes_me" ${item.direction !== 'i_owe' ? 'selected' : ''}>Мне должны</option><option value="i_owe" ${item.direction === 'i_owe' ? 'selected' : ''}>Я должен</option></select></label>
+          <label><span>Кому внутри команды</span><select name="recipient"><option ${item.recipient !== 'Дани' ? 'selected' : ''}>Тима</option><option ${item.recipient === 'Дани' ? 'selected' : ''}>Дани</option></select></label>`}
+        <label><span>Когда</span><input name="occurred_at" type="datetime-local" value="${financeLocalDateTime(item.occurred_at || item.created_at)}" required/></label>
+        <label><span>Сумма</span><div class="finance-edit-money"><input name="amount" type="number" min="0.01" step="0.01" value="${esc(item.amount)}" required/><i>₽</i></div></label>
+        <label class="wide"><span>Комментарий</span><input name="note" value="${esc(item.note || '')}"/></label>
+      </div>
+      <footer><button type="button" data-fin-edit-close>Отмена</button><button class="liquid-primary" type="submit">${liquidIcon('check')}<span>Сохранить</span></button></footer>
+    </form>
+  </section></div>`);
+  const backdrop = document.querySelector('.finance-editor-backdrop');
+  backdrop.querySelectorAll('[data-fin-edit-close]').forEach((button) => button.onclick = closeFinanceEditor);
+  backdrop.onclick = (event) => { if (event.target === backdrop) closeFinanceEditor(); };
+  const onEscape = (event) => { if (event.key === 'Escape') { closeFinanceEditor(); document.removeEventListener('keydown', onEscape); } };
+  document.addEventListener('keydown', onEscape);
+  backdrop.querySelector('#finance-edit-form').onsubmit = async (event) => {
+    event.preventDefault(); const form = new FormData(event.currentTarget); const submit = event.currentTarget.querySelector('[type="submit"]'); submit.disabled = true;
+    const localDate = new Date(String(form.get('occurred_at') || ''));
+    const payload = reimbursement
+      ? { purpose: String(form.get('purpose') || '').trim(), merchant: String(form.get('merchant') || '').trim(), recipient: form.get('recipient'), amount: Number(form.get('amount')), occurred_at: localDate.toISOString(), note: String(form.get('note') || '').trim() }
+      : { counterparty: String(form.get('counterparty') || '').trim(), direction: form.get('direction'), recipient: form.get('recipient'), amount: Number(form.get('amount')), occurred_at: localDate.toISOString(), note: String(form.get('note') || '').trim() };
+    try {
+      const result = await api('PATCH', `/${reimbursement ? 'reimbursements' : 'debts'}/${item.id}`, payload);
+      const updated = result[reimbursement ? 'reimbursement' : 'debt']; Object.assign(item, updated);
+      closeFinanceEditor(); ensureFinanceMonth(); renderFinanceList(); toast('Сохранено', 'Запись обновлена', 'ok');
+    } catch (error) { toast('Не сохранилось', error.message, 'warn'); submit.disabled = false; }
+  };
+  backdrop.querySelector('input')?.focus();
+}
+async function toggleFinanceClosed(row, button) {
+  const closed = row.classList.contains('closed'); button.disabled = true;
+  try {
+    if (row.dataset.type === 'reimbursement') {
+      const result = await api('PATCH', `/reimbursements/${row.dataset.id}`, { status: closed ? 'pending' : 'reimbursed' });
+      const item = liquidFinance.reimbursements.find((record) => String(record.id) === row.dataset.id); if (item) Object.assign(item, result.reimbursement);
+    } else {
+      const result = await api('PATCH', `/debts/${row.dataset.id}`, { settled: !closed });
+      const item = liquidFinance.debts.find((record) => String(record.id) === row.dataset.id); if (item) Object.assign(item, result.debt);
+    }
+    renderFinanceList();
+  } catch (error) { toast('Возвраты', error.message, 'warn'); button.disabled = false; }
+}
+function bindFinancePeriod(onChange) {
+  document.querySelectorAll('[data-fin-month-step]').forEach((button) => button.onclick = () => { financeMoveMonth(Number(button.dataset.finMonthStep)); onChange(); });
+  const select = document.getElementById('finance-month-select'); if (select) select.onchange = () => { liquidFinance.month = select.value; localStorage.setItem('noda-finance-month', liquidFinance.month); onChange(); };
+}
+function bindFinanceTableActions() {
   const host = document.getElementById('finance-table-host'); if (!host) return;
-  host.innerHTML = financeTableHtml(); bindFinanceTableActions();
+  host.querySelector('.finance-date-sort')?.addEventListener('click', () => {
+    liquidFinance.dateSort = liquidFinance.dateSort === 'desc' ? 'asc' : 'desc'; localStorage.setItem('noda-finance-date-sort', liquidFinance.dateSort); renderFinanceList();
+  });
+  host.querySelectorAll('[data-fin-edit-row]').forEach((row) => row.onclick = (event) => { if (!event.target.closest('button')) openFinanceEditor(row.dataset.type, row.dataset.id); });
+  host.querySelectorAll('[data-fin-edit]').forEach((button) => button.onclick = (event) => { event.stopPropagation(); const row = button.closest('[data-id]'); openFinanceEditor(row.dataset.type, row.dataset.id); });
+  host.querySelectorAll('[data-close]').forEach((button) => button.onclick = (event) => { event.stopPropagation(); toggleFinanceClosed(button.closest('[data-id]'), button); });
 }
 function renderFinanceList() {
   const body = document.getElementById('finance-body'); if (!body) return;
-  const companyTotal = liquidFinance.reimbursements.filter((item) => !financeIsClosed('reimbursement', item)).reduce((sum, item) => sum + Number(item.amount || 0), 0)
-    + liquidFinance.debts.filter((item) => !item.settled && financeIsCompanyDebt(item)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const timaTotal = liquidFinance.reimbursements.filter((item) => !financeIsClosed('reimbursement', item) && (item.recipient || 'Тима') === 'Тима').reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const daniTotal = liquidFinance.reimbursements.filter((item) => !financeIsClosed('reimbursement', item) && item.recipient === 'Дани').reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const owedTotal = liquidFinance.debts.filter((item) => !item.settled && item.direction !== 'i_owe' && !financeIsCompanyDebt(item)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const oweTotal = liquidFinance.debts.filter((item) => !item.settled && item.direction === 'i_owe').reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  body.innerHTML = `<div class="liquid-finance-overview">
-    <div class="finance-total company"><span>${liquidCompanyMark()}</span><div><small>Тима ${fmt(timaTotal)} · Дани ${fmt(daniTotal)}</small><strong>${fmt(companyTotal)} ₽</strong></div></div>
-    <div class="finance-total owed"><i></i><div><small>Мне должны</small><strong>${fmt(owedTotal)} ₽</strong></div></div>
-    <div class="finance-total owe"><i></i><div><small>Я должен</small><strong>${fmt(oweTotal)} ₽</strong></div></div>
-    <nav class="liquid-subtabs" data-active="${liquidFinance.listMode}"><button data-list="active" class="${liquidFinance.listMode === 'active' ? 'active' : ''}">Активные</button><button data-list="closed" class="${liquidFinance.listMode === 'closed' ? 'active' : ''}">Закрытые</button></nav>
-  </div><div id="finance-table-host"></div>`;
-  const switcher = body.querySelector('.liquid-subtabs');
-  switcher.querySelectorAll('[data-list]').forEach((button) => button.onclick = () => {
-    liquidFinance.listMode = button.dataset.list; switcher.dataset.active = liquidFinance.listMode;
-    switcher.querySelector('.active')?.classList.remove('active'); button.classList.add('active'); renderFinanceTable();
-  });
-  renderFinanceTable();
+  const records = financeMonthRecords();
+  body.innerHTML = `${financePeriodHtml(records)}<div id="finance-table-host">${financeTableHtml()}</div>`;
+  bindFinancePeriod(renderFinanceList); bindFinanceTableActions();
+}
+function financeCategory(record) {
+  const text = `${record.reason} ${record.item.merchant || ''}`.toLowerCase();
+  if (/каршер|belka|ситидрайв|делимоб|drive/.test(text)) return 'Каршеринг';
+  if (/api|gpt|openai|claude|codex|прокси|подпис/.test(text)) return 'Сервисы и подписки';
+  if (/водител|зарплат|оплата/.test(text)) return 'Работа';
+  if (/еда|кафе|ресторан|напит|ингредиент/.test(text)) return 'Еда';
+  return record.company ? 'Прочее для компании' : 'Личные долги';
+}
+function renderFinanceAnalytics() {
+  const body = document.getElementById('finance-body'); if (!body) return;
+  const records = financeMonthRecords(); const total = records.reduce((sum, record) => sum + record.amount, 0); const max = Math.max(1, ...financeWeekGroups(records).map((group) => group.total));
+  const weeks = financeWeekGroups(records).sort((a, b) => a.start - b.start);
+  const categoryMap = new Map(); records.forEach((record) => categoryMap.set(financeCategory(record), (categoryMap.get(financeCategory(record)) || 0) + record.amount));
+  const categories = [...categoryMap.entries()].sort((a, b) => b[1] - a[1]);
+  const recipients = ['Тима', 'Дани'].map((name) => ({ name, total: records.filter((record) => record.recipient === name).reduce((sum, record) => sum + record.amount, 0) })).filter((item) => item.total);
+  body.innerHTML = `${financePeriodHtml(records)}<div class="finance-analytics">
+    <section class="finance-analytics-panel"><header><span>${liquidIcon('calendar')}</span><div><b>По неделям</b><small>Динамика расходов</small></div></header><div class="finance-week-bars">${weeks.length ? weeks.map((group) => `<div><label><span>${financeWeekLabel(group.start)}</span><strong>${fmt(group.total)} ₽</strong></label><i><b style="width:${Math.max(3, group.total / max * 100)}%"></b></i></div>`).join('') : '<p>Нет данных</p>'}</div></section>
+    <section class="finance-analytics-panel"><header><span>${liquidIcon('chart')}</span><div><b>За что</b><small>Основные направления</small></div></header><div class="finance-category-list">${categories.length ? categories.map(([name, amount]) => `<div><span>${esc(name)}</span><b>${fmt(amount)} ₽</b><small>${total ? Math.round(amount / total * 100) : 0}%</small></div>`).join('') : '<p>Нет данных</p>'}</div></section>
+    <section class="finance-recipient-summary"><b>Кому</b>${recipients.length ? recipients.map((item) => `<span><i class="${item.name === 'Дани' ? 'dani' : 'tima'}"></i>${item.name}<strong>${fmt(item.total)} ₽</strong></span>`).join('') : '<small>Нет данных</small>'}</section>
+  </div>`;
+  bindFinancePeriod(renderFinanceAnalytics);
 }
 function renderFinanceAdd() {
   const body = document.getElementById('finance-body'); if (!body) return;
@@ -314,7 +452,7 @@ function renderFinanceAdd() {
     try {
       if (parsed.kind === 'debt' || liquidFinance.target !== 'reimbursement') {
         const counterparty = document.getElementById('f-party').value.trim();
-        const result = await api('POST', '/debts', { amount, counterparty, direction: parsed.direction || liquidFinance.target, note: document.getElementById('f-note').value.trim(), occurred_at: parsed.occurred_at || null });
+        const result = await api('POST', '/debts', { amount, counterparty, direction: parsed.direction || liquidFinance.target, recipient: liquidFinance.recipient, note: document.getElementById('f-note').value.trim(), occurred_at: parsed.occurred_at || null });
         liquidFinance.saved = { title: result.debt.counterparty, amount: result.debt.amount }; liquidFinance.debts.unshift(result.debt);
       } else {
         const result = await api('POST', '/reimbursements', { amount, purpose: document.getElementById('f-purpose').value.trim(), merchant: document.getElementById('f-merchant').value.trim(), company: document.getElementById('f-company').value.trim() || 'Компания', recipient: liquidFinance.recipient, note: document.getElementById('f-note').value.trim(), occurred_at: parsed.occurred_at || null, source: 'assistant', raw_input: liquidFinance.userRaw });
@@ -325,7 +463,9 @@ function renderFinanceAdd() {
   };
 }
 function renderFinanceBody() {
-  if (liquidFinance.tab === 'list') renderFinanceList(); else renderFinanceAdd();
+  if (liquidFinance.tab === 'list') renderFinanceList();
+  else if (liquidFinance.tab === 'analytics') renderFinanceAnalytics();
+  else renderFinanceAdd();
 }
 async function loadFinanceData(force = false) {
   if (!force && liquidFinance.loaded && Date.now() - liquidFinance.loadedAt < 60_000) return;
@@ -341,7 +481,7 @@ async function loadFinanceData(force = false) {
 }
 renderFin = async function renderLiquidFinance() {
   app.innerHTML = `<div class="liquid-page finance-liquid"><header class="liquid-head"><h1>Возвраты</h1>
-    <nav class="liquid-tabs" data-active="${liquidFinance.tab}"><button data-fin-tab="add" class="${liquidFinance.tab === 'add' ? 'active' : ''}">Записать</button><button data-fin-tab="list" class="${liquidFinance.tab === 'list' ? 'active' : ''}">Список</button></nav></header>
+    <nav class="liquid-tabs finance-main-tabs" data-active="${liquidFinance.tab}"><button data-fin-tab="add" class="${liquidFinance.tab === 'add' ? 'active' : ''}">Записать</button><button data-fin-tab="list" class="${liquidFinance.tab === 'list' ? 'active' : ''}">Список</button><button data-fin-tab="analytics" class="${liquidFinance.tab === 'analytics' ? 'active' : ''}">Аналитика</button></nav></header>
     <section id="finance-body" class="liquid-body">${liquidFinance.loaded ? '' : '<div class="liquid-loading"></div>'}</section></div>`;
   const tabs = app.querySelector('.liquid-tabs');
   tabs.querySelectorAll('[data-fin-tab]').forEach((button) => button.onclick = () => {

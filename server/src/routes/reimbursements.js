@@ -18,8 +18,7 @@ export default async function reimbursementRoutes(app) {
     const { rows } = await query(
       `SELECT ${COLS} FROM reimbursements
        WHERE user_id = $1 ${includeClosed ? '' : "AND status NOT IN ('reimbursed','rejected')"}
-       ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'submitted' THEN 1 ELSE 2 END,
-                occurred_at DESC, created_at DESC
+       ORDER BY occurred_at DESC, created_at DESC
        LIMIT 500`,
       [request.user.id],
     );
