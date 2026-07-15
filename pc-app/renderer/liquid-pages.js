@@ -164,6 +164,7 @@ function normalizeFinanceRecipient(value) {
   return 'Тима';
 }
 const FINANCE_RECIPIENTS = ['Тима', 'Даня', 'Женя'];
+const financeRecipientForApi = (value) => normalizeFinanceRecipient(value) === 'Даня' ? 'Дани' : normalizeFinanceRecipient(value);
 function financeRecipientButtons(selected = liquidFinance.recipient) {
   selected = normalizeFinanceRecipient(selected);
   return `<div class="finance-recipient-switch" role="tablist" data-recipient="${esc(selected)}">
@@ -251,7 +252,7 @@ function financeMonthRecords() {
   return financeRecords().filter((record) => record.month === liquidFinance.month && record.closed === (liquidFinance.statusMode === 'closed'));
 }
 function financeOutstandingRecords() {
-  return financeRecords().filter((record) => !record.closed && (record.reimbursement || record.item.direction !== 'i_owe'));
+  return financeRecords().filter((record) => !record.closed && record.company);
 }
 function financeWeekStart(date) {
   const result = new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -317,7 +318,7 @@ function financeMonthOptions() {
   return [...new Set(options)].sort().reverse();
 }
 function financePeriodHtml(records, withGrouping = false) {
-  const monthOwed = records.filter((record) => record.reimbursement || record.item.direction !== 'i_owe').reduce((sum, record) => sum + record.amount, 0);
+  const monthOwed = records.filter((record) => record.company).reduce((sum, record) => sum + record.amount, 0);
   const outstanding = financeOutstandingRecords().reduce((sum, record) => sum + record.amount, 0);
   return `<div class="finance-list-toolbar">
     <div class="finance-month-picker">
@@ -393,8 +394,8 @@ function openFinanceEditor(type, id) {
     event.preventDefault(); const form = new FormData(event.currentTarget); const submit = event.currentTarget.querySelector('[type="submit"]'); submit.disabled = true;
     const localDate = new Date(String(form.get('occurred_at') || ''));
     const payload = reimbursement
-      ? { purpose: String(form.get('purpose') || '').trim(), merchant: String(form.get('merchant') || '').trim(), recipient: form.get('recipient'), amount: Number(form.get('amount')), occurred_at: localDate.toISOString(), note: String(form.get('note') || '').trim() }
-      : { counterparty: String(form.get('counterparty') || '').trim(), direction: form.get('direction'), recipient: form.get('recipient'), amount: Number(form.get('amount')), occurred_at: localDate.toISOString(), note: String(form.get('note') || '').trim() };
+      ? { purpose: String(form.get('purpose') || '').trim(), merchant: String(form.get('merchant') || '').trim(), recipient: financeRecipientForApi(form.get('recipient')), amount: Number(form.get('amount')), occurred_at: localDate.toISOString(), note: String(form.get('note') || '').trim() }
+      : { counterparty: String(form.get('counterparty') || '').trim(), direction: form.get('direction'), recipient: financeRecipientForApi(form.get('recipient')), amount: Number(form.get('amount')), occurred_at: localDate.toISOString(), note: String(form.get('note') || '').trim() };
     try {
       const result = await api('PATCH', `/${reimbursement ? 'reimbursements' : 'debts'}/${item.id}`, payload);
       const updated = result[reimbursement ? 'reimbursement' : 'debt']; Object.assign(item, updated);
@@ -516,13 +517,13 @@ function renderFinanceAdd() {
     const cleaned = String(text || '').trim(); if (!cleaned && !image) return;
     liquidFinance.userRaw = cleaned || 'Фото'; liquidFinance.parsing = true; liquidFinance.parsed = null; liquidFinance.saved = null; renderFinanceAdd();
     try {
-      const result = await api('POST', '/reimbursements/parse', { text: cleaned, image, preferredKind: liquidFinance.target === 'reimbursement' ? 'reimbursement' : 'debt', preferredRecipient: liquidFinance.recipient });
+      const result = await api('POST', '/reimbursements/parse', { text: cleaned, image, preferredKind: liquidFinance.target === 'reimbursement' ? 'reimbursement' : 'debt', preferredRecipient: financeRecipientForApi(liquidFinance.recipient) });
       liquidFinance.parsed = result.parsed || {};
       if (liquidFinance.target === 'reimbursement') {
         // The selected context is authoritative: "Компания" can never be
         // accidentally reclassified by the parser as a personal debt.
         liquidFinance.parsed.kind = 'reimbursement'; liquidFinance.parsed.company = liquidFinance.parsed.company || 'Компания'; delete liquidFinance.parsed.direction;
-        selectFinanceRecipient(liquidFinance.parsed.recipient || liquidFinance.recipient);
+        selectFinanceRecipient(liquidFinance.recipient);
       } else { liquidFinance.parsed.kind = 'debt'; liquidFinance.parsed.direction = liquidFinance.target; }
     } catch (error) { toast('Возвраты', error.message, 'warn'); }
     liquidFinance.parsing = false; renderFinanceAdd();
@@ -543,10 +544,10 @@ function renderFinanceAdd() {
     try {
       if (parsed.kind === 'debt' || liquidFinance.target !== 'reimbursement') {
         const counterparty = document.getElementById('f-party').value.trim();
-        const result = await api('POST', '/debts', { amount, counterparty, direction: parsed.direction || liquidFinance.target, recipient: liquidFinance.recipient, note: document.getElementById('f-note').value.trim(), occurred_at: parsed.occurred_at || null });
+        const result = await api('POST', '/debts', { amount, counterparty, direction: parsed.direction || liquidFinance.target, recipient: financeRecipientForApi(liquidFinance.recipient), note: document.getElementById('f-note').value.trim(), occurred_at: parsed.occurred_at || null });
         liquidFinance.saved = { title: result.debt.counterparty, amount: result.debt.amount }; liquidFinance.debts.unshift(result.debt);
       } else {
-        const result = await api('POST', '/reimbursements', { amount, purpose: document.getElementById('f-purpose').value.trim(), merchant: document.getElementById('f-merchant').value.trim(), company: document.getElementById('f-company').value.trim() || 'Компания', recipient: liquidFinance.recipient, note: document.getElementById('f-note').value.trim(), occurred_at: parsed.occurred_at || null, source: 'assistant', raw_input: liquidFinance.userRaw });
+        const result = await api('POST', '/reimbursements', { amount, purpose: document.getElementById('f-purpose').value.trim(), merchant: document.getElementById('f-merchant').value.trim(), company: document.getElementById('f-company').value.trim() || 'Компания', recipient: financeRecipientForApi(liquidFinance.recipient), note: document.getElementById('f-note').value.trim(), occurred_at: parsed.occurred_at || null, source: 'assistant', raw_input: liquidFinance.userRaw });
         liquidFinance.saved = { title: result.reimbursement.purpose, amount: result.reimbursement.amount }; liquidFinance.reimbursements.unshift(result.reimbursement);
       }
       liquidFinance.parsed = null; liquidFinance.userRaw = ''; renderFinanceAdd();

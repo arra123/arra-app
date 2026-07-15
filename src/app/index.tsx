@@ -83,6 +83,7 @@ const normalizeRecipient = (value?: string | null): Recipient => {
   if (text.includes('дан')) return 'Даня';
   return 'Тима';
 };
+const recipientForApi = (value: Recipient) => value === 'Даня' ? 'Дани' : value;
 const dateInput = (value?: string | null) => value ? value.slice(0, 10) : '';
 const dateLabel = (value?: string | null) => value
   ? new Date(value).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
@@ -217,14 +218,17 @@ export default function MoneyScreen() {
       direction: debt.direction, source: debt,
     })),
   ];
-  const activeOwedRecords = financeRecords.filter((record) => !record.closed && record.direction === 'owes_me');
+  const activeOwedRecords = financeRecords.filter((record) => {
+    if (record.closed || record.direction !== 'owes_me') return false;
+    return record.type === 'reimbursement' || /^(компания|company)$/i.test(String((record.source as Debt).counterparty || '').trim());
+  });
   const activeItems = items.filter((item) => !['reimbursed', 'rejected'].includes(item.status));
   const activeDebts = debts.filter((debt) => !debt.settled);
   const outstanding = activeOwedRecords.reduce((sum, record) => sum + record.amount, 0);
   const recipientTotals = RECIPIENTS.map((name) => ({ name, total: activeOwedRecords.filter((record) => record.recipient === name).reduce((sum, record) => sum + record.amount, 0) }));
   const iOwe = activeDebts.filter((debt) => debt.direction === 'i_owe').reduce((sum, debt) => sum + Number(debt.amount), 0);
   const visibleRecords = financeRecords
-    .filter((record) => record.direction === 'owes_me' && record.closed === showClosed && monthKey(record.occurredAt) === selectedMonth)
+    .filter((record) => (record.type === 'reimbursement' || /^(компания|company)$/i.test(String((record.source as Debt).counterparty || '').trim())) && record.direction === 'owes_me' && record.closed === showClosed && monthKey(record.occurredAt) === selectedMonth)
     .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
   const groupedRecords = visibleRecords.reduce<{ key: string; label: string; records: FinanceRecord[]; total: number }[]>((groups, record) => {
     const date = new Date(record.occurredAt);
@@ -279,7 +283,6 @@ export default function MoneyScreen() {
     setMerchant(parsed.merchant || '');
     setLocation(parsed.location || '');
     setCompany(parsed.company || 'Компания');
-    if (parsed.recipient) chooseRecipient(normalizeRecipient(parsed.recipient));
     setCounterparty(parsed.counterparty || '');
     if (parsed.occurred_at) setOccurred(dateInput(parsed.occurred_at));
     setDue(dateInput(parsed.due_date));
@@ -304,7 +307,7 @@ export default function MoneyScreen() {
           text: cleaned || undefined,
           image,
           preferredKind: kind === 'reimbursement' ? 'reimbursement' : 'debt',
-          preferredRecipient: recipient,
+          preferredRecipient: recipientForApi(recipient),
         },
       });
       applyParsed(response.parsed, cleaned, nextSource);
@@ -375,14 +378,14 @@ export default function MoneyScreen() {
             amount: numericAmount,
             purpose: purpose.trim(), merchant: merchant.trim() || null, location: location.trim() || null,
             company: company.trim() || 'Компания', occurred_at: occurred || null, due_date: due || null,
-            recipient, note: note.trim() || null, source, raw_input: raw.trim() || null,
+            recipient: recipientForApi(recipient), note: note.trim() || null, source, raw_input: raw.trim() || null,
           },
         });
       } else {
         await api('/debts', {
           body: {
             amount: numericAmount, counterparty: counterparty.trim(), direction: kind,
-            occurred_at: occurred || null, due_date: due || null, note: note.trim() || null, recipient,
+            occurred_at: occurred || null, due_date: due || null, note: note.trim() || null, recipient: recipientForApi(recipient),
           },
         });
       }
@@ -474,7 +477,7 @@ export default function MoneyScreen() {
             </View>
 
             <View style={styles.statsRow}>
-              <MoneyStat label="Компания" value={activeItems.reduce((sum, item) => sum + Number(item.amount), 0)} color={theme.success} sign="+" />
+              <MoneyStat label="Компания" value={outstanding} color={theme.success} sign="+" />
               <MoneyStat label="Я должен" value={iOwe} color={theme.warning} sign="−" />
               <TouchableOpacity onPress={() => setShowDebts(true)} style={[styles.allDebts, { backgroundColor: theme.backgroundElement }]}>
                 <SymbolView name="chevron.right" tintColor={theme.textSecondary} size={17} />
@@ -783,7 +786,7 @@ function ReimbursementEditor({ item, onClose, onChanged }: { item: Reimbursement
     setSaving(true);
     try {
       await api(`/reimbursements/${item.id}`, { method: 'PATCH', body: {
-        amount: Number(amount.replace(',', '.')), purpose, merchant, location, company, recipient,
+        amount: Number(amount.replace(',', '.')), purpose, merchant, location, company, recipient: recipientForApi(recipient),
         occurred_at: occurred || null, due_date: due || null, note, status,
       } });
       haptic.success(); onChanged();
