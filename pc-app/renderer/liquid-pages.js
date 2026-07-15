@@ -29,7 +29,7 @@ function liquidCompanyMark(className = '') {
 }
 const FINANCE_BRANDS = [
   { test: /belka|белк/i, title: 'BelkaCar', merchant: 'belkacar', logo: 'https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/00/f3/3c/00f33c50-919e-25b2-58a4-2316eca1a104/ReleaseBelkacarAppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/100x100bb.jpg' },
-  { test: /city\s*drive|citydrive|ситидрайв|сити\s*драйв/i, title: 'Ситидрайв', merchant: 'citydrive' },
+  { test: /city\s*drive|citydrive|ситидрайв|сити\s*драйв/i, title: 'City Drive', merchant: 'citydrive' },
   { test: /delimobil|делимоб|дели\b/i, title: 'Делимобиль', merchant: 'delimobil' },
   { test: /яндекс[.\s-]*(драйв|drive)|yandex[.\s-]*drive/i, title: 'Яндекс Драйв', merchant: 'яндекс драйв' },
   { test: /chat\s*gpt|open\s*ai|gpt(?:-|\s|\d|$)|codex/i, title: 'OpenAI', merchant: 'openai' },
@@ -51,7 +51,12 @@ function financeServiceIcon(item = {}) {
   return `<span class="finance-service-icon receipt">${liquidIcon('receipt')}</span>`;
 }
 function liquidDate(value) {
-  try { return new Date(value).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }); } catch { return ''; }
+  try {
+    const date = new Date(value);
+    const day = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+    const time = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    return `${day} · ${time}`;
+  } catch { return ''; }
 }
 function dataUrlFromFile(file) {
   return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || '')); reader.onerror = reject; reader.readAsDataURL(file); });
@@ -147,6 +152,8 @@ const liquidFinance = {
   recipient: localStorage.getItem('noda-finance-recipient') === 'Дани' ? 'Дани' : 'Тима',
   month: localStorage.getItem('noda-finance-month') || '',
   dateSort: localStorage.getItem('noda-finance-date-sort') === 'asc' ? 'asc' : 'desc',
+  groupMode: localStorage.getItem('noda-finance-group-mode') === 'service' ? 'service' : 'week',
+  expandedServices: new Set(),
   loaded: false, loadedAt: 0, loading: null, reimbursements: [], debts: [],
 };
 function financeRecipientButtons(selected = liquidFinance.recipient) {
@@ -262,6 +269,28 @@ function financeWeekGroups(records = financeMonthRecords()) {
     total: group.records.reduce((sum, record) => sum + record.amount, 0),
   }));
 }
+function financeServiceMeta(record) {
+  const item = record.item || {};
+  const source = [item.merchant, item.purpose, item.note, item.counterparty, item.company].filter(Boolean).join(' ').toLowerCase();
+  const brand = FINANCE_BRANDS.find((entry) => entry.test.test(source));
+  if (brand) return { key: `brand:${brand.title.toLowerCase()}`, label: brand.title, icon: financeBrandIcon(brand) };
+  const generic = /^(компания|компенсация|личный долг|долг|без описания)$/i;
+  const label = [item.merchant, record.reason, item.counterparty].map((value) => String(value || '').trim()).find((value) => value && !generic.test(value)) || 'Прочее';
+  return { key: `service:${label.toLowerCase()}`, label, icon: financeServiceIcon(item) };
+}
+function financeServiceGroups(records = financeMonthRecords()) {
+  const groups = new Map();
+  records.forEach((record) => {
+    const meta = financeServiceMeta(record);
+    if (!groups.has(meta.key)) groups.set(meta.key, { ...meta, records: [], total: 0 });
+    const group = groups.get(meta.key); group.records.push(record); group.total += record.amount;
+  });
+  const direction = liquidFinance.dateSort === 'asc' ? 1 : -1;
+  return [...groups.values()].map((group) => ({
+    ...group,
+    records: group.records.sort((a, b) => (a.dateMs - b.dateMs) * direction),
+  })).sort((a, b) => ((a.records[0]?.dateMs || 0) - (b.records[0]?.dateMs || 0)) * direction || a.label.localeCompare(b.label, 'ru'));
+}
 function financeMonthOptions() {
   const dates = financeRecords().map((record) => new Date(record.date.getFullYear(), record.date.getMonth(), 1));
   dates.push(new Date());
@@ -271,7 +300,7 @@ function financeMonthOptions() {
   if (!options.includes(liquidFinance.month)) options.push(liquidFinance.month);
   return [...new Set(options)].sort().reverse();
 }
-function financePeriodHtml(records) {
+function financePeriodHtml(records, withGrouping = false) {
   const total = records.reduce((sum, record) => sum + record.amount, 0);
   return `<div class="finance-list-toolbar">
     <div class="finance-month-picker">
@@ -279,27 +308,31 @@ function financePeriodHtml(records) {
       <label><small>Период</small><select id="finance-month-select">${financeMonthOptions().map((key) => `<option value="${key}" ${key === liquidFinance.month ? 'selected' : ''}>${financeMonthLabel(key, true)}</option>`).join('')}</select></label>
       <button type="button" data-fin-month-step="1" title="Следующий месяц">${liquidIcon('right')}</button>
     </div>
+    ${withGrouping ? `<nav class="finance-view-switch" aria-label="Группировка"><button type="button" data-fin-group="week" class="${liquidFinance.groupMode === 'week' ? 'active' : ''}">По неделям</button><button type="button" data-fin-group="service" class="${liquidFinance.groupMode === 'service' ? 'active' : ''}">По сервисам</button></nav>` : ''}
     <div class="finance-period-total"><small>За ${financeMonthLabel(liquidFinance.month)}</small><strong>${fmt(total)} ₽</strong><span>${records.length} ${records.length === 1 ? 'запись' : records.length > 1 && records.length < 5 ? 'записи' : 'записей'}</span></div>
   </div>`;
 }
+function financeRecordRow(record) {
+  const { type, item, closed } = record;
+  const subtitle = record.reimbursement && item.merchant && item.merchant.toLowerCase() !== record.reason.toLowerCase() ? item.merchant : '';
+  return `<tr class="finance-record ${closed ? 'closed' : ''}" data-type="${type}" data-id="${esc(item.id)}" data-fin-edit-row="1" title="Нажмите, чтобы изменить">
+    <td><div class="finance-source">${record.company ? liquidCompanyMark('row') : `<span class="finance-person-icon">${liquidIcon('people')}</span>`}<b>${esc(record.source)}</b></div></td>
+    <td><div class="finance-purpose">${financeServiceIcon(item)}<div><b>${esc(record.reason)}</b>${subtitle ? `<small>${esc(subtitle)}</small>` : ''}</div></div></td>
+    <td><span class="finance-recipient-badge ${record.recipient === 'Дани' ? 'dani' : 'tima'}">${esc(record.recipient)}</span></td>
+    <td><time datetime="${record.date.toISOString()}">${liquidDate(record.date)}</time></td>
+    <td class="money"><strong>${fmt(record.amount)} ₽</strong></td>
+    <td><div class="finance-row-actions"><button class="finance-row-edit" type="button" data-fin-edit="1" title="Изменить">${liquidIcon('edit')}</button><button class="liquid-row-check ${closed ? 'checked' : ''}" type="button" data-close="1" title="${closed ? 'Вернуть' : 'Отметить возвращённым'}">${liquidIcon('check')}</button></div></td>
+  </tr>`;
+}
 function financeTableHtml() {
-  const groups = financeWeekGroups();
+  const groups = liquidFinance.groupMode === 'service' ? financeServiceGroups() : financeWeekGroups();
   if (!groups.length) return `<div class="liquid-empty finance-empty">За ${financeMonthLabel(liquidFinance.month, true)} записей нет</div>`;
   return `<div class="liquid-money-table-shell"><table class="liquid-money-table finance-week-table">
     <thead><tr><th>Кто</th><th>За что</th><th>Кому</th><th><button class="finance-date-sort" type="button" title="Изменить порядок">Когда <span>${liquidFinance.dateSort === 'desc' ? '↓' : '↑'}</span></button></th><th class="money">Сумма</th><th aria-label="Действия"></th></tr></thead>
-    ${groups.map((group) => `<tbody class="finance-week-group"><tr class="finance-week-row"><td colspan="4"><div><span>${liquidIcon('calendar')}</span><b>${financeWeekLabel(group.start)}</b><small>${group.records.length}</small></div></td><td class="money"><strong>${fmt(group.total)} ₽</strong></td><td></td></tr>
-      ${group.records.map((record) => {
-        const { type, item, closed } = record;
-        const subtitle = record.reimbursement && item.merchant && item.merchant.toLowerCase() !== record.reason.toLowerCase() ? item.merchant : '';
-        return `<tr class="finance-record ${closed ? 'closed' : ''}" data-type="${type}" data-id="${esc(item.id)}" data-fin-edit-row="1" title="Нажмите, чтобы изменить">
-          <td><div class="finance-source">${record.company ? liquidCompanyMark('row') : `<span class="finance-person-icon">${liquidIcon('people')}</span>`}<b>${esc(record.source)}</b></div></td>
-          <td><div class="finance-purpose">${financeServiceIcon(item)}<div><b>${esc(record.reason)}</b>${subtitle ? `<small>${esc(subtitle)}</small>` : ''}</div></div></td>
-          <td><span class="finance-recipient-badge ${record.recipient === 'Дани' ? 'dani' : 'tima'}">${esc(record.recipient)}</span></td>
-          <td><time datetime="${record.date.toISOString()}">${liquidDate(record.date)}</time></td>
-          <td class="money"><strong>${fmt(record.amount)} ₽</strong></td>
-          <td><div class="finance-row-actions"><button class="finance-row-edit" type="button" data-fin-edit="1" title="Изменить">${liquidIcon('edit')}</button><button class="liquid-row-check ${closed ? 'checked' : ''}" type="button" data-close="1" title="${closed ? 'Вернуть' : 'Отметить возвращённым'}">${liquidIcon('check')}</button></div></td>
-        </tr>`;
-      }).join('')}</tbody>`).join('')}</table></div>`;
+    ${liquidFinance.groupMode === 'service'
+      ? groups.map((group) => { const expanded = liquidFinance.expandedServices.has(group.key); return `<tbody class="finance-service-group ${expanded ? 'expanded' : ''}"><tr class="finance-service-row" data-fin-service-toggle="${esc(group.key)}" tabindex="0" role="button" aria-expanded="${expanded}"><td colspan="4"><div>${group.icon}<b>${esc(group.label)}</b><small>${group.records.length}</small></div></td><td class="money"><strong>${fmt(group.total)} ₽</strong></td><td><span class="finance-service-chevron">${liquidIcon('right')}</span></td></tr>${expanded ? group.records.map(financeRecordRow).join('') : ''}</tbody>`; }).join('')
+      : groups.map((group) => `<tbody class="finance-week-group"><tr class="finance-week-row"><td colspan="4"><div><span>${liquidIcon('calendar')}</span><b>${financeWeekLabel(group.start)}</b><small>${group.records.length}</small></div></td><td class="money"><strong>${fmt(group.total)} ₽</strong></td><td></td></tr>${group.records.map(financeRecordRow).join('')}</tbody>`).join('')}
+    </table></div>`;
 }
 function financeLocalDateTime(value) {
   const date = financeRecordDate({ occurred_at: value });
@@ -370,6 +403,15 @@ function bindFinanceTableActions() {
   host.querySelector('.finance-date-sort')?.addEventListener('click', () => {
     liquidFinance.dateSort = liquidFinance.dateSort === 'desc' ? 'asc' : 'desc'; localStorage.setItem('noda-finance-date-sort', liquidFinance.dateSort); renderFinanceList();
   });
+  const toggleService = (row) => {
+    const key = row.dataset.finServiceToggle;
+    if (liquidFinance.expandedServices.has(key)) liquidFinance.expandedServices.delete(key); else liquidFinance.expandedServices.add(key);
+    renderFinanceList();
+  };
+  host.querySelectorAll('[data-fin-service-toggle]').forEach((row) => {
+    row.onclick = () => toggleService(row);
+    row.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleService(row); } };
+  });
   host.querySelectorAll('[data-fin-edit-row]').forEach((row) => row.onclick = (event) => { if (!event.target.closest('button')) openFinanceEditor(row.dataset.type, row.dataset.id); });
   host.querySelectorAll('[data-fin-edit]').forEach((button) => button.onclick = (event) => { event.stopPropagation(); const row = button.closest('[data-id]'); openFinanceEditor(row.dataset.type, row.dataset.id); });
   host.querySelectorAll('[data-close]').forEach((button) => button.onclick = (event) => { event.stopPropagation(); toggleFinanceClosed(button.closest('[data-id]'), button); });
@@ -377,7 +419,13 @@ function bindFinanceTableActions() {
 function renderFinanceList() {
   const body = document.getElementById('finance-body'); if (!body) return;
   const records = financeMonthRecords();
-  body.innerHTML = `${financePeriodHtml(records)}<div id="finance-table-host">${financeTableHtml()}</div>`;
+  body.innerHTML = `${financePeriodHtml(records, true)}<div id="finance-table-host">${financeTableHtml()}</div>`;
+  body.querySelectorAll('[data-fin-group]').forEach((button) => button.onclick = () => {
+    liquidFinance.groupMode = button.dataset.finGroup === 'service' ? 'service' : 'week';
+    localStorage.setItem('noda-finance-group-mode', liquidFinance.groupMode);
+    if (liquidFinance.groupMode === 'service') liquidFinance.expandedServices.clear();
+    renderFinanceList();
+  });
   bindFinancePeriod(renderFinanceList); bindFinanceTableActions();
 }
 function financeCategory(record) {
