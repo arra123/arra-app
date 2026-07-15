@@ -10,6 +10,7 @@ module.exports = async function afterPack(context) {
     icon,
     'file-version': version,
     'product-version': version,
+    'requested-execution-level': 'requireAdministrator',
     'version-string': {
       ProductName: 'Noda',
       FileDescription: 'Noda — проекты между ноутбуком, сервером и ПК',

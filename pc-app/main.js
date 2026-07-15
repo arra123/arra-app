@@ -204,24 +204,40 @@ function detectDeviceProfile() {
       "$b = @(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue)",
       "$e = Get-CimInstance Win32_SystemEnclosure -ErrorAction SilentlyContinue | Select-Object -First 1",
       "$c = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue | Select-Object -First 1",
-      "[pscustomobject]@{hasBattery=($b.Count -gt 0);chassis=@($e.ChassisTypes);manufacturer=$c.Manufacturer;model=$c.Model}|ConvertTo-Json -Compress",
+      "[pscustomobject]@{hasBattery=($b.Count -gt 0);chassis=@($e.ChassisTypes);manufacturer=$c.Manufacturer;model=$c.Model;systemType=$c.PCSystemType;systemTypeEx=$c.PCSystemTypeEx}|ConvertTo-Json -Compress",
     ].join('; ');
     const result = spawnSync('powershell.exe', psArgs(script), { encoding: 'utf8', windowsHide: true, timeout: 7000 });
     const data = JSON.parse(String(result.stdout || '').trim() || '{}');
     const chassis = (Array.isArray(data.chassis) ? data.chassis : [data.chassis]).map(Number).filter(Boolean);
     const laptopTypes = new Set([8, 9, 10, 11, 12, 14, 18, 21, 30, 31, 32]);
+    const desktopTypes = new Set([3, 4, 5, 6, 7, 13, 15, 16, 24, 35, 36]);
     const chassisLaptop = chassis.some((n) => laptopTypes.has(n));
+    const chassisDesktop = chassis.some((n) => desktopTypes.has(n));
     const hasBattery = !!data.hasBattery;
-    const role = hasBattery || chassisLaptop ? 'laptop' : 'pc';
+    const systemType = Number(data.systemTypeEx || data.systemType || 0);
+    const systemLaptop = systemType === 2;
+    const systemDesktop = systemType === 1 || systemType === 3;
+    // Win32_Battery может видеть ИБП стационарного ПК как батарею. Системный
+    // тип и тип корпуса поэтому имеют приоритет, а батарея — только запасной сигнал.
+    const role = systemLaptop || chassisLaptop
+      ? 'laptop'
+      : (systemDesktop || chassisDesktop ? 'pc' : (hasBattery ? 'laptop' : 'pc'));
     deviceProfileCache = {
       role,
-      confidence: hasBattery ? 'high' : (chassis.length ? 'medium' : 'low'),
-      reason: hasBattery ? 'Windows обнаружил батарею' : (chassisLaptop ? 'тип корпуса похож на ноутбук' : 'батарея не обнаружена'),
+      confidence: systemLaptop || systemDesktop ? 'high' : (chassis.length ? 'high' : (hasBattery ? 'medium' : 'low')),
+      reason: systemLaptop
+        ? 'Windows определил мобильный компьютер'
+        : (systemDesktop
+          ? 'Windows определил стационарный компьютер'
+          : (chassisLaptop
+            ? 'тип корпуса соответствует ноутбуку'
+            : (chassisDesktop ? 'тип корпуса соответствует стационарному ПК' : (hasBattery ? 'обнаружена встроенная батарея' : 'признаки ноутбука не найдены')))),
       hostname: os.hostname(),
       manufacturer: String(data.manufacturer || ''),
       model: String(data.model || ''),
       hasBattery,
       chassis,
+      systemType,
     };
   } catch {
     deviceProfileCache = fallback;
@@ -253,7 +269,7 @@ function deviceKey() {
 }
 
 function automaticDeviceName(profile = detectDeviceProfile()) {
-  const prefix = profile.role === 'laptop' ? 'Ноутбук' : 'ПК';
+  const prefix = profile.role === 'laptop' ? 'Ноутбук' : 'Компьютер';
   const host = String(profile.hostname || os.hostname() || '').trim();
   return host ? `${prefix} · ${host}` : prefix;
 }
@@ -647,6 +663,17 @@ let captureEngine = 'electron';
 let captureFailures = 0;
 let captureFrames = 0;
 let captureLogAt = 0;
+let screenEmit = null;
+let screenViewer = 'client';
+
+function emitScreenMessage(message) {
+  try {
+    if (screenEmit) screenEmit(message);
+    else if (ws?.readyState === 1) ws.send(JSON.stringify({ to: 'client', ...message }));
+  } catch (error) {
+    writeLog('error', 'remote.capture.send', { viewer: screenViewer, type: message?.type, error });
+  }
+}
 
 function listScreens() {
   const prim = screen.getPrimaryDisplay().id;
@@ -803,12 +830,10 @@ function captureWindowsFrame(display, w, h) {
   });
 }
 function sendScreenHealth(extra = {}) {
-  try {
-    if (ws?.readyState === 1) ws.send(JSON.stringify({
-      to: 'client', type: 'screen_health', engine: captureEngine, frames: captureFrames,
-      failures: captureFailures, lastFrameAt: lastCaptureMs, ...extra,
-    }));
-  } catch {}
+  emitScreenMessage({
+    type: 'screen_health', engine: captureEngine, frames: captureFrames,
+    failures: captureFailures, lastFrameAt: lastCaptureMs, ...extra,
+  });
 }
 async function captureFrame() {
   // Не копим очередь: если предыдущий кадр ещё захватывается или сокет занят — пропускаем тик.
@@ -841,7 +866,7 @@ async function captureFrame() {
       captureEngine = 'windows';
     }
     if (frame?.data && ws?.readyState === 1) {
-      ws.send(JSON.stringify({ to: 'client', type: 'screen_frame', data: frame.data, w: frame.w, h: frame.h, engine: captureEngine }));
+      emitScreenMessage({ type: 'screen_frame', data: frame.data, w: frame.w, h: frame.h, engine: captureEngine });
       lastCaptureMs = Date.now();
       captureFrames += 1;
       if (captureFrames === 1 || Date.now() - captureLogAt > 10000) {
@@ -864,12 +889,14 @@ function scheduleCapture() {
     if (screenTimer) screenTimer = setTimeout(scheduleCapture, ms);
   });
 }
-function startScreen(cfg) {
+function startScreen(cfg, emit = null, viewer = 'client') {
   stopScreen();
+  screenEmit = typeof emit === 'function' ? emit : null;
+  screenViewer = viewer || 'client';
   screenCfg = { ...screenCfg, ...(cfg || {}) };
   if (!screenCfg.displayId) screenCfg.displayId = String(screen.getPrimaryDisplay().id);
   captureFailures = 0; captureFrames = 0; lastCaptureMs = 0; captureEngine = 'electron';
-  writeLog('info', 'remote.capture.start', { ...screenCfg, displayId: screenCfg.displayId });
+  writeLog('info', 'remote.capture.start', { ...screenCfg, displayId: screenCfg.displayId, viewer: screenViewer });
   sendScreenHealth({ starting: true });
   screenTimer = setTimeout(scheduleCapture, 0);
 }
@@ -880,7 +907,9 @@ function switchScreen(displayId) {
 }
 function stopScreen() {
   if (screenTimer) { clearTimeout(screenTimer); screenTimer = null; }
-  writeLog('info', 'remote.capture.stop', { frames: captureFrames, failures: captureFailures, engine: captureEngine });
+  writeLog('info', 'remote.capture.stop', { frames: captureFrames, failures: captureFailures, engine: captureEngine, viewer: screenViewer });
+  screenEmit = null;
+  screenViewer = 'client';
 }
 
 // Инъекция мыши/клавиатуры через постоянный PowerShell со своим циклом чтения stdin.
@@ -988,13 +1017,22 @@ function handleRelay(msg, send) {
       markPhonePresence();
       break;
     case 'sync_remote_push':
-      startRemoteSync('push', msg, send, 'Отправка запущена');
+      startRemoteSync('push', msg, send, 'Отправка запущена').catch((error) => {
+        writeLog('error', 'sync.remote-push', { reqId: msg.reqId, error });
+        send({ type: 'sync_remote_event', reqId: msg.reqId, event: { type: 'error', error: error.message } });
+      });
       break;
     case 'sync_remote_pull':
-      startRemoteSync('pull', msg, send, 'Получение запущено');
+      startRemoteSync('pull', msg, send, 'Получение запущено').catch((error) => {
+        writeLog('error', 'sync.remote-pull', { reqId: msg.reqId, error });
+        send({ type: 'sync_remote_event', reqId: msg.reqId, event: { type: 'error', error: error.message } });
+      });
       break;
     case 'sync_remote_status':
-      startRemoteSync('status', msg, send, 'Сканирование запущено');
+      startRemoteSync('status', msg, send, 'Сканирование запущено').catch((error) => {
+        writeLog('error', 'sync.remote-status', { reqId: msg.reqId, error });
+        send({ type: 'sync_remote_event', reqId: msg.reqId, event: { type: 'error', error: error.message } });
+      });
       break;
     case 'sync_remote_snapshot':
       send({ type: 'sync_remote_state', reqId: msg.reqId, state: syncStateSnapshot() });
@@ -1040,7 +1078,11 @@ function handleRelay(msg, send) {
       send({ type: 'screens', screens: listScreens() });
       break;
     case 'screen_start':
-      startScreen({ displayId: msg.displayId, fps: msg.fps, quality: msg.quality, width: msg.width });
+      startScreen(
+        { displayId: msg.displayId, fps: msg.fps, quality: msg.quality, width: msg.width },
+        send,
+        msg.sourceDeviceId || (msg.clientKind === 'desktop' ? 'desktop' : 'client'),
+      );
       send({ type: 'screens', screens: listScreens() });
       break;
     case 'screen_switch':
@@ -1324,9 +1366,9 @@ function createWindow() {
   });
 }
 
-// Запуск «от администратора» ломает ввод от обычных приложений (Handy не вставляет)
-// и drag-drop файлов из проводника (UIPI). Если запущены elevated — тихо перезапускаемся
-// без прав через explorer.exe (он стартует процесс от обычного пользователя).
+// Noda управляет в том числе приложениями, запущенными от администратора. Windows UIPI
+// разрешает ввод только в процессы с тем же или более низким уровнем целостности, поэтому
+// упакованный Noda.exe получает requireAdministrator в after-pack.cjs.
 function whoamiElevated(cb) {
   if (process.platform !== 'win32') return cb(false);
   try {
@@ -1336,25 +1378,8 @@ function whoamiElevated(cb) {
     });
   } catch { cb(false); }
 }
-function deescalateIfElevated() {
-  // В dev process.execPath указывает на голый electron.exe. Перезапуск через
-  // explorer без пути к проекту открывал пустое белое окно вместо Arra.
-  if (!app.isPackaged) return Promise.resolve('ok');
-  return new Promise((resolve) => {
-    whoamiElevated((elev) => {
-      if (!elev) return resolve('ok');
-      const marker = path.join(app.getPath('userData'), '.deescalate');
-      try {
-        const last = fs.existsSync(marker) ? Number(fs.readFileSync(marker, 'utf8')) || 0 : 0;
-        if (Date.now() - last < 60000) return resolve('warn'); // защита от петли перезапуска
-        fs.writeFileSync(marker, String(Date.now()));
-      } catch {}
-      try {
-        spawn('explorer.exe', [process.execPath], { detached: true, stdio: 'ignore' }).unref();
-        resolve('relaunched');
-      } catch { resolve('warn'); }
-    });
-  });
+function processElevation() {
+  return new Promise((resolve) => whoamiElevated((elevated) => resolve(!!elevated)));
 }
 
 // Явный AppUserModelID — чтобы Windows показывал иконку Arra в панели задач (а не дефолт Electron)
@@ -1363,9 +1388,8 @@ try { app.setAppUserModelId('com.arratima.arra.desktop'); } catch {}
 
 app.whenReady().then(async () => {
   pruneLogs();
-  writeLog('info', 'app.start', { version: app.getVersion(), packaged: app.isPackaged, platform: process.platform, arch: process.arch });
-  const elev = await deescalateIfElevated();
-  if (elev === 'relaunched') { app.quit(); return; } // поднимется не-админ копия
+  const elevated = await processElevation();
+  writeLog('info', 'app.start', { version: app.getVersion(), packaged: app.isPackaged, platform: process.platform, arch: process.arch, elevated });
   settings = loadSettings();
   // Разрешаем микрофон (голосовой ввод помощника); остальное — по умолчанию запрещаем
   try {
@@ -1374,9 +1398,6 @@ app.whenReady().then(async () => {
     });
   } catch {}
   createWindow();
-  if (elev === 'warn') {
-    setTimeout(() => winSend('app-warn', 'Noda запущена от имени администратора — из-за этого Handy не вставляет текст и не работает перетаскивание файлов из проводника. Закрой приложение и открой обычным двойным кликом (без «Запуск от имени администратора»).'), 1800);
-  }
   if (settings.token) {
     // Старые установки регистрировались новым токеном после каждой потери
     // settings.json. Теперь при каждом старте подтверждаем постоянный ID машины.
@@ -1556,6 +1577,7 @@ const SYNC_DIR = process.env.ARRA_SYNC_DIR || (app.isPackaged
   ? path.join(process.resourcesPath, 'app.asar.unpacked', 'sync')
   : path.join(__dirname, 'sync'));
 let syncProc = null;
+let syncPreparing = false;
 let syncRuntime = {
   busy: false,
   mode: null,
@@ -1567,7 +1589,7 @@ let syncRuntime = {
 function syncStateSnapshot() {
   return {
     ...syncRuntime,
-    busy: !!syncRuntime.busy,
+    busy: !!(syncRuntime.busy || syncPreparing),
     pid: syncProc?.pid || null,
   };
 }
@@ -1598,17 +1620,17 @@ function broadcastSyncState() {
   broadcastSyncMessage({ type: 'sync_remote_state', state: syncStateSnapshot() });
 }
 
-function startRemoteSync(mode, msg, send, message) {
-  if (syncProc) {
+async function startRemoteSync(mode, msg, send, message) {
+  if (syncProc || syncPreparing) {
     send({ type: 'sync_remote_state', reqId: msg.reqId, state: syncStateSnapshot() });
     return false;
   }
   const directEmit = msg.sourceDeviceId
     ? (event) => send({ type: 'sync_remote_event', reqId: msg.reqId, event, state: syncStateSnapshot() })
     : null;
-  const started = runSyncProc(mode, null, null, directEmit);
-  if (started) send({ type: 'sync_remote_ack', reqId: msg.reqId, message, state: syncStateSnapshot() });
-  else send({ type: 'sync_remote_state', reqId: msg.reqId, state: syncStateSnapshot() });
+  send({ type: 'sync_remote_ack', reqId: msg.reqId, message, state: syncStateSnapshot() });
+  const started = await runManagedSync(mode, null, null, directEmit);
+  if (!started) send({ type: 'sync_remote_state', reqId: msg.reqId, state: syncStateSnapshot() });
   return started;
 }
 
@@ -1670,24 +1692,98 @@ function syncConnectionEnv() {
   }
   return readLegacySyncConnection(codeRoot()) || direct;
 }
-function runSyncProc(mode, only, role, remoteEmit = null) {
-  const emit = (event) => {
-    rememberSyncEvent(mode, event);
-    if (event?.error || event?.type === 'error' || event?.type === 'stderr' || event?.type === 'fileerror') writeLog('error', `sync.${event.type || 'event'}`, { mode, only, event });
-    else if (event?.type === 'retry' || event?.type === 'blocked') writeLog('warn', `sync.${event.type}`, { mode, only, event });
-    else if (event?.type === 'done') writeLog(event.errors ? 'warn' : 'info', 'sync.done', { mode, only, event });
-    winSend('sync-event', event);
-    if (remoteEmit) { try { remoteEmit(event); } catch {} }
-    broadcastSyncMessage({ type: 'sync_remote_event', event, state: syncStateSnapshot() });
+function emitSyncEvent(mode, only, event, remoteEmit = null) {
+  rememberSyncEvent(mode, event);
+  if (event?.error || event?.type === 'error' || event?.type === 'stderr' || event?.type === 'fileerror') writeLog('error', `sync.${event.type || 'event'}`, { mode, only, event });
+  else if (event?.type === 'retry' || event?.type === 'blocked') writeLog('warn', `sync.${event.type}`, { mode, only, event });
+  else if (event?.type === 'done') writeLog(event.errors ? 'warn' : 'info', 'sync.done', { mode, only, event });
+  else if (event?.type === 'phase') writeLog('info', 'sync.phase', { mode, only, event });
+  winSend('sync-event', event);
+  if (remoteEmit) {
+    try { remoteEmit(event); }
+    catch (error) { writeLog('error', 'sync.remote-emit', { mode, only, eventType: event?.type, error }); }
+  }
+  broadcastSyncMessage({ type: 'sync_remote_event', event, state: syncStateSnapshot() });
+}
+
+async function runManagedSync(mode, only, role, remoteEmit = null, retryAttempt = 0) {
+  if (syncProc || syncPreparing) {
+    writeLog('warn', 'sync.already-running', { mode, only, preparing: syncPreparing });
+    return false;
+  }
+  syncPreparing = true;
+  syncRuntime = {
+    busy: true,
+    mode,
+    startedAt: retryAttempt > 0 && syncRuntime.startedAt
+      ? syncRuntime.startedAt
+      : new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    lastEvent: { type: 'phase', msg: mode === 'status' ? 'Запускаю сканирование…' : 'Проверяю и закрываю редакторы…' },
   };
+  broadcastSyncState();
+  const emit = (event) => emitSyncEvent(mode, only, event, remoteEmit);
+  try {
+    if (mode !== 'status') {
+      const blockers = await listPotentialBlockers();
+      const pids = blockers.map((item) => item.pid).filter(Boolean);
+      writeLog('info', 'sync.autoclose.found', { mode, retryAttempt, blockers });
+      if (pids.length) {
+        emit({
+          type: 'phase',
+          stage: 'closing-editors',
+          msg: `Закрываю редакторы и терминалы · ${pids.length}`,
+          detail: blockers.map((item) => item.title || item.name).filter(Boolean).slice(0, 6).join(' · '),
+        });
+        const graceful = await closePotentialBlockers(pids);
+        if (graceful.remaining?.length) {
+          emit({
+            type: 'phase',
+            stage: 'forcing-editors',
+            msg: `Завершаю оставшиеся процессы · ${graceful.remaining.length}`,
+            detail: graceful.remaining.map((item) => item.title || item.name).filter(Boolean).slice(0, 6).join(' · '),
+          });
+          await forceClosePotentialBlockers(graceful.remaining.map((item) => item.pid));
+        }
+      }
+      const remaining = await listPotentialBlockers();
+      if (remaining.length) {
+        writeLog('error', 'sync.autoclose.remaining', { mode, retryAttempt, remaining });
+        emit({ type: 'phase', stage: 'remaining-editors', msg: `Проверяю передачу: осталось процессов · ${remaining.length}` });
+      } else {
+        emit({
+          type: 'phase',
+          stage: 'editors-closed',
+          msg: blockers.length ? 'Редакторы закрыты · запускаю передачу' : 'Файлы свободны · запускаю передачу',
+          detail: blockers.length ? `Закрыто процессов: ${blockers.length}` : '',
+        });
+      }
+    }
+    const started = runSyncProc(mode, only, role, remoteEmit, retryAttempt);
+    if (!started) emit({ type: 'error', error: 'Не удалось запустить синхронизацию. Подробности записаны в журнал Noda.' });
+    return started;
+  } catch (error) {
+    emit({ type: 'error', error: error.message || 'Не удалось подготовить синхронизацию' });
+    return false;
+  } finally {
+    syncPreparing = false;
+    broadcastSyncState();
+  }
+}
+
+function runSyncProc(mode, only, role, remoteEmit = null, retryAttempt = 0) {
+  const emit = (event) => emitSyncEvent(mode, only, event, remoteEmit);
   if (syncProc) {
     writeLog('warn', 'sync.already-running', { mode, only });
     return false;
   }
+  const operationStartedAt = retryAttempt > 0 && syncRuntime.startedAt
+    ? syncRuntime.startedAt
+    : new Date().toISOString();
   syncRuntime = {
     busy: true,
     mode,
-    startedAt: new Date().toISOString(),
+    startedAt: operationStartedAt,
     updatedAt: new Date().toISOString(),
     lastEvent: { type: 'phase', msg: mode === 'status' ? 'Запускаю сканирование…' : 'Готовлю передачу…' },
   };
@@ -1737,7 +1833,19 @@ function runSyncProc(mode, only, role, remoteEmit = null) {
     p.stderr.on('data', (d) => emit({ type: 'stderr', msg: d.toString('utf8').slice(0, 300) }));
     p.on('close', (code, signal) => {
       writeLog(code ? 'error' : 'info', 'sync.closed', { mode, only, code, signal });
+      const blocked = syncRuntime.lastEvent?.type === 'blocked';
       syncProc = null;
+      if (!code && blocked && mode !== 'status' && retryAttempt < 2) {
+        const nextAttempt = retryAttempt + 1;
+        emit({ type: 'phase', stage: 'automatic-retry', msg: `Файл был занят · повторяю автоматически (${nextAttempt}/2)` });
+        writeLog('warn', 'sync.autoretry', { mode, only, retryAttempt: nextAttempt });
+        setTimeout(() => {
+          runManagedSync(mode, only, role, remoteEmit, nextAttempt).catch((error) => {
+            emit({ type: 'error', error: error.message || 'Автоматический повтор не запустился' });
+          });
+        }, 900);
+        return;
+      }
       if (code && syncRuntime.lastEvent?.type !== 'error') {
         emit({ type: 'error', error: `Процесс синхронизации завершился с кодом ${code}. Подробности записаны в журнал Noda.` });
       } else {
@@ -1753,7 +1861,7 @@ function runSyncProc(mode, only, role, remoteEmit = null) {
   };
   return tryExe('python', 'py');
 }
-ipcMain.handle('sync-run', (_e, { mode, only, role } = {}) => { runSyncProc(mode || 'status', only || null, role || null); return true; });
+ipcMain.handle('sync-run', (_e, { mode, only, role } = {}) => runManagedSync(mode || 'status', only || null, role || null));
 ipcMain.handle('sync-local-inventory', () => localSyncInventory());
 ipcMain.handle('sync-pause', () => {
   if (!syncProc?.stdin?.writable) return { ok: false, error: 'Передача сейчас не выполняется' };
