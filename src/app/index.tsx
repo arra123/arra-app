@@ -1,9 +1,11 @@
 import { useFocusEffect } from 'expo-router';
+import * as SecureStore from 'expo-secure-store';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -31,6 +33,7 @@ import { api } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
 
 type ReimbursementStatus = 'pending' | 'submitted' | 'reimbursed' | 'rejected';
+type Recipient = 'Тима' | 'Дани';
 type Reimbursement = {
   id: string;
   amount: string;
@@ -39,6 +42,7 @@ type Reimbursement = {
   merchant?: string | null;
   location?: string | null;
   company: string;
+  recipient: Recipient;
   occurred_at: string;
   due_date?: string | null;
   status: ReimbursementStatus;
@@ -53,6 +57,7 @@ type Parsed = {
   merchant?: string | null;
   location?: string | null;
   company?: string | null;
+  recipient?: Recipient | null;
   counterparty?: string | null;
   direction?: 'owes_me' | 'i_owe';
   occurred_at?: string | null;
@@ -70,6 +75,7 @@ const STATUS: Record<ReimbursementStatus, { label: string; color: string }> = {
 };
 const fmt = (value: number) => Math.round(value).toLocaleString('ru-RU');
 const COMPANY_ICON = require('../../assets/images/company-reimbursement-2d-256.png');
+const RECIPIENT_KEY = 'noda-finance-recipient';
 const dateInput = (value?: string | null) => value ? value.slice(0, 10) : '';
 const dateLabel = (value?: string | null) => value
   ? new Date(value).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -105,6 +111,7 @@ export default function MoneyScreen() {
   const [merchant, setMerchant] = useState('');
   const [location, setLocation] = useState('');
   const [company, setCompany] = useState('Компания');
+  const [recipient, setRecipient] = useState<Recipient>('Тима');
   const [counterparty, setCounterparty] = useState('');
   const [occurred, setOccurred] = useState(() => new Date().toISOString().slice(0, 10));
   const [due, setDue] = useState('');
@@ -130,6 +137,18 @@ export default function MoneyScreen() {
     const hide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
     return () => { show.remove(); hide.remove(); };
   }, [scrollAddEnd]);
+
+  useEffect(() => {
+    SecureStore.getItemAsync(RECIPIENT_KEY).then((value) => {
+      if (value === 'Тима' || value === 'Дани') setRecipient(value);
+    }).catch(() => {});
+  }, []);
+
+  const chooseRecipient = useCallback((next: Recipient) => {
+    setRecipient(next);
+    haptic.tap();
+    SecureStore.setItemAsync(RECIPIENT_KEY, next).catch(() => {});
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -161,6 +180,8 @@ export default function MoneyScreen() {
   const visibleItems = items.filter((item) => showClosed === ['reimbursed', 'rejected'].includes(item.status));
   const activeDebts = debts.filter((debt) => !debt.settled);
   const toReturn = activeItems.reduce((sum, item) => sum + Number(item.amount), 0);
+  const timaReturn = activeItems.filter((item) => (item.recipient || 'Тима') === 'Тима').reduce((sum, item) => sum + Number(item.amount), 0);
+  const daniReturn = activeItems.filter((item) => item.recipient === 'Дани').reduce((sum, item) => sum + Number(item.amount), 0);
   const owedToMe = activeDebts.filter((d) => d.direction === 'owes_me').reduce((sum, d) => sum + Number(d.amount), 0);
   const iOwe = activeDebts.filter((d) => d.direction === 'i_owe').reduce((sum, d) => sum + Number(d.amount), 0);
 
@@ -194,6 +215,7 @@ export default function MoneyScreen() {
     setMerchant(parsed.merchant || '');
     setLocation(parsed.location || '');
     setCompany(parsed.company || 'Компания');
+    if (parsed.recipient === 'Тима' || parsed.recipient === 'Дани') chooseRecipient(parsed.recipient);
     setCounterparty(parsed.counterparty || '');
     if (parsed.occurred_at) setOccurred(dateInput(parsed.occurred_at));
     setDue(dateInput(parsed.due_date));
@@ -214,7 +236,12 @@ export default function MoneyScreen() {
     setParsing(true);
     try {
       const response = await api<{ parsed: Parsed }>('/reimbursements/parse', {
-        body: { text: cleaned || undefined, image },
+        body: {
+          text: cleaned || undefined,
+          image,
+          preferredKind: kind === 'reimbursement' ? 'reimbursement' : 'debt',
+          preferredRecipient: recipient,
+        },
       });
       applyParsed(response.parsed, cleaned, nextSource);
       haptic.success();
@@ -284,7 +311,7 @@ export default function MoneyScreen() {
             amount: numericAmount,
             purpose: purpose.trim(), merchant: merchant.trim() || null, location: location.trim() || null,
             company: company.trim() || 'Компания', occurred_at: occurred || null, due_date: due || null,
-            note: note.trim() || null, source, raw_input: raw.trim() || null,
+            recipient, note: note.trim() || null, source, raw_input: raw.trim() || null,
           },
         });
       } else {
@@ -369,6 +396,10 @@ export default function MoneyScreen() {
                 <ThemedText type="smallBold" style={{ color: theme.tint }}>{activeItems.length} активных</ThemedText>
               </View>
               <ThemedText style={[styles.heroValue, { color: theme.text }]}>{fmt(toReturn)} ₽</ThemedText>
+              <View style={styles.heroRecipients}>
+                <View style={[styles.recipientTotal, { backgroundColor: theme.backgroundSelected }]}><ThemedText type="small" themeColor="textSecondary">Тима</ThemedText><ThemedText type="smallBold">{fmt(timaReturn)} ₽</ThemedText></View>
+                <View style={[styles.recipientTotal, { backgroundColor: theme.backgroundSelected }]}><ThemedText type="small" themeColor="textSecondary">Дани</ThemedText><ThemedText type="smallBold">{fmt(daniReturn)} ₽</ThemedText></View>
+              </View>
             </View>
 
             <View style={styles.statsRow}>
@@ -414,7 +445,7 @@ export default function MoneyScreen() {
                       <View style={styles.statusRow}>
                         <View style={[styles.statusDot, { backgroundColor: STATUS[item.status].color }]} />
                         <ThemedText type="small" style={{ color: STATUS[item.status].color }}>{STATUS[item.status].label}</ThemedText>
-                        <ThemedText type="small" themeColor="textSecondary">· {item.company}</ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">· {item.recipient || 'Тима'} · {item.company}</ThemedText>
                       </View>
                     </View>
                     <ThemedText style={styles.itemAmount}>{fmt(Number(item.amount))} ₽</ThemedText>
@@ -502,6 +533,7 @@ export default function MoneyScreen() {
                           <View style={{ flex: 1 }}><Field label="Место"><TextInput value={location} onChangeText={setLocation} placeholder="Москва" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundSelected }]} /></Field></View>
                         </View>
                         <Field label="Кто компенсирует"><TextInput value={company} onChangeText={setCompany} placeholder="Компания" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundSelected }]} /></Field>
+                        <Field label="Кому вернут"><RecipientSwitch value={recipient} onChange={chooseRecipient} /></Field>
                       </>
                     ) : (
                       <Field label={kind === 'owes_me' ? 'Кто должен мне' : 'Кому я должен'}><TextInput value={counterparty} onChangeText={setCounterparty} placeholder="Имя или компания" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundSelected }]} /></Field>
@@ -532,6 +564,7 @@ export default function MoneyScreen() {
             </ScrollView>
 
             <View style={[styles.dock, { paddingBottom: (keyboardHeight > 0 ? keyboardHeight : Math.max(insets.bottom, BottomTabInset)) + Spacing.two, backgroundColor: theme.background }]}>
+              <RecipientSwitch value={recipient} onChange={chooseRecipient} compact />
               <View style={[styles.textComposer, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
                 <TouchableOpacity accessibilityLabel="Добавить" onPress={openAddMenu} style={styles.composerIcon}>
                   <SymbolView name="plus" tintColor={theme.textSecondary} size={22} />
@@ -599,6 +632,29 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <View style={styles.field}><ThemedText type="small" themeColor="textSecondary">{label}</ThemedText>{children}</View>;
 }
 
+function RecipientSwitch({ value, onChange, compact = false }: { value: Recipient; onChange: (value: Recipient) => void; compact?: boolean }) {
+  const theme = useTheme();
+  const progress = useRef(new Animated.Value(value === 'Дани' ? 1 : 0)).current;
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    Animated.spring(progress, { toValue: value === 'Дани' ? 1 : 0, damping: 20, stiffness: 260, mass: 0.7, useNativeDriver: true }).start();
+  }, [progress, value]);
+  const half = Math.max(0, (width - 6) / 2);
+  return (
+    <View
+      accessibilityRole="tablist"
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+      style={[styles.recipientSwitch, compact && styles.recipientSwitchCompact, { backgroundColor: theme.backgroundSelected, borderColor: theme.separator }]}>
+      {width > 0 && <Animated.View style={[styles.recipientIndicator, { width: half, backgroundColor: theme.tint, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [0, half] }) }] }]} />}
+      {(['Тима', 'Дани'] as Recipient[]).map((name) => (
+        <Pressable key={name} accessibilityRole="tab" accessibilityState={{ selected: value === name }} onPress={() => onChange(name)} style={({ pressed }) => [styles.recipientButton, pressed && { opacity: 0.72 }]}>
+          <ThemedText type="smallBold" style={{ color: value === name ? '#FFFFFF' : theme.textSecondary }}>{name}</ThemedText>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 function ReimbursementEditor({ item, onClose, onChanged }: { item: Reimbursement; onClose: () => void; onChanged: () => void }) {
   const theme = useTheme();
   const [amount, setAmount] = useState(String(Math.round(Number(item.amount))));
@@ -606,6 +662,7 @@ function ReimbursementEditor({ item, onClose, onChanged }: { item: Reimbursement
   const [merchant, setMerchant] = useState(item.merchant || '');
   const [location, setLocation] = useState(item.location || '');
   const [company, setCompany] = useState(item.company || 'Компания');
+  const [recipient, setRecipient] = useState<Recipient>(item.recipient || 'Тима');
   const [occurred, setOccurred] = useState(dateInput(item.occurred_at));
   const [due, setDue] = useState(dateInput(item.due_date));
   const [note, setNote] = useState(item.note || '');
@@ -617,7 +674,7 @@ function ReimbursementEditor({ item, onClose, onChanged }: { item: Reimbursement
     setSaving(true);
     try {
       await api(`/reimbursements/${item.id}`, { method: 'PATCH', body: {
-        amount: Number(amount.replace(',', '.')), purpose, merchant, location, company,
+        amount: Number(amount.replace(',', '.')), purpose, merchant, location, company, recipient,
         occurred_at: occurred || null, due_date: due || null, note, status,
       } });
       haptic.success(); onChanged();
@@ -655,6 +712,7 @@ function ReimbursementEditor({ item, onClose, onChanged }: { item: Reimbursement
             <Field label="Сервис / магазин"><TextInput value={merchant} onChangeText={setMerchant} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} /></Field>
             <Field label="Место"><TextInput value={location} onChangeText={setLocation} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} /></Field>
             <Field label="Компания"><TextInput value={company} onChangeText={setCompany} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} /></Field>
+            <Field label="Кому вернут"><RecipientSwitch value={recipient} onChange={setRecipient} /></Field>
             <View style={styles.twoCols}>
               <View style={{ flex: 1 }}><Field label="Дата"><TextInput value={occurred} onChangeText={setOccurred} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} /></Field></View>
               <View style={{ flex: 1 }}><Field label="Вернуть до"><TextInput value={due} onChangeText={setDue} style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]} /></Field></View>
@@ -682,11 +740,13 @@ const styles = StyleSheet.create({
   sectionCount: { minWidth: 23, height: 23, paddingHorizontal: 6, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
   body: { flex: 1 },
   overviewContent: { flexGrow: 1, paddingHorizontal: Spacing.three, paddingTop: Spacing.two, gap: Spacing.three },
-  hero: { borderRadius: Radius.xl, padding: Spacing.four, minHeight: 154, justifyContent: 'flex-end', borderWidth: StyleSheet.hairlineWidth },
+  hero: { borderRadius: Radius.xl, padding: Spacing.four, minHeight: 190, justifyContent: 'flex-end', borderWidth: StyleSheet.hairlineWidth },
   heroTop: { position: 'absolute', left: Spacing.four, top: Spacing.three, right: Spacing.four, flexDirection: 'row', alignItems: 'center', gap: 8 },
   heroIcon: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   companyIcon: { width: '100%', height: '100%' },
   heroValue: { fontSize: 38, lineHeight: 43, fontWeight: '800', letterSpacing: -1.5, fontVariant: ['tabular-nums'] },
+  heroRecipients: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  recipientTotal: { flex: 1, minHeight: 38, paddingHorizontal: 10, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   statsRow: { flexDirection: 'row', gap: Spacing.two },
   moneyStat: { flex: 1, borderRadius: Radius.md, padding: 12, gap: 2 },
   allDebts: { width: 64, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', gap: 3 },
@@ -727,6 +787,10 @@ const styles = StyleSheet.create({
   noteInput: { minHeight: 80, textAlignVertical: 'top' },
   twoCols: { flexDirection: 'row', gap: Spacing.two },
   saveButton: { height: 54, borderRadius: Radius.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  recipientSwitch: { height: 44, padding: 3, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', overflow: 'hidden' },
+  recipientSwitchCompact: { width: 164, height: 36, alignSelf: 'flex-start', marginBottom: 8 },
+  recipientIndicator: { position: 'absolute', left: 3, top: 3, bottom: 3, borderRadius: 11 },
+  recipientButton: { flex: 1, zIndex: 1, alignItems: 'center', justifyContent: 'center' },
   modalHeader: { minHeight: 58, paddingHorizontal: Spacing.three, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   modalTitle: { fontSize: 28, fontWeight: '800' },
   editorContent: { padding: Spacing.three, gap: Spacing.three, paddingBottom: Spacing.six },

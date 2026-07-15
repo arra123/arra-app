@@ -136,8 +136,25 @@ function bindLiquidRecorder(button, onText) {
 
 const liquidFinance = {
   tab: 'add', target: 'reimbursement', raw: '', userRaw: '', parsed: null, parsing: false, saved: null, listMode: 'active',
+  recipient: localStorage.getItem('noda-finance-recipient') === 'Дани' ? 'Дани' : 'Тима',
   loaded: false, loadedAt: 0, loading: null, reimbursements: [], debts: [],
 };
+function financeRecipientButtons(selected = liquidFinance.recipient) {
+  return `<div class="finance-recipient-switch" role="tablist" data-recipient="${esc(selected)}">
+    <i aria-hidden="true"></i>
+    <button type="button" data-fin-recipient="Тима" class="${selected === 'Тима' ? 'active' : ''}">Тима</button>
+    <button type="button" data-fin-recipient="Дани" class="${selected === 'Дани' ? 'active' : ''}">Дани</button>
+  </div>`;
+}
+function selectFinanceRecipient(value) {
+  liquidFinance.recipient = value === 'Дани' ? 'Дани' : 'Тима';
+  localStorage.setItem('noda-finance-recipient', liquidFinance.recipient);
+  document.querySelectorAll('.finance-recipient-switch').forEach((switcher) => {
+    switcher.dataset.recipient = liquidFinance.recipient;
+    switcher.querySelector('.active')?.classList.remove('active');
+    switcher.querySelector(`[data-fin-recipient="${liquidFinance.recipient}"]`)?.classList.add('active');
+  });
+}
 function financeStatusLabel(status) {
   return ({ pending: 'Новая', submitted: 'Передана', reimbursed: 'Возвращено', rejected: 'Отклонено' })[status] || status;
 }
@@ -151,7 +168,8 @@ function financeDraftHtml(parsed) {
       <div class="liquid-form-amount"><input id="f-amount" type="number" step="0.01" value="${esc(parsed.amount || '')}" placeholder="0"/><span>₽</span></div>
       ${debt ? `<input id="f-party" value="${esc(parsed.counterparty || '')}" placeholder="Кто"/>`
         : `<input id="f-purpose" value="${esc(parsed.purpose || '')}" placeholder="На что потрачено"/>
-           <div class="liquid-form-grid"><input id="f-merchant" value="${esc(parsed.merchant || '')}" placeholder="Где"/><input id="f-company" value="${esc(parsed.company || 'Компания')}" placeholder="Компания"/></div>`}
+           <div class="liquid-form-grid"><input id="f-merchant" value="${esc(parsed.merchant || '')}" placeholder="Где"/><input id="f-company" value="${esc(parsed.company || 'Компания')}" placeholder="Компания"/></div>
+           ${financeRecipientButtons(parsed.recipient || liquidFinance.recipient)}`}
       <input id="f-note" value="${esc(parsed.note || '')}" placeholder="Комментарий"/>
       <button class="liquid-primary" type="submit">${liquidIcon('check')}<span>Сохранить</span></button>
     </form></div>`;
@@ -185,10 +203,10 @@ function financeTableHtml() {
   const groups = financeGroups().filter((group) => group.items.length);
   if (!groups.length) return `<div class="liquid-empty finance-empty">${liquidFinance.listMode === 'active' ? 'Активных записей нет' : 'Закрытых записей нет'}</div>`;
   return `<div class="liquid-money-table-shell"><table class="liquid-money-table">
-    <thead><tr><th>Источник</th><th>За что</th><th>Когда</th><th>Статус</th><th class="money">Сумма</th><th aria-label="Действие"></th></tr></thead>
+    <thead><tr><th>Источник</th><th>За что</th><th>Кому</th><th>Когда</th><th>Статус</th><th class="money">Сумма</th><th aria-label="Действие"></th></tr></thead>
     ${groups.map((group) => {
       const total = group.items.reduce((sum, record) => sum + Number(record.item.amount || 0), 0);
-      return `<tbody class="finance-group ${group.key}"><tr class="finance-group-row"><td colspan="4"><span class="finance-group-icon">${group.icon}</span><b>${group.label}</b><small>${group.items.length}</small></td><td class="money"><strong>${fmt(total)} ₽</strong></td><td></td></tr>
+      return `<tbody class="finance-group ${group.key}"><tr class="finance-group-row"><td colspan="5"><span class="finance-group-icon">${group.icon}</span><b>${group.label}</b><small>${group.items.length}</small></td><td class="money"><strong>${fmt(total)} ₽</strong></td><td></td></tr>
         ${group.items.map(({ type, item }) => {
           const reimbursement = type === 'reimbursement'; const company = reimbursement || financeIsCompanyDebt(item); const closed = financeIsClosed(type, item);
           const source = company ? 'Компания' : (item.counterparty || (item.direction === 'i_owe' ? 'Кому должен' : 'Кто должен'));
@@ -198,6 +216,7 @@ function financeTableHtml() {
           return `<tr class="finance-record ${closed ? 'closed' : ''}" data-type="${type}" data-id="${esc(item.id)}">
             <td><div class="finance-source">${company ? liquidCompanyMark('row') : `<span class="finance-person-icon">${liquidIcon('people')}</span>`}<b>${esc(source)}</b></div></td>
             <td><div class="finance-purpose">${financeServiceIcon(item)}<div><b>${esc(reason)}</b>${item.company && !/^компания$/i.test(item.company) ? `<small>${esc(item.company)}</small>` : ''}</div></div></td>
+            <td>${reimbursement ? `<span class="finance-recipient-badge ${item.recipient === 'Дани' ? 'dani' : 'tima'}">${esc(item.recipient || 'Тима')}</span>` : '<span class="finance-muted">—</span>'}</td>
             <td><time>${liquidDate(item.occurred_at || item.created_at)}</time></td>
             <td><span class="finance-status ${statusClass}"><i></i>${esc(status)}</span></td>
             <td class="money"><strong>${fmt(item.amount)} ₽</strong></td><td><button class="liquid-row-check" data-close="1" title="${closed ? 'Вернуть в активные' : 'Закрыть'}">${closed ? '↺' : liquidIcon('check')}</button></td>
@@ -228,10 +247,12 @@ function renderFinanceList() {
   const body = document.getElementById('finance-body'); if (!body) return;
   const companyTotal = liquidFinance.reimbursements.filter((item) => !financeIsClosed('reimbursement', item)).reduce((sum, item) => sum + Number(item.amount || 0), 0)
     + liquidFinance.debts.filter((item) => !item.settled && financeIsCompanyDebt(item)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const timaTotal = liquidFinance.reimbursements.filter((item) => !financeIsClosed('reimbursement', item) && (item.recipient || 'Тима') === 'Тима').reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const daniTotal = liquidFinance.reimbursements.filter((item) => !financeIsClosed('reimbursement', item) && item.recipient === 'Дани').reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const owedTotal = liquidFinance.debts.filter((item) => !item.settled && item.direction !== 'i_owe' && !financeIsCompanyDebt(item)).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const oweTotal = liquidFinance.debts.filter((item) => !item.settled && item.direction === 'i_owe').reduce((sum, item) => sum + Number(item.amount || 0), 0);
   body.innerHTML = `<div class="liquid-finance-overview">
-    <div class="finance-total company"><span>${liquidCompanyMark()}</span><div><small>Компания</small><strong>${fmt(companyTotal)} ₽</strong></div></div>
+    <div class="finance-total company"><span>${liquidCompanyMark()}</span><div><small>Тима ${fmt(timaTotal)} · Дани ${fmt(daniTotal)}</small><strong>${fmt(companyTotal)} ₽</strong></div></div>
     <div class="finance-total owed"><i></i><div><small>Мне должны</small><strong>${fmt(owedTotal)} ₽</strong></div></div>
     <div class="finance-total owe"><i></i><div><small>Я должен</small><strong>${fmt(oweTotal)} ₽</strong></div></div>
     <nav class="liquid-subtabs" data-active="${liquidFinance.listMode}"><button data-list="active" class="${liquidFinance.listMode === 'active' ? 'active' : ''}">Активные</button><button data-list="closed" class="${liquidFinance.listMode === 'closed' ? 'active' : ''}">Закрытые</button></nav>
@@ -254,12 +275,15 @@ function renderFinanceAdd() {
       <button type="button" data-fin-target="owes_me" class="${liquidFinance.target === 'owes_me' ? 'active' : ''}">${liquidIcon('people')}<span>Мне должны</span></button>
       <button type="button" data-fin-target="i_owe" class="${liquidFinance.target === 'i_owe' ? 'active' : ''}">${liquidIcon('people')}<span>Я должен</span></button>
     </div>
+      <div class="finance-recipient-context" ${liquidFinance.target === 'reimbursement' ? '' : 'hidden'}>${financeRecipientButtons()}</div>
       <div class="liquid-composer"><button id="finance-attach" title="Фото">${liquidIcon('clip')}</button><input id="finance-photo" type="file" accept="image/*" hidden/><textarea id="finance-input" rows="1" placeholder="Сообщение"></textarea><button id="finance-send" class="liquid-send" hidden>${liquidIcon('send')}</button><button id="finance-mic" class="liquid-mic">${liquidIcon('mic')}</button></div></div></div>`;
   document.querySelectorAll('[data-fin-target]').forEach((button) => button.onclick = () => {
     if (liquidFinance.target === button.dataset.finTarget) return;
     liquidFinance.target = button.dataset.finTarget; liquidFinance.parsed = null;
     document.querySelector('[data-fin-target].active')?.classList.remove('active'); button.classList.add('active');
+    const recipientContext = document.querySelector('.finance-recipient-context'); if (recipientContext) recipientContext.hidden = liquidFinance.target !== 'reimbursement';
   });
+  document.querySelectorAll('[data-fin-recipient]').forEach((button) => button.onclick = () => selectFinanceRecipient(button.dataset.finRecipient));
   const input = document.getElementById('finance-input'); const send = document.getElementById('finance-send'); const mic = document.getElementById('finance-mic');
   const updateSend = () => { send.hidden = !input.value.trim(); mic.hidden = !!input.value.trim(); };
   input.oninput = updateSend;
@@ -267,12 +291,13 @@ function renderFinanceAdd() {
     const cleaned = String(text || '').trim(); if (!cleaned && !image) return;
     liquidFinance.userRaw = cleaned || 'Фото'; liquidFinance.parsing = true; liquidFinance.parsed = null; liquidFinance.saved = null; renderFinanceAdd();
     try {
-      const result = await api('POST', '/reimbursements/parse', { text: cleaned, image, preferredKind: liquidFinance.target === 'reimbursement' ? 'reimbursement' : 'debt' });
+      const result = await api('POST', '/reimbursements/parse', { text: cleaned, image, preferredKind: liquidFinance.target === 'reimbursement' ? 'reimbursement' : 'debt', preferredRecipient: liquidFinance.recipient });
       liquidFinance.parsed = result.parsed || {};
       if (liquidFinance.target === 'reimbursement') {
         // The selected context is authoritative: "Компания" can never be
         // accidentally reclassified by the parser as a personal debt.
-        liquidFinance.parsed.kind = 'reimbursement'; liquidFinance.parsed.company = 'Компания'; delete liquidFinance.parsed.direction;
+        liquidFinance.parsed.kind = 'reimbursement'; liquidFinance.parsed.company = liquidFinance.parsed.company || 'Компания'; delete liquidFinance.parsed.direction;
+        selectFinanceRecipient(liquidFinance.parsed.recipient || liquidFinance.recipient);
       } else { liquidFinance.parsed.kind = 'debt'; liquidFinance.parsed.direction = liquidFinance.target; }
     } catch (error) { toast('Возвраты', error.message, 'warn'); }
     liquidFinance.parsing = false; renderFinanceAdd();
@@ -292,7 +317,7 @@ function renderFinanceAdd() {
         const result = await api('POST', '/debts', { amount, counterparty, direction: parsed.direction || liquidFinance.target, note: document.getElementById('f-note').value.trim(), occurred_at: parsed.occurred_at || null });
         liquidFinance.saved = { title: result.debt.counterparty, amount: result.debt.amount }; liquidFinance.debts.unshift(result.debt);
       } else {
-        const result = await api('POST', '/reimbursements', { amount, purpose: document.getElementById('f-purpose').value.trim(), merchant: document.getElementById('f-merchant').value.trim(), company: document.getElementById('f-company').value.trim() || 'Компания', note: document.getElementById('f-note').value.trim(), occurred_at: parsed.occurred_at || null, source: 'assistant', raw_input: liquidFinance.userRaw });
+        const result = await api('POST', '/reimbursements', { amount, purpose: document.getElementById('f-purpose').value.trim(), merchant: document.getElementById('f-merchant').value.trim(), company: document.getElementById('f-company').value.trim() || 'Компания', recipient: liquidFinance.recipient, note: document.getElementById('f-note').value.trim(), occurred_at: parsed.occurred_at || null, source: 'assistant', raw_input: liquidFinance.userRaw });
         liquidFinance.saved = { title: result.reimbursement.purpose, amount: result.reimbursement.amount }; liquidFinance.reimbursements.unshift(result.reimbursement);
       }
       liquidFinance.parsed = null; liquidFinance.userRaw = ''; renderFinanceAdd();

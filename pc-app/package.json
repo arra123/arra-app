@@ -1,6 +1,6 @@
 {
   "name": "noda-desktop",
-  "version": "1.10.10",
+  "version": "1.10.11",
   "description": "Noda — терминал, файлы и передача проектов между ноутбуком, сервером и ПК",
   "main": "main.js",
   "author": "Noda",
@@ -62,9 +62,13 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Noda",
+      "uninstallDisplayName": "Noda",
       "installerIcon": "icon.ico",
       "uninstallerIcon": "icon.ico",
       "runAfterFinish": true,
+      "language": "1049",
+      "installerLanguages": ["ru_RU"],
+      "multiLanguageInstaller": false,
       "installerHeader": "build/installerHeader.bmp",
       "installerSidebar": "build/installerSidebar.bmp",
       "uninstallerSidebar": "build/uninstallerSidebar.bmp"

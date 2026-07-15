@@ -8,6 +8,22 @@ import { one, query } from '../db.js';
 import { compactDeviceRows, normalizeDeviceRole } from '../devices.js';
 import { addAgent, isAgentOnline, isClientOnline, notifyDevice, notifyUser, onlineTokenIds, relayToAgents, relayToClients, removeAgent } from '../ws.js';
 
+// Совместимость с Noda <= 1.10.9: старый удалённый ПК отправлял кадры
+// только мобильным клиентам. Сервер запоминает, какой desktop-агент открыл
+// просмотр, и возвращает ему кадры без необходимости сначала обновлять ПК.
+const legacyScreenViewers = new Map();
+const screenRouteKey = (userId, targetId) => `${userId}:${targetId}`;
+const rememberScreenViewer = (userId, targetId, sourceId) => {
+  legacyScreenViewers.set(screenRouteKey(userId, targetId), { sourceId, expiresAt: Date.now() + 30 * 60_000 });
+};
+const legacyScreenViewer = (userId, targetId) => {
+  const key = screenRouteKey(userId, targetId);
+  const route = legacyScreenViewers.get(key);
+  if (!route || route.expiresAt < Date.now()) { legacyScreenViewers.delete(key); return null; }
+  route.expiresAt = Date.now() + 30 * 60_000;
+  return route.sourceId;
+};
+
 export default async function fileRoutes(app) {
   await mkdir(config.uploadDir, { recursive: true });
 
@@ -223,10 +239,16 @@ export default async function fileRoutes(app) {
         // помечаем, с какого устройства пришло, чтобы телефон мог сопоставить
         msg.deviceId = tokenId;
         relayToClients(userId, msg);
+        if (['screens', 'screen_frame', 'screen_health', 'pc_offline'].includes(msg.type)) {
+          const viewerId = legacyScreenViewer(userId, tokenId);
+          if (viewerId) notifyDevice(userId, viewerId, { ...msg, to: 'pc', sourceDeviceId: tokenId, legacyRoute: true });
+        }
       } else if (msg && msg.to === 'agent') {
         // Noda на ноутбуке может запустить перенос на домашнем ПК и получать
         // ход операции обратно через тот же защищённый канал.
         const targetId = msg.deviceId || null;
+        if (targetId && msg.type === 'screen_start') rememberScreenViewer(userId, targetId, tokenId);
+        if (targetId && msg.type === 'screen_stop') legacyScreenViewers.delete(screenRouteKey(userId, targetId));
         const event = { ...msg, to: 'pc', sourceDeviceId: tokenId };
         delete event.deviceId;
         const delivered = relayToAgents(userId, event, targetId);
