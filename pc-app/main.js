@@ -919,97 +919,238 @@ function stopScreen() {
 // stdin и выполняет его только после закрытия (EOF). Приложение держит stdin открытым всё
 // время → ни одна команда мыши/клавиатуры не выполнялась («ничего не нажимается»). Теперь —
 // отдельный скрипт с циклом [Console]::In.ReadLine(): каждая строка-команда выполняется сразу.
-// Процесс намеренно НЕ DPI-aware: для не-DPI-aware приложений рабочий стол виртуализируется
-// в DIP, поэтому SetCursorPos(DIP) совпадает с Electron disp.bounds (тоже DIP) — попадание точное.
+// SendInput работает с абсолютными координатами всего виртуального рабочего стола.
+// В отличие от SetCursorPos он возвращает факт принятия события и позволяет явно показать
+// зрителю, когда Windows блокирует ввод из-за разного уровня прав (UIPI).
 const INJECT_PS = `
+$ProgressPreference='SilentlyContinue'
 Add-Type @"
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 public class WinIO {
-  [DllImport("user32.dll")] public static extern bool SetCursorPos(int X,int Y);
-  [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint dx,uint dy,uint d,IntPtr e);
   [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+  [DllImport("user32.dll")] public static extern int GetSystemMetrics(int nIndex);
   [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public InputUnion U; }
-  [StructLayout(LayoutKind.Explicit)] public struct InputUnion { [FieldOffset(0)] public KEYBDINPUT ki; }
+  [StructLayout(LayoutKind.Explicit)] public struct InputUnion {
+    [FieldOffset(0)] public MOUSEINPUT mi;
+    [FieldOffset(0)] public KEYBDINPUT ki;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT {
+    public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo;
+  }
   [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
-  public static void SendUnicode(string text) {
+  public static uint Mouse(int x, int y, uint flags, int data) {
+    int vx = GetSystemMetrics(76), vy = GetSystemMetrics(77);
+    int vw = Math.Max(1, GetSystemMetrics(78)), vh = Math.Max(1, GetSystemMetrics(79));
+    int ax = (int)Math.Round((x - vx) * 65535.0 / Math.Max(1, vw - 1));
+    int ay = (int)Math.Round((y - vy) * 65535.0 / Math.Max(1, vh - 1));
+    INPUT input = new INPUT(); input.type = 0;
+    input.U.mi.dx = ax; input.U.mi.dy = ay;
+    input.U.mi.mouseData = unchecked((uint)data);
+    input.U.mi.dwFlags = flags | 0x0001 | 0x4000 | 0x8000;
+    return SendInput(1, new INPUT[] { input }, Marshal.SizeOf(typeof(INPUT)));
+  }
+  public static uint SendUnicode(string text) {
+    uint sent = 0;
     foreach (char ch in text) {
       INPUT down = new INPUT(); down.type = 1; down.U.ki.wScan = ch; down.U.ki.dwFlags = 0x0004;
       INPUT up = down; up.U.ki.dwFlags = 0x0004 | 0x0002;
       INPUT[] inputs = new INPUT[] { down, up };
-      SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+      sent += SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
     }
+    return sent;
+  }
+  private static INPUT KeyInput(ushort vk, uint flags) {
+    INPUT input = new INPUT(); input.type = 1; input.U.ki.wVk = vk; input.U.ki.dwFlags = flags; return input;
+  }
+  public static uint Key(ushort vk, bool ctrl, bool alt, bool shift) {
+    List<INPUT> inputs = new List<INPUT>();
+    if (ctrl) inputs.Add(KeyInput(0x11, 0));
+    if (alt) inputs.Add(KeyInput(0x12, 0));
+    if (shift) inputs.Add(KeyInput(0x10, 0));
+    uint extended = (vk == 0x21 || vk == 0x22 || vk == 0x23 || vk == 0x24 || vk == 0x25 || vk == 0x26 || vk == 0x27 || vk == 0x28 || vk == 0x2D || vk == 0x2E) ? 0x0001u : 0u;
+    inputs.Add(KeyInput(vk, extended));
+    inputs.Add(KeyInput(vk, extended | 0x0002));
+    if (shift) inputs.Add(KeyInput(0x10, 0x0002));
+    if (alt) inputs.Add(KeyInput(0x12, 0x0002));
+    if (ctrl) inputs.Add(KeyInput(0x11, 0x0002));
+    return SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf(typeof(INPUT)));
   }
 }
 "@
-Add-Type -AssemblyName System.Windows.Forms
 $LD=0x02;$LU=0x04;$RD=0x08;$RU=0x10;$WH=0x0800
 while ($true) {
   $line = [Console]::In.ReadLine()
   if ($line -eq $null) { break }
   if ($line -eq '') { continue }
+  $seq = '0'; $sent = 0
   try {
     $sp = $line.IndexOf(' ')
     if ($sp -lt 0) { $cmd = $line; $rest = '' } else { $cmd = $line.Substring(0, $sp); $rest = $line.Substring($sp + 1) }
     switch ($cmd) {
-      'M' { $a = $rest.Split(' '); [WinIO]::SetCursorPos([int]$a[0], [int]$a[1]) | Out-Null }
-      'C' { $a = $rest.Split(' '); [WinIO]::SetCursorPos([int]$a[0], [int]$a[1]) | Out-Null; if ($a[2] -eq 'right') { [WinIO]::mouse_event($RD,0,0,0,[IntPtr]::Zero); [WinIO]::mouse_event($RU,0,0,0,[IntPtr]::Zero) } else { [WinIO]::mouse_event($LD,0,0,0,[IntPtr]::Zero); [WinIO]::mouse_event($LU,0,0,0,[IntPtr]::Zero) } }
-      'B' { $a = $rest.Split(' '); [WinIO]::SetCursorPos([int]$a[0], [int]$a[1]) | Out-Null; [WinIO]::mouse_event($LD,0,0,0,[IntPtr]::Zero); [WinIO]::mouse_event($LU,0,0,0,[IntPtr]::Zero); Start-Sleep -Milliseconds 60; [WinIO]::mouse_event($LD,0,0,0,[IntPtr]::Zero); [WinIO]::mouse_event($LU,0,0,0,[IntPtr]::Zero) }
-      'D' { $a = $rest.Split(' '); [WinIO]::SetCursorPos([int]$a[0], [int]$a[1]) | Out-Null; [WinIO]::mouse_event($LD,0,0,0,[IntPtr]::Zero) }
-      'U' { $a = $rest.Split(' '); [WinIO]::SetCursorPos([int]$a[0], [int]$a[1]) | Out-Null; [WinIO]::mouse_event($LU,0,0,0,[IntPtr]::Zero) }
-      'S' { $a = $rest.Split(' '); [WinIO]::SetCursorPos([int]$a[0], [int]$a[1]) | Out-Null; [WinIO]::mouse_event($WH,0,0,[uint32][int]$a[2],[IntPtr]::Zero) }
-      'K' { [System.Windows.Forms.SendKeys]::SendWait($rest) }
-      'P' { $txt=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($rest)); [WinIO]::SendUnicode($txt) }
+      'M' { $a=$rest.Split(' ');$seq=$a[0];$sent=[WinIO]::Mouse([int]$a[1],[int]$a[2],0,0) }
+      'C' { $a=$rest.Split(' ');$seq=$a[0];$down=if($a[3]-eq 'right'){$RD}else{$LD};$up=if($a[3]-eq 'right'){$RU}else{$LU};$sent=[WinIO]::Mouse([int]$a[1],[int]$a[2],$down,0)+[WinIO]::Mouse([int]$a[1],[int]$a[2],$up,0) }
+      'B' { $a=$rest.Split(' ');$seq=$a[0];$sent=[WinIO]::Mouse([int]$a[1],[int]$a[2],$LD,0)+[WinIO]::Mouse([int]$a[1],[int]$a[2],$LU,0);Start-Sleep -Milliseconds 60;$sent+=[WinIO]::Mouse([int]$a[1],[int]$a[2],$LD,0)+[WinIO]::Mouse([int]$a[1],[int]$a[2],$LU,0) }
+      'D' { $a=$rest.Split(' ');$seq=$a[0];$sent=[WinIO]::Mouse([int]$a[1],[int]$a[2],$LD,0) }
+      'U' { $a=$rest.Split(' ');$seq=$a[0];$sent=[WinIO]::Mouse([int]$a[1],[int]$a[2],$LU,0) }
+      'S' { $a=$rest.Split(' ');$seq=$a[0];$sent=[WinIO]::Mouse([int]$a[1],[int]$a[2],$WH,[int]$a[3]) }
+      'K' { $a=$rest.Split(' ');$seq=$a[0];$sent=[WinIO]::Key([uint16]$a[1],([int]$a[2]-eq 1),([int]$a[3]-eq 1),([int]$a[4]-eq 1)) }
+      'P' { $a=$rest.Split(' ');$seq=$a[0];$txt=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($a[1]));$sent=[WinIO]::SendUnicode($txt) }
     }
-  } catch {}
+    [Console]::Out.WriteLine('ACK ' + $seq + ' ' + $sent); [Console]::Out.Flush()
+  } catch {
+    $msg=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($_.Exception.Message))
+    [Console]::Out.WriteLine('ERR ' + $seq + ' ' + $msg); [Console]::Out.Flush()
+  }
 }
 `;
 
 let mousePs = null;
 let injectPath = null;
+let mouseOutput = '';
+let mouseSequence = 0;
+const mousePending = new Map();
+
+function answerScreenInput(send, payload) {
+  try { send?.({ type: 'screen_input_ack', ...payload }); } catch {}
+}
+
+function failMousePending(error) {
+  for (const [seq, pending] of mousePending) {
+    clearTimeout(pending.timer);
+    answerScreenInput(pending.send, {
+      seq,
+      action: pending.action,
+      ok: false,
+      error,
+    });
+  }
+  mousePending.clear();
+}
+
+function handleMouseOutput(chunk) {
+  mouseOutput += String(chunk || '');
+  const lines = mouseOutput.split(/\r?\n/);
+  mouseOutput = lines.pop() || '';
+  for (const line of lines) {
+    const match = line.match(/^(ACK|ERR)\s+(\S+)\s*(.*)$/);
+    if (!match) continue;
+    const [, kind, seq, value] = match;
+    const pending = mousePending.get(seq);
+    if (!pending) continue;
+    mousePending.delete(seq);
+    clearTimeout(pending.timer);
+    if (kind === 'ERR') {
+      let error = 'Не удалось выполнить удалённый ввод';
+      try { error = Buffer.from(value, 'base64').toString('utf8') || error; } catch {}
+      writeLog('error', 'remote.input.command', { seq, action: pending.action, error });
+      answerScreenInput(pending.send, { seq, action: pending.action, ok: false, error });
+      continue;
+    }
+    const sent = Number(value) || 0;
+    const ok = sent > 0;
+    const error = ok ? '' : 'Windows заблокировала управление. Noda на удалённом ПК нужно запустить от администратора.';
+    if (!ok) writeLog('error', 'remote.input.blocked', { seq, action: pending.action, sent });
+    answerScreenInput(pending.send, { seq, action: pending.action, ok, sent, error });
+  }
+}
+
 function ensureMousePs() {
-  if (mousePs) return;
+  if (mousePs && !mousePs.killed && mousePs.stdin?.writable) return true;
   try {
     if (!injectPath) {
       injectPath = path.join(os.tmpdir(), 'arra_inject.ps1');
       fs.writeFileSync(injectPath, INJECT_PS, 'utf8');
     }
-    mousePs = spawn('powershell.exe', ['-NoProfile', '-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', injectPath], { windowsHide: true });
-    mousePs.on('error', () => { mousePs = null; });
-    mousePs.on('exit', () => { mousePs = null; });
-  } catch { mousePs = null; }
+    const proc = spawn('powershell.exe', ['-NoProfile', '-NoLogo', '-ExecutionPolicy', 'Bypass', '-File', injectPath], {
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    mousePs = proc;
+    mouseOutput = '';
+    proc.stdout.setEncoding('utf8');
+    proc.stderr.setEncoding('utf8');
+    proc.stdout.on('data', handleMouseOutput);
+    proc.stderr.on('data', (data) => {
+      const error = String(data || '').trim();
+      if (error) writeLog('error', 'remote.input.stderr', { error });
+    });
+    proc.on('error', (error) => {
+      writeLog('error', 'remote.input.worker-error', error);
+      if (mousePs === proc) mousePs = null;
+      failMousePending('Служба удалённого управления не запустилась');
+    });
+    proc.on('exit', (code, signal) => {
+      if (mousePs === proc) mousePs = null;
+      if (mousePending.size) {
+        writeLog('error', 'remote.input.worker-exit', { code, signal });
+        failMousePending('Служба удалённого управления остановилась');
+      }
+    });
+    return true;
+  } catch (error) {
+    mousePs = null;
+    writeLog('error', 'remote.input.worker-start', error);
+    return false;
+  }
 }
-function psCmd(line) { ensureMousePs(); try { mousePs && mousePs.stdin.write(line + '\n'); } catch {} }
-function screenInput(msg) {
+
+function psCmd(line, seq, send, action) {
+  if (!ensureMousePs()) {
+    answerScreenInput(send, { seq, action, ok: false, error: 'Служба удалённого управления не запустилась' });
+    return;
+  }
+  const timer = setTimeout(() => {
+    if (!mousePending.delete(seq)) return;
+    writeLog('error', 'remote.input.timeout', { seq, action });
+    answerScreenInput(send, { seq, action, ok: false, error: 'Удалённый компьютер не подтвердил управление' });
+  }, 5000);
+  mousePending.set(seq, { send, action, timer });
+  try {
+    mousePs.stdin.write(line + '\n');
+  } catch (error) {
+    clearTimeout(timer);
+    mousePending.delete(seq);
+    writeLog('error', 'remote.input.write', { seq, action, error });
+    answerScreenInput(send, { seq, action, ok: false, error: 'Не удалось отправить команду управления' });
+  }
+}
+
+function screenInput(msg, send) {
   const disp = curDisplay();
   const b = disp.bounds;
   const x = Math.round(b.x + Math.max(0, Math.min(1, msg.nx || 0)) * b.width);
   const y = Math.round(b.y + Math.max(0, Math.min(1, msg.ny || 0)) * b.height);
+  const seq = String(msg.seq || ++mouseSequence).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 48) || String(++mouseSequence);
+  const command = (line) => psCmd(line, seq, send, msg.action || 'unknown');
   switch (msg.action) {
-    case 'move': psCmd(`M ${x} ${y}`); break;
-    case 'click': psCmd(`C ${x} ${y} ${msg.button === 'right' ? 'right' : 'left'}`); break;
-    case 'dbl': psCmd(`B ${x} ${y}`); break;
-    case 'down': psCmd(`D ${x} ${y}`); break;
-    case 'up': psCmd(`U ${x} ${y}`); break;
-    case 'scroll': psCmd(`S ${x} ${y} ${Math.round(msg.dy || 0)}`); break;
+    case 'move': command(`M ${seq} ${x} ${y}`); break;
+    case 'click': command(`C ${seq} ${x} ${y} ${msg.button === 'right' ? 'right' : 'left'}`); break;
+    case 'dbl': command(`B ${seq} ${x} ${y}`); break;
+    case 'down': command(`D ${seq} ${x} ${y}`); break;
+    case 'up': command(`U ${seq} ${x} ${y}`); break;
+    case 'scroll': command(`S ${seq} ${x} ${y} ${Math.round(msg.dy || 0)}`); break;
     case 'key': {
-      const map = { enter: '{ENTER}', backspace: '{BACKSPACE}', esc: '{ESC}', tab: '{TAB}', up: '{UP}', down: '{DOWN}', left: '{LEFT}', right: '{RIGHT}', delete: '{DELETE}', home: '{HOME}', end: '{END}', space: ' ' };
-      let sk = null;
-      if (msg.key && map[msg.key]) sk = map[msg.key];
-      else if (msg.key && String(msg.key).length === 1 && (msg.ctrl || msg.alt || msg.shift)) {
-        const key = String(msg.key).replace(/[+^%~(){}\[\]]/g, '{$&}');
-        sk = `${msg.ctrl ? '^' : ''}${msg.alt ? '%' : ''}${msg.shift ? '+' : ''}${key}`;
+      const map = { enter: 0x0D, backspace: 0x08, esc: 0x1B, tab: 0x09, up: 0x26, down: 0x28, left: 0x25, right: 0x27, delete: 0x2E, home: 0x24, end: 0x23, space: 0x20 };
+      const punctuation = { ';': 0xBA, '=': 0xBB, ',': 0xBC, '-': 0xBD, '.': 0xBE, '/': 0xBF, '`': 0xC0, '[': 0xDB, '\\': 0xDC, ']': 0xDD, "'": 0xDE };
+      let vk = msg.key && map[msg.key] ? map[msg.key] : null;
+      if (vk == null && msg.key && String(msg.key).length === 1 && (msg.ctrl || msg.alt || msg.shift)) {
+        const key = String(msg.key).toUpperCase();
+        if (/^[A-Z0-9]$/.test(key)) vk = key.charCodeAt(0);
+        else vk = punctuation[String(msg.key)] || null;
       }
-      else if (msg.text) {
+      if (vk != null) {
+        command(`K ${seq} ${vk} ${msg.ctrl ? 1 : 0} ${msg.alt ? 1 : 0} ${msg.shift ? 1 : 0}`);
+      } else if (msg.text) {
         const encoded = Buffer.from(String(msg.text).replace(/[\r\n]+/g, ''), 'utf8').toString('base64');
-        if (encoded) psCmd('P ' + encoded);
-        break;
+        if (encoded) command(`P ${seq} ${encoded}`);
       }
-      // SendKeys-строку шлём как одну команду 'K …'; переводы строк убираем (ломали бы построчный протокол)
-      if (sk != null) psCmd('K ' + sk.replace(/[\r\n]+/g, ''));
       break;
     }
-    default: break;
+    default:
+      answerScreenInput(send, { seq, action: msg.action || 'unknown', ok: false, error: 'Неизвестная команда управления' });
+      break;
   }
 }
 
@@ -1070,6 +1211,7 @@ function handleRelay(msg, send) {
     case 'screens':
     case 'screen_frame':
     case 'screen_health':
+    case 'screen_input_ack':
     case 'pc_offline':
       winSend('remote-screen-event', msg);
       break;
@@ -1100,7 +1242,7 @@ function handleRelay(msg, send) {
       stopScreen();
       break;
     case 'screen_input':
-      screenInput(msg);
+      screenInput(msg, send);
       break;
     case 'pty_start':
       startPty(msg.termId || '1', msg.cols, msg.rows, msg.cwd, false);

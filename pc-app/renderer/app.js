@@ -98,7 +98,8 @@ const remoteDesktop = {
   deviceId: null, running: false, screens: [], activeScreen: null,
   frame: null, frameW: 16, frameH: 9, frameQueued: false, lastFrameAt: 0,
   frameBytes: 0, startedAt: 0, restarting: false, nextRestartAt: 0, restartCount: 0,
-  moveAt: 0, uiAt: 0, error: '', engine: '', frames: 0, failures: 0, blackFrames: 0,
+  moveAt: 0, uiAt: 0, error: '', inputError: '', inputSeq: 0, inputAckAt: 0,
+  engine: '', frames: 0, failures: 0, blackFrames: 0,
 };
 
 const REMOTE_STREAM_CONFIG = Object.freeze({ fps: 8, quality: 80, width: 1920 });
@@ -588,11 +589,21 @@ async function sendRemoteDesktop(message) {
   return result;
 }
 
+function sendRemoteInput(message) {
+  remoteDesktop.inputSeq += 1;
+  return sendRemoteDesktop({
+    ...message,
+    type: 'screen_input',
+    seq: String(remoteDesktop.inputSeq),
+  });
+}
+
 async function startRemoteDesktop() {
   const device = selectedRemoteDevice();
   if (!device?.online) { remoteDesktop.error = 'Выбранный компьютер не в сети'; updateRemoteDeviceUi(); return; }
   remoteDesktop.deviceId = device.id;
   remoteDesktop.error = '';
+  remoteDesktop.inputError = '';
   remoteDesktop.running = true;
   remoteDesktop.frame = null;
   remoteDesktop.frameBytes = 0;
@@ -618,6 +629,7 @@ async function stopRemoteDesktop() {
   remoteDesktop.restarting = false;
   remoteDesktop.nextRestartAt = 0;
   remoteDesktop.restartCount = 0;
+  remoteDesktop.inputError = '';
   clearRemoteCanvas();
   updateRemoteDeviceUi();
 }
@@ -770,6 +782,10 @@ function handleRemoteDesktopEvent(message) {
     remoteDesktop.failures = Number(message.failures) || 0;
     if (message.error) remoteDesktop.error = message.error;
     updateRemoteDeviceUi();
+  } else if (message.type === 'screen_input_ack') {
+    remoteDesktop.inputAckAt = Date.now();
+    remoteDesktop.inputError = message.ok ? '' : (message.error || 'Удалённый компьютер не принял управление');
+    updateRemoteDeviceUi();
   } else if (message.type === 'pc_offline') {
     remoteDesktop.running = false;
     remoteDesktop.error = 'Компьютер отключился';
@@ -789,46 +805,67 @@ function remotePoint(event) {
   };
 }
 
+function moveRemoteCursor(event, visible = true) {
+  const stage = document.getElementById('remote-stage');
+  const cursor = document.getElementById('remote-cursor');
+  const canvas = document.getElementById('remote-canvas');
+  if (!stage || !cursor || !canvas || !remoteDesktop.running) return;
+  const stageRect = stage.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
+  const inside = event.clientX >= canvasRect.left && event.clientX <= canvasRect.right
+    && event.clientY >= canvasRect.top && event.clientY <= canvasRect.bottom;
+  cursor.hidden = !visible || !inside;
+  if (!inside) return;
+  cursor.style.transform = `translate3d(${Math.round(event.clientX - stageRect.left)}px,${Math.round(event.clientY - stageRect.top)}px,0)`;
+}
+
 function wireRemoteCanvas() {
   const canvas = document.getElementById('remote-canvas');
   if (!canvas) return;
   canvas.onpointerdown = (event) => {
     canvas.focus();
+    moveRemoteCursor(event);
     if (event.button !== 0) return;
     event.preventDefault();
     canvas.setPointerCapture?.(event.pointerId);
-    const point = remotePoint(event); if (point) sendRemoteDesktop({ type: 'screen_input', action: 'down', ...point });
+    const point = remotePoint(event); if (point) sendRemoteInput({ action: 'down', ...point });
   };
   canvas.onpointermove = (event) => {
+    moveRemoteCursor(event);
     const now = Date.now(); if (now - remoteDesktop.moveAt < 28) return;
     remoteDesktop.moveAt = now;
-    const point = remotePoint(event); if (point) sendRemoteDesktop({ type: 'screen_input', action: 'move', ...point });
+    const point = remotePoint(event); if (point) sendRemoteInput({ action: 'move', ...point });
   };
   canvas.onpointerup = (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
-    const point = remotePoint(event); if (point) sendRemoteDesktop({ type: 'screen_input', action: 'up', ...point });
+    const point = remotePoint(event); if (point) sendRemoteInput({ action: 'up', ...point });
   };
+  canvas.onpointercancel = (event) => {
+    const point = remotePoint(event); if (point) sendRemoteInput({ action: 'up', ...point });
+  };
+  canvas.onpointerenter = (event) => moveRemoteCursor(event);
+  canvas.onpointerleave = (event) => moveRemoteCursor(event, false);
   canvas.oncontextmenu = (event) => {
     event.preventDefault();
-    const point = remotePoint(event); if (point) sendRemoteDesktop({ type: 'screen_input', action: 'click', button: 'right', ...point });
+    const point = remotePoint(event); if (point) sendRemoteInput({ action: 'click', button: 'right', ...point });
   };
   canvas.onwheel = (event) => {
     event.preventDefault();
-    const point = remotePoint(event); if (point) sendRemoteDesktop({ type: 'screen_input', action: 'scroll', dy: event.deltaY > 0 ? -120 : 120, ...point });
+    const point = remotePoint(event); if (point) sendRemoteInput({ action: 'scroll', dy: event.deltaY > 0 ? -120 : 120, ...point });
   };
   canvas.onkeydown = (event) => {
     const map = { Enter: 'enter', Backspace: 'backspace', Escape: 'esc', Tab: 'tab', ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Delete: 'delete', Home: 'home', End: 'end', ' ': 'space' };
     const key = map[event.key];
     if (key) {
       event.preventDefault();
-      sendRemoteDesktop({ type: 'screen_input', action: 'key', key });
+      sendRemoteInput({ action: 'key', key });
     } else if (event.key.length === 1) {
       event.preventDefault();
       if (event.ctrlKey || event.altKey || event.metaKey) {
-        sendRemoteDesktop({ type: 'screen_input', action: 'key', key: event.key, ctrl: event.ctrlKey || event.metaKey, alt: event.altKey, shift: event.shiftKey });
+        sendRemoteInput({ action: 'key', key: event.key, ctrl: event.ctrlKey || event.metaKey, alt: event.altKey, shift: event.shiftKey });
       } else {
-        sendRemoteDesktop({ type: 'screen_input', action: 'key', text: event.key });
+        sendRemoteInput({ action: 'key', text: event.key });
       }
     }
   };
@@ -855,19 +892,24 @@ function updateRemoteDeviceUi() {
   const current = selectedRemoteDevice();
   const status = document.getElementById('remote-status');
   const action = document.getElementById('remote-connect');
+  const stage = document.getElementById('remote-stage');
+  const cursor = document.getElementById('remote-cursor');
+  const displayError = remoteDesktop.error || remoteDesktop.inputError;
+  stage?.classList.toggle('is-live', remoteDesktop.running);
+  if (cursor && !remoteDesktop.running) cursor.hidden = true;
   if (status) {
     const frameAge = remoteDesktop.lastFrameAt ? Math.max(0, Math.round((Date.now() - remoteDesktop.lastFrameAt) / 1000)) : null;
     const frameInfo = remoteDesktop.lastFrameAt
       ? ` · ${remoteDesktop.frameW}×${remoteDesktop.frameH}${remoteDesktop.frameBytes ? ` · ${Math.max(1, Math.round(remoteDesktop.frameBytes / 1024))} КБ` : ''}`
       : '';
-    status.textContent = remoteDesktop.error || (remoteDesktop.running
+    status.textContent = displayError || (remoteDesktop.running
       ? (remoteDesktop.restarting || (frameAge != null && frameAge > 4)
         ? `Восстанавливаю экран${remoteDesktop.restartCount ? ` · попытка ${remoteDesktop.restartCount}` : ''}`
         : (!remoteDesktop.lastFrameAt
           ? 'Подключаю экран…'
           : `Экран в сети${frameInfo}${remoteDesktop.engine ? ` · ${remoteDesktop.engine === 'windows' ? 'Windows' : 'Electron'}` : ''}`))
       : (current?.online ? 'Готов к подключению' : 'Устройство не в сети'));
-    status.className = remoteDesktop.error ? 'remote-status bad' : 'remote-status';
+    status.className = displayError ? 'remote-status bad' : 'remote-status';
   }
   if (action) {
     action.textContent = remoteDesktop.running ? 'Отключиться' : 'Подключиться';
@@ -882,7 +924,7 @@ function renderRemoteDesktop() {
     <header class="remote-head"><div><h1>Удалённый ПК</h1></div>
       <div class="remote-device-controls"><select id="remote-device" aria-label="Компьютер"></select><button class="btn" id="remote-connect">Подключиться</button></div></header>
     <div class="remote-meta"><span id="remote-status">Готов к подключению</span><div id="remote-monitors" class="remote-monitors"></div></div>
-    <div class="remote-stage" id="remote-stage"><canvas id="remote-canvas" tabindex="0"></canvas><div id="remote-stage-hint" class="remote-stage-hint"><b>${device ? 'Экран появится здесь' : 'Другой компьютер пока не найден'}</b><span>${device ? 'Noda на втором устройстве должна быть открыта и находиться в сети.' : 'Установи Noda на ПК и войди под тем же аккаунтом.'}</span></div></div>
+    <div class="remote-stage" id="remote-stage"><canvas id="remote-canvas" tabindex="0"></canvas><div id="remote-cursor" class="remote-cursor" hidden><svg viewBox="0 0 24 30" aria-hidden="true"><path d="M2 2v22l6.1-5.2 4.2 9.2 4.1-1.9-4.2-9.1H21L2 2Z"/></svg></div><div id="remote-stage-hint" class="remote-stage-hint"><b>${device ? 'Экран появится здесь' : 'Другой компьютер пока не найден'}</b><span>${device ? 'Noda на втором устройстве должна быть открыта и находиться в сети.' : 'Установи Noda на ПК и войди под тем же аккаунтом.'}</span></div></div>
   </div>`;
   const select = document.getElementById('remote-device');
   select.onchange = async () => {
