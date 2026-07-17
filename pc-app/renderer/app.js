@@ -1518,6 +1518,7 @@ const sync = {
   speed: 0, eta: null, lastProgressAt: 0, current: null,
   liveProjects: {}, recentFiles: [], blockedFiles: [], verify: null,
   transferTree: null, paused: false, pauseRequested: false, closeHistory: [],
+  treeRenderTimer: null, treeRenderLastAt: 0,
   step: 'idle', failedStep: 'scan', stepError: '', errors: [],
   panelTab: localStorage.getItem('noda-sync-panel') || 'tree',
   blockers: [], blockersChecked: false, blockersBusy: false, closeResult: null,
@@ -1564,8 +1565,94 @@ function syncConnectionState() {
   return { label: 'данные идут', cls: 'ok' };
 }
 
+function restoreSyncRuntime(runtime) {
+  const event = runtime?.lastEvent;
+  if (!event?.type) return;
+  const started = Date.parse(runtime.startedAt || '');
+  if (Number.isFinite(started)) sync.startedAt = started;
+  sync.busy = !!runtime.busy;
+  sync.lastProgressAt = Date.now();
+  if (event.type === 'status') {
+    sync.info = event;
+    sync.projects = event.projects || [];
+    setTransferTreeFromStatus(event);
+    updateSyncAuthority(event.serverState);
+    sync.step = 'idle';
+    sync.phase = (event.upload || event.download || event.conflicts) ? 'Состояние устройств проверено' : 'Это устройство соответствует серверу';
+    sync.detail = `${event.localFiles || 0} файлов здесь · ${event.remoteFiles || 0} файлов на сервере`;
+  } else if (event.type === 'done') {
+    const verb = event.direction === 'push' ? 'Отправлено на сервер' : 'Забрано с сервера';
+    sync.step = event.errors ? 'error' : 'done';
+    sync.pct = 100;
+    sync.phase = `${verb}: ${fileCount(event.transferred)}`;
+    sync.detail = `${fmtB(event.bytes || 0)} · проверено ${event.verified ?? event.transferred ?? 0}${event.errors ? ` · ошибок ${event.errors}` : ''}`;
+    updateSyncAuthority(event.serverState);
+  } else if (event.type === 'blocked') {
+    sync.step = 'blocked';
+    sync.blockedFiles = event.files || [];
+    sync.phase = `${Number(event.count) === 1 ? 'Занят' : 'Занято'} ${fileCount(event.count)}`;
+    sync.detail = 'Нужно освободить указанные файлы';
+  } else if (event.type === 'error') {
+    sync.step = 'error';
+    sync.phase = 'Передача остановлена';
+    sync.detail = event.error || 'Неизвестная ошибка';
+  } else if (event.type === 'progress') {
+    sync.step = 'transfer';
+    sync.current = event;
+    sync.speed = Number(event.speed) || 0;
+    sync.eta = event.eta;
+    sync.pct = event.totalBytes ? Math.round((event.bytes || 0) / event.totalBytes * 100) : 0;
+    sync.phase = event.direction === 'pull' ? 'Обновляю это устройство с сервера' : 'Сохраняю актуальную работу на сервере';
+    sync.detail = `${event.done || 0}/${event.total || 0} · ${fmtB(event.bytes || 0)} из ${fmtB(event.totalBytes || 0)}`;
+  } else if (event.type === 'verify' || event.type === 'verify_progress') {
+    sync.step = 'verify';
+    sync.verify = { done: event.done || 0, total: event.total || 0, verified: event.verified || 0, errors: event.errors || 0, file: event.file };
+    sync.pct = event.total ? Math.round((event.done || 0) / event.total * 100) : 0;
+    sync.phase = 'Проверяю, что все файлы дошли';
+    sync.detail = `${event.verified || 0} подтверждено из ${event.total || 0}`;
+  } else if (event.type === 'phase') {
+    sync.step = 'scan';
+    sync.phase = event.msg || 'Подготовка передачи';
+    sync.detail = event.detail || '';
+  }
+}
+
 function syncTreeKey(scopeId, projectKey, file) {
   return `${scopeId || ''}|${projectKey || ''}|${String(file || '').replace(/\\/g, '/')}`;
+}
+
+function syncProjectKey(scopeId, projectKey) {
+  return `${scopeId || ''}|${projectKey || ''}`;
+}
+
+function syncFolderKey(scopeId, projectKey, folder) {
+  return `${scopeId || ''}|${projectKey || ''}|${folder || '(корень)'}`;
+}
+
+function pushTreeIndex(map, key, value) {
+  const rows = map.get(key);
+  if (rows) rows.push(value);
+  else map.set(key, [value]);
+}
+
+function indexTransferTree(tree) {
+  if (!tree) return tree;
+  tree.projectsByScope = new Map();
+  tree.itemsByScope = new Map();
+  tree.itemsByProject = new Map();
+  tree.itemsByFolder = new Map();
+  for (const project of tree.projects || []) {
+    pushTreeIndex(tree.projectsByScope, project.scopeId || project.scope, project);
+  }
+  for (const item of tree.items || []) {
+    const scopeId = item.scopeId || '';
+    const projectKey = item.projectKey || item.project || '';
+    const folder = item.folder || '(корень)';
+    pushTreeIndex(tree.itemsByScope, scopeId, item);
+    pushTreeIndex(tree.itemsByProject, syncProjectKey(scopeId, projectKey), item);
+    pushTreeIndex(tree.itemsByFolder, syncFolderKey(scopeId, projectKey, folder), item);
+  }
+  return tree;
 }
 
 function setTransferTreeFromPlan(event) {
@@ -1575,12 +1662,12 @@ function setTransferTreeFromPlan(event) {
     folders: (project.folders || []).map((folder) => ({ ...folder })),
   }));
   const items = (event.items || []).map((item) => ({ ...item, state: 'queued' }));
-  sync.transferTree = {
+  sync.transferTree = indexTransferTree({
     direction: event.direction,
     scopes, projects, items,
     itemMap: new Map(items.map((item) => [syncTreeKey(item.scopeId, item.projectKey, item.file), item])),
     proof: null,
-  };
+  });
 }
 
 function setTransferTreeFromStatus(event) {
@@ -1606,11 +1693,11 @@ function setTransferTreeFromStatus(event) {
     bytes: change.bytes || 0,
     state: change.blocked || change.direction === 'conflict' ? 'failed' : 'queued',
   })));
-  sync.transferTree = {
+  sync.transferTree = indexTransferTree({
     direction: 'status', scopes, projects, items,
     itemMap: new Map(items.map((item) => [syncTreeKey(item.scopeId, item.projectKey, item.file), item])),
     proof: null,
-  };
+  });
 }
 
 function updateSyncAuthority(serverState) {
@@ -1639,23 +1726,33 @@ function renderSyncAuthority() {
 
 function updateTransferTreeItem(event, state) {
   const tree = sync.transferTree;
-  if (!tree) return;
+  if (!tree) return false;
   const key = syncTreeKey(event.scopeId, event.projectKey || event.project, event.file);
   let item = tree.itemMap.get(key);
   if (!item) {
     item = tree.items.find((candidate) => candidate.projectKey === (event.projectKey || event.project) && candidate.file === event.file);
   }
-  if (!item) return;
+  if (!item) return false;
+  const changed = item.state !== state
+    || (event.snapshot != null && item.snapshot !== !!event.snapshot)
+    || (event.snapshotBytes != null && Number(item.snapshotBytes || 0) !== Number(event.snapshotBytes || 0));
   item.state = state;
   if (event.snapshot != null) item.snapshot = !!event.snapshot;
   if (event.snapshotBytes != null) item.snapshotBytes = Number(event.snapshotBytes) || 0;
+  return changed;
 }
 
 function syncTreeState(items, planned, proof) {
-  const failed = items.filter((item) => item.state === 'failed').length + Number(proof?.errors || 0);
-  const verified = items.filter((item) => item.state === 'verified').length;
-  const copied = items.filter((item) => item.state === 'done' || item.state === 'verified').length;
-  const active = items.some((item) => item.state === 'copying');
+  let failed = Number(proof?.errors || 0);
+  let verified = 0;
+  let copied = 0;
+  let active = false;
+  for (const item of items) {
+    if (item.state === 'failed') failed += 1;
+    if (item.state === 'verified') verified += 1;
+    if (item.state === 'done' || item.state === 'verified') copied += 1;
+    if (item.state === 'copying') active = true;
+  }
   if (failed) return { cls: 'bad', icon: '!', label: `${failed} с ошибкой` };
   if (!planned) return { cls: 'ok', icon: '✓', label: 'актуально' };
   if (proof && Number(proof.verified || 0) >= planned) return { cls: 'ok', icon: '✓', label: `${planned}/${planned} подтверждено` };
@@ -1665,9 +1762,26 @@ function syncTreeState(items, planned, proof) {
   return { cls: 'queued', icon: '·', label: `${copied}/${planned}` };
 }
 
-function renderTransferTree() {
+function renderTransferTree(force = false) {
   const box = document.getElementById('sync-transfer-tree');
   if (!box) return;
+  const now = Date.now();
+  const minInterval = sync.busy ? 240 : 0;
+  const elapsed = now - Number(sync.treeRenderLastAt || 0);
+  if (!force && minInterval && elapsed < minInterval) {
+    if (!sync.treeRenderTimer) {
+      sync.treeRenderTimer = setTimeout(() => {
+        sync.treeRenderTimer = null;
+        renderTransferTree(true);
+      }, Math.max(16, minInterval - elapsed));
+    }
+    return;
+  }
+  if (sync.treeRenderTimer) {
+    clearTimeout(sync.treeRenderTimer);
+    sync.treeRenderTimer = null;
+  }
+  sync.treeRenderLastAt = now;
   const tree = sync.transferTree;
   if (!tree) {
     box.innerHTML = `<div class="sync-tree-caption"><b>Проекты</b><span>читаю папки…</span></div>`;
@@ -1676,22 +1790,24 @@ function renderTransferTree() {
   const proofByScope = new Map((tree.proof || []).map((row) => [row.id, row]));
   const totalInventory = tree.scopes.reduce((sum, scope) => sum + Number(scope.inventoryFiles || scope.localFiles || 0), 0);
   const scopeHtml = tree.scopes.map((scope, scopeIndex) => {
-    const projects = tree.projects.filter((project) => (project.scopeId || project.scope) === scope.id);
-    const scopeItems = tree.items.filter((item) => item.scopeId === scope.id);
+    const projects = tree.projectsByScope?.get(scope.id) || tree.projects.filter((project) => (project.scopeId || project.scope) === scope.id);
+    const scopeItems = tree.itemsByScope?.get(scope.id) || tree.items.filter((item) => item.scopeId === scope.id);
     const planned = Number(scope.files || 0);
     const proof = proofByScope.get(scope.id);
     const state = syncTreeState(scopeItems, planned, proof);
     const inventory = Number(scope.inventoryFiles || scope.localFiles || 0);
     const open = scope.id === 'projects' || planned > 0;
     const projectsHtml = projects.map((project) => {
-      const projectItems = tree.items.filter((item) => item.scopeId === scope.id && item.projectKey === project.name);
+      const projectItems = tree.itemsByProject?.get(syncProjectKey(scope.id, project.name))
+        || tree.items.filter((item) => item.scopeId === scope.id && item.projectKey === project.name);
       const projectPlanned = Number(project.files || 0);
       const projectState = tree.localOnly ? { cls: 'local', icon: '○', label: 'на этом устройстве' } : syncTreeState(projectItems, projectPlanned, null);
       const folders = project.folders?.length ? project.folders : [{ name: '(корень)', inventoryFiles: project.inventoryFiles || 0, files: projectPlanned }];
       const folderHtml = folders.map((folder) => {
-        const folderItems = projectItems.filter((item) => (item.folder || '(корень)') === folder.name);
+        const folderItems = tree.itemsByFolder?.get(syncFolderKey(scope.id, project.name, folder.name))
+          || projectItems.filter((item) => (item.folder || '(корень)') === folder.name);
         const folderState = tree.localOnly ? { cls: 'local', icon: '·', label: folder.subfolders ? `${folder.subfolders} папок внутри` : 'папка' } : syncTreeState(folderItems, Number(folder.files || 0), null);
-        const visible = folderItems.slice(0, 120);
+        const visible = folderItems.slice(0, sync.busy ? 20 : 80);
         const filesHtml = visible.map((item) => {
           const itemState = item.state === 'verified' ? ['ok', '✓', 'подтверждён']
             : item.state === 'done' ? ['verify', '…', 'передан']
@@ -1754,7 +1870,7 @@ function wireSyncEvents() {
       if (!sync.lastRequest) sync.step = 'idle';
       sync.phase = (o.upload || o.download || o.conflicts) ? 'Состояние устройств проверено' : 'Это устройство соответствует серверу';
       sync.detail = `${o.localFiles || 0} файлов здесь · ${o.remoteFiles || 0} файлов на сервере · проверка ${fmtDuration(o.elapsed)}`;
-      sync.pct = 0; sync.indeterminate = false; renderSyncViewBody(); updateSyncStage(); renderTransferTree();
+      sync.pct = 0; sync.indeterminate = false; renderSyncViewBody(); updateSyncStage(); renderTransferTree(true);
     } else if (o.type === 'plan') {
       syncLog(`${o.direction === 'push' ? 'Отправка на сервер' : 'Получение с сервера'}: ${o.files || 0} файлов, ${fmtB(o.bytes || 0)}`);
       sync.step = 'files'; sync.stepError = '';
@@ -1764,7 +1880,7 @@ function wireSyncEvents() {
       sync.speed = 0; sync.eta = null; sync.current = null; sync.recentFiles = []; sync.blockedFiles = []; sync.verify = null;
       sync.paused = false; sync.pauseRequested = false; setTransferTreeFromPlan(o);
       sync.liveProjects = Object.fromEntries((o.projects || []).map((p) => [p.name, { ...p, done: 0, doneBytes: 0 }]));
-      updateSyncStage(); updateSyncLive(); renderTransferTree();
+      updateSyncStage(); updateSyncLive(); renderTransferTree(true);
     } else if (o.type === 'preflight') {
       sync.step = 'files';
       sync.phase = 'Проверяю, не заняты ли файлы';
@@ -1787,7 +1903,7 @@ function wireSyncEvents() {
       sync.detail = `${o.done || 0}/${o.total || 0} · ${fmtB(o.bytes || 0)} из ${fmtB(o.totalBytes || 0)} · ${fmtB(o.speed || 0)}/с${eta ? ` · осталось ~${eta}` : ''}${o.file ? ` · ${o.file}` : ''}`;
       sync.pct = pct; sync.indeterminate = false; sync.speed = Number(o.speed) || 0; sync.eta = o.eta;
       sync.lastProgressAt = Date.now(); sync.current = o;
-      updateTransferTreeItem(o, o.state === 'failed' ? 'failed' : (o.state === 'done' ? 'done' : 'copying'));
+      const treeChanged = updateTransferTreeItem(o, o.state === 'failed' ? 'failed' : (o.state === 'done' ? 'done' : 'copying'));
       const projectKey = o.projectKey || o.project;
       if (projectKey) sync.liveProjects[projectKey] = {
         ...(sync.liveProjects[projectKey] || { name: projectKey, label: o.project }),
@@ -1798,7 +1914,8 @@ function wireSyncEvents() {
         sync.recentFiles.unshift({ file: o.file, project: o.project, direction: o.direction, ok: o.state === 'done', bytes: o.fileTotal || 0 });
         sync.recentFiles = sync.recentFiles.slice(0, 8);
       }
-      setSyncProgress(pct, sync.detail); updateSyncStage(); updateSyncLive(); renderTransferTree();
+      setSyncProgress(pct, sync.detail); updateSyncStage(); updateSyncLive();
+      if (treeChanged) renderTransferTree();
     } else if (o.type === 'retry') {
       sync.step = 'transfer';
       sync.lastProgressAt = Date.now();
@@ -1815,21 +1932,27 @@ function wireSyncEvents() {
       setSyncProgress(0, sync.detail); updateSyncStage(); updateSyncLive();
     } else if (o.type === 'verify_progress') {
       sync.step = 'verify';
-      sync.verify = { done: o.done || 0, total: o.total || 0, verified: o.verified || 0, errors: o.errors || 0, file: o.file };
+      const verifyItems = Array.isArray(o.items) && o.items.length ? o.items : [o];
+      const latestVerifiedItem = verifyItems[verifyItems.length - 1] || o;
+      sync.verify = { done: o.done || 0, total: o.total || 0, verified: o.verified || 0, errors: o.errors || 0, file: latestVerifiedItem.file || o.file };
       sync.phase = 'Проверяю, что все файлы дошли';
       sync.detail = `${o.verified || 0} подтверждено из ${o.total || 0}${o.errors ? ` · ошибок ${o.errors}` : ''} · ${syncShortPath(o.file)}`;
       sync.pct = o.total ? Math.round((o.done || 0) / o.total * 100) : 100;
       sync.indeterminate = false; sync.lastProgressAt = Date.now();
-      updateTransferTreeItem(o, o.ok === false ? 'failed' : 'verified');
-      setSyncProgress(sync.pct, sync.detail); updateSyncStage(); updateSyncLive(); renderTransferTree();
+      let treeChanged = false;
+      for (const item of verifyItems) {
+        treeChanged = updateTransferTreeItem(item, item.ok === false ? 'failed' : 'verified') || treeChanged;
+      }
+      setSyncProgress(sync.pct, sync.detail); updateSyncStage(); updateSyncLive();
+      if (treeChanged) renderTransferTree();
     } else if (o.type === 'paused') {
       sync.paused = true; sync.pauseRequested = false; sync.speed = 0;
       sync.phase = 'Передача на паузе'; sync.detail = 'Соединение сохранено. Нажми «Продолжить», чтобы продолжить с того же места.';
-      updateSyncStage(); renderTransferTree();
+      updateSyncStage(); renderTransferTree(true);
     } else if (o.type === 'resumed') {
       sync.paused = false; sync.pauseRequested = false;
       sync.phase = 'Передача продолжена'; sync.detail = 'Продолжаю с того же файла'; sync.lastProgressAt = Date.now();
-      updateSyncStage(); renderTransferTree();
+      updateSyncStage(); renderTransferTree(true);
     } else if (o.type === 'fileerror') {
       syncLog(`⚠ ${o.file}: ${o.error}`);
       sync.errors.push({ file: o.file || 'Файл', error: o.error || 'Ошибка' });
@@ -1848,7 +1971,7 @@ function wireSyncEvents() {
       sync.paused = false; sync.pauseRequested = false;
       if (sync.transferTree) sync.transferTree.proof = o.proof || [];
       syncLog(`${verb}: ${o.transferred || 0} файлов, ${fmtB(o.bytes || 0)}, ошибок ${o.errors || 0}`);
-      setSyncProgress(100, sync.detail); updateSyncStage(); updateSyncLive(); renderTransferTree();
+      setSyncProgress(100, sync.detail); updateSyncStage(); updateSyncLive(); renderTransferTree(true);
       toast('Передача', `${verb}: ${fileCount(o.transferred)}${o.errors ? `, ошибок ${o.errors}` : ''}`, o.errors ? 'warn' : 'ok');
     } else if (o.type === 'error') {
       const transient = /timed out|timeout|etimedout|econnreset|socket|сервер.*не ответил/i.test(String(o.error || ''));
@@ -1869,7 +1992,7 @@ function wireSyncEvents() {
       syncLog(o.msg || 'Ошибка Python'); sync.errors.push({ file: 'Движок', error: o.msg || 'Ошибка Python' });
       renderSyncViewBody();
     } else if (o.type === 'closed') {
-      sync.busy = false; sync.indeterminate = false; sync.paused = false; sync.pauseRequested = false; renderSyncViewBody(); updateSyncStage(); updateSyncLive(); renderTransferTree();
+      sync.busy = false; sync.indeterminate = false; sync.paused = false; sync.pauseRequested = false; renderSyncViewBody(); updateSyncStage(); updateSyncLive(); renderTransferTree(true);
     }
   });
 }
@@ -2332,6 +2455,7 @@ async function renderSyncV2() {
     sync.deviceProfile = st.deviceProfile || null;
     sync.autoRole = st.deviceProfile?.role || 'pc';
     if (sync.roleSource === 'auto' || !sync.role) sync.role = sync.autoRole;
+    restoreSyncRuntime(st.sync);
   } catch { sync.deviceName = 'Это устройство'; if (!sync.role) sync.role = 'pc'; }
   app.innerHTML = `
     <div class="syncwrap sync-v3">
@@ -2395,15 +2519,15 @@ async function renderSyncV2() {
   if (!sync.transferTree) {
     window.arra.syncLocalInventory().then((inventory) => {
       if (sync.transferTree) return;
-      sync.transferTree = { ...inventory, direction: 'local', itemMap: new Map(), proof: null };
-      renderTransferTree();
+      sync.transferTree = indexTransferTree({ ...inventory, direction: 'local', itemMap: new Map(), proof: null });
+      renderTransferTree(true);
     }).catch((error) => reportError('sync.local-inventory', error));
   }
   if (!sync.authority?.at && !sync.authorityRequested && !sync.busy) {
     sync.authorityRequested = true;
     window.arra.syncRun('authority', null, sync.role).catch((error) => reportError('sync.authority', error));
   }
-  renderSyncV2Body(); renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney(); renderTransferTree();
+  renderSyncV2Body(); renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney(); renderTransferTree(true);
   renderSyncAuthority();
 }
 

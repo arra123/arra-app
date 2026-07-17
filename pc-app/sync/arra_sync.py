@@ -132,29 +132,36 @@ def wait_for_control():
         pass
 
 
-def local_file_issue(path, require_exclusive=False):
+def local_file_issue(path, require_replace=False):
     """Проверить, можно ли безопасно прочитать или заменить файл.
 
     Для отправки достаточно совместного чтения: VS Code, Codex и Claude могут
-    продолжать работу, пока Noda снимает текущий срез файла. Эксклюзивный доступ
-    нужен только при получении, когда локальный файл действительно заменяется.
+    продолжать работу, пока Noda снимает текущий срез файла. При получении нам
+    не нужен эксклюзивный доступ: важно лишь, разрешают ли уже открытые дескрипторы
+    атомарно переименовать файл. Проверка через share=0 была слишком строгой и
+    ошибочно считала занятым любой открытый JSONL сессии Codex.
     """
     path = Path(path)
     if not path.exists():
         return "файл исчез до начала передачи"
     try:
-        if os.name == "nt" and require_exclusive:
+        if os.name == "nt" and require_replace:
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             create_file = kernel32.CreateFileW
             create_file.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
                                     ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
             create_file.restype = ctypes.c_void_p
-            handle = create_file(str(path), 0x80000000, 0, None, 3, 0x80, None)
+            # DELETE + FILE_SHARE_READ/WRITE/DELETE проверяет именно возможность
+            # будущего os.replace(), не требуя закрывать программу, которая лишь
+            # читает файл или держит JSONL открытым с корректным sharing mode.
+            handle = create_file(str(path), 0x00010000, 0x00000007, None, 3, 0x80, None)
             invalid = ctypes.c_void_p(-1).value
             if handle == invalid:
                 code = ctypes.get_last_error()
-                if code in (5, 32, 33):
-                    return "файл открыт или заблокирован другой программой"
+                if code in (32, 33):
+                    return "открытая программа запрещает заменить файл"
+                if code == 5:
+                    return "Windows не разрешает заменить файл"
                 return f"Windows не разрешает открыть файл (код {code})"
             kernel32.CloseHandle(ctypes.c_void_p(handle))
         with open(path, "rb") as stream:
@@ -767,7 +774,7 @@ def transfer(mode, only, dry_run=False):
             local_path = scope["local"] / Path(rel.replace("/", os.sep))
             issue = ""
             if direction == "push" or local_path.exists():
-                issue = local_file_issue(local_path, require_exclusive=(direction == "pull"))
+                issue = local_file_issue(local_path, require_replace=(direction == "pull"))
             if issue:
                 blocked.append({
                     "project": project_label(project_key(scope["id"], rel)),
@@ -825,7 +832,7 @@ def transfer(mode, only, dry_run=False):
             for attempt in range(4):
                 try:
                     if direction == "push":
-                        issue = local_file_issue(local_path, require_exclusive=False)
+                        issue = local_file_issue(local_path, require_replace=False)
                         if issue:
                             raise RuntimeError(issue)
                         before = local_path.stat()
@@ -879,7 +886,7 @@ def transfer(mode, only, dry_run=False):
                             raise RuntimeError("проверка размера на сервере не пройдена")
                     else:
                         if local_path.exists():
-                            issue = local_file_issue(local_path, require_exclusive=True)
+                            issue = local_file_issue(local_path, require_replace=True)
                             if issue:
                                 raise RuntimeError(issue)
                         remote_before = sftp.stat(remote_path)
@@ -946,6 +953,8 @@ def transfer(mode, only, dry_run=False):
         verify_errors = 0
         verified_by_scope = {scope["id"]: 0 for scope in scopes}
         errors_by_scope = {scope["id"]: 0 for scope in scopes}
+        verify_batch = []
+        verify_emit_at = time.time()
         for index, (direction, scope, rel, expected_size, expected_mtime) in enumerate(successful, 1):
             wait_for_control()
             item_ok = False
@@ -965,13 +974,26 @@ def transfer(mode, only, dry_run=False):
                 errors_by_scope[scope["id"]] += 1
                 emit({"type": "fileerror", "file": rel, "error": "проверка после передачи: " + str(ex)[:130]})
             key = project_key(scope["id"], rel)
-            emit({"type": "verify_progress", "done": index, "total": len(successful),
-                  "verified": verified, "errors": verify_errors,
-                  "scopeId": scope["id"], "scope": scope["label"],
-                  "projectKey": key, "project": project_label(key),
-                  "file": rel, "ok": item_ok,
-                  "snapshot": is_append_only_session(scope, rel),
-                  "snapshotBytes": int(expected_size)})
+            verify_batch.append({
+                "scopeId": scope["id"], "scope": scope["label"],
+                "projectKey": key, "project": project_label(key),
+                "file": rel, "ok": item_ok,
+                "snapshot": is_append_only_session(scope, rel),
+                "snapshotBytes": int(expected_size),
+            })
+            now = time.time()
+            if index == len(successful) or len(verify_batch) >= 40 or now - verify_emit_at >= 0.12:
+                latest = verify_batch[-1]
+                emit({"type": "verify_progress", "done": index, "total": len(successful),
+                      "verified": verified, "errors": verify_errors,
+                      "scopeId": latest["scopeId"], "scope": latest["scope"],
+                      "projectKey": latest["projectKey"], "project": latest["project"],
+                      "file": latest["file"], "ok": latest["ok"],
+                      "snapshot": latest["snapshot"],
+                      "snapshotBytes": latest["snapshotBytes"],
+                      "items": verify_batch})
+                verify_batch = []
+                verify_emit_at = now
 
         errors += verify_errors
         for scope_row in scope_rows:

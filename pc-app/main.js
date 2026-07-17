@@ -1473,6 +1473,32 @@ function connectWS() {
 }
 
 // ---- Окно ----
+let rendererRecoveryAttempts = 0;
+let rendererRecoveryWindowStartedAt = 0;
+let rendererHealthyTimer = null;
+
+function recoverRenderer(details) {
+  if (!win || win.isDestroyed() || manualClose || details?.reason === 'clean-exit') return;
+  const now = Date.now();
+  if (!rendererRecoveryWindowStartedAt || now - rendererRecoveryWindowStartedAt > 60000) {
+    rendererRecoveryWindowStartedAt = now;
+    rendererRecoveryAttempts = 0;
+  }
+  rendererRecoveryAttempts += 1;
+  if (rendererRecoveryAttempts > 3) {
+    writeLog('fatal', 'renderer.recovery-exhausted', { details, attempts: rendererRecoveryAttempts });
+    return;
+  }
+  const delay = Math.min(1200, 250 * rendererRecoveryAttempts);
+  writeLog('warn', 'renderer.recovery-scheduled', { details, attempt: rendererRecoveryAttempts, delay });
+  setTimeout(() => {
+    if (!win || win.isDestroyed() || manualClose) return;
+    win.loadFile(path.join(__dirname, 'renderer', 'index.html'))
+      .then(() => writeLog('info', 'renderer.recovered', { attempt: rendererRecoveryAttempts }))
+      .catch((error) => writeLog('fatal', 'renderer.recovery-failed', { attempt: rendererRecoveryAttempts, error }));
+  }, delay);
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1180,
@@ -1480,7 +1506,7 @@ function createWindow() {
     minWidth: 720,
     minHeight: 560,
     frame: false,
-    backgroundColor: '#F4F5F7',
+    backgroundColor: '#111520',
     title: 'Noda',
     icon: path.join(__dirname, 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
@@ -1500,8 +1526,18 @@ function createWindow() {
     writeLog('error', 'renderer.preload', { preloadPath, error });
     console.error('[preload]', preloadPath, error);
   });
-  win.webContents.on('render-process-gone', (_e, details) => writeLog('fatal', 'renderer.process-gone', details));
+  win.webContents.on('render-process-gone', (_e, details) => {
+    writeLog('fatal', 'renderer.process-gone', details);
+    recoverRenderer(details);
+  });
   win.on('unresponsive', () => writeLog('error', 'window.unresponsive', {}));
+  win.webContents.on('did-finish-load', () => {
+    clearTimeout(rendererHealthyTimer);
+    rendererHealthyTimer = setTimeout(() => {
+      rendererRecoveryAttempts = 0;
+      rendererRecoveryWindowStartedAt = 0;
+    }, 30000);
+  });
   win.webContents.once('did-finish-load', () => {
     win.webContents.executeJavaScript(`({ title: document.title, body: document.body && document.body.innerText.slice(0,120), hasArra: !!window.arra })`)
       .then((state) => console.log('[renderer ready]', state)).catch((e) => { writeLog('error', 'renderer.inspect', e); console.error('[renderer inspect]', e); });
@@ -1594,6 +1630,7 @@ ipcMain.handle('get-status', () => ({
   folder: currentFolder(),
   mode: currentMode(),
   deviceProfile: detectDeviceProfile(),
+  sync: syncStateSnapshot(),
 }));
 
 ipcMain.handle('login', async (_e, { login, password, deviceName }) => {
