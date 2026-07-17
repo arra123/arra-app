@@ -81,6 +81,7 @@ function saveSettings() {
 
 let settings = {};
 let win = null;
+let captureWin = null;
 // Безопасная отправка в окно: если окно уже уничтожено (закрыли приложение, а WS ещё шлёт) —
 // НЕ падаем с «Object has been destroyed», а молча пропускаем.
 function winSend(channel, payload) {
@@ -656,14 +657,21 @@ function restartPty(termId, cols, rows, cwd, local) {
 // Единый диспетчер релей-команд (msg от телефона ИЛИ от локального терминала ПК)
 // ---- Удалённый экран (трансляция + управление мышью) ----
 let screenTimer = null;
-// Prefer readable text over excessive frame rate. The remote desktop is used
-// mainly for editors and terminals, where a sharp 1920px frame matters more.
-let screenCfg = { displayId: null, quality: 80, fps: 8, width: 1920 };
+let captureFallbackTimer = null;
+let captureWindowReady = false;
+let captureWindowConfig = null;
+// A persistent Chromium capture stream is substantially faster than requesting
+// a brand-new desktopCapturer thumbnail for every frame. Keep the latter only as
+// a compatibility fallback for machines where desktop media capture is blocked.
+let screenCfg = { displayId: null, quality: 72, fps: 12, width: 1920 };
 let screenBusy = false;
 let lastCaptureMs = 0;
 let captureEngine = 'electron';
 let captureFailures = 0;
 let captureFrames = 0;
+let captureDropped = 0;
+let captureBytes = 0;
+let captureStartedAt = 0;
 let captureLogAt = 0;
 let screenEmit = null;
 let screenViewer = 'client';
@@ -675,6 +683,10 @@ function emitScreenMessage(message) {
   } catch (error) {
     writeLog('error', 'remote.capture.send', { viewer: screenViewer, type: message?.type, error });
   }
+}
+
+function screenSocketBackedUp() {
+  return !ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 450000;
 }
 
 function listScreens() {
@@ -689,6 +701,74 @@ function listScreens() {
 }
 function curDisplay() {
   return screen.getAllDisplays().find((d) => String(d.id) === String(screenCfg.displayId)) || screen.getPrimaryDisplay();
+}
+
+function ensureCaptureWindow() {
+  if (captureWin && !captureWin.isDestroyed()) return captureWin;
+  captureWindowReady = false;
+  captureWin = new BrowserWindow({
+    show: false,
+    width: 32,
+    height: 32,
+    skipTaskbar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'renderer', 'capture-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+  captureWin.loadFile(path.join(__dirname, 'renderer', 'capture.html')).catch((error) => {
+    writeLog('error', 'remote.capture.stream-load', error);
+  });
+  captureWin.on('closed', () => {
+    captureWin = null;
+    captureWindowReady = false;
+  });
+  return captureWin;
+}
+
+function sendCaptureWindow(channel, payload) {
+  try {
+    if (!captureWin || captureWin.isDestroyed() || !captureWindowReady) return false;
+    captureWin.webContents.send(channel, payload);
+    return true;
+  } catch (error) {
+    writeLog('error', 'remote.capture.stream-send', { channel, error });
+    return false;
+  }
+}
+
+async function prepareStreamCapture() {
+  const disp = curDisplay();
+  const captureWindow = ensureCaptureWindow();
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: 0, height: 0 },
+    fetchWindowIcons: false,
+  });
+  const source = sources.find((item) => String(item.display_id) === String(disp.id)) || sources[0];
+  if (!source) throw new Error('Windows не вернула источник экрана');
+  const width = Math.min(Math.max(640, Number(screenCfg.width) || 1920), disp.size.width);
+  captureWindowConfig = {
+    sourceId: source.id,
+    displayId: String(disp.id),
+    width,
+    height: Math.max(360, Math.round(width * disp.size.height / Math.max(1, disp.size.width))),
+    fps: Math.max(4, Math.min(20, Number(screenCfg.fps) || 12)),
+    quality: Math.max(20, Math.min(85, Number(screenCfg.quality) || 72)),
+  };
+  if (captureWindowReady) sendCaptureWindow('remote-capture-start', captureWindowConfig);
+  else if (captureWindow.isDestroyed()) throw new Error('Процесс потокового захвата остановился');
+}
+
+function startLegacyCapture(reason) {
+  if (!screenEmit && (!ws || ws.readyState !== WebSocket.OPEN)) return;
+  if (captureFallbackTimer) { clearTimeout(captureFallbackTimer); captureFallbackTimer = null; }
+  if (screenTimer) clearTimeout(screenTimer);
+  captureEngine = 'electron';
+  writeLog('warn', 'remote.capture.fallback', { reason });
+  screenTimer = setTimeout(scheduleCapture, 0);
 }
 function nativeImageIsBlack(image) {
   try {
@@ -839,7 +919,8 @@ function sendScreenHealth(extra = {}) {
 }
 async function captureFrame() {
   // Не копим очередь: если предыдущий кадр ещё захватывается или сокет занят — пропускаем тик.
-  if (screenBusy || !ws || ws.readyState !== 1 || ws.bufferedAmount > 600000) return;
+  if (screenBusy || screenSocketBackedUp()) { captureDropped += 1; return; }
+  const frameStartedAt = Date.now();
   screenBusy = true;
   try {
     const disp = curDisplay();
@@ -868,13 +949,22 @@ async function captureFrame() {
       captureEngine = 'windows';
     }
     if (frame?.data && ws?.readyState === 1) {
-      emitScreenMessage({ type: 'screen_frame', data: frame.data, w: frame.w, h: frame.h, engine: captureEngine });
+      emitScreenMessage({
+        type: 'screen_frame', data: frame.data, w: frame.w, h: frame.h, engine: captureEngine,
+        capturedAt: Date.now(), captureMs: Date.now() - frameStartedAt, frameSeq: captureFrames + 1,
+      });
       lastCaptureMs = Date.now();
       captureFrames += 1;
+      captureBytes += Math.round(frame.data.length * 0.75);
       if (captureFrames === 1 || Date.now() - captureLogAt > 10000) {
         captureLogAt = Date.now();
-        writeLog('info', 'remote.capture.frame', { displayId: disp.id, engine: captureEngine, bytes: Math.round(frame.data.length * 0.75), frames: captureFrames });
-        sendScreenHealth();
+        const elapsed = Math.max(1, Date.now() - captureStartedAt);
+        writeLog('info', 'remote.capture.frame', {
+          displayId: disp.id, engine: captureEngine, bytes: Math.round(frame.data.length * 0.75),
+          frames: captureFrames, dropped: captureDropped, actualFps: Math.round(captureFrames * 10000 / elapsed) / 10,
+          captureMs: Date.now() - frameStartedAt,
+        });
+        sendScreenHealth({ actualFps: Math.round(captureFrames * 10000 / elapsed) / 10, dropped: captureDropped });
       }
     }
   } catch (error) {
@@ -886,9 +976,11 @@ async function captureFrame() {
 function scheduleCapture() {
   // Адаптивный цикл: запускаем следующий захват сразу после предыдущего, но не чаще fps.
   if (!screenTimer) return;
-  const ms = Math.max(40, Math.round(1000 / (screenCfg.fps || 12)));
+  const startedAt = Date.now();
+  const frameInterval = Math.max(40, Math.round(1000 / (screenCfg.fps || 12)));
   captureFrame().finally(() => {
-    if (screenTimer) screenTimer = setTimeout(scheduleCapture, ms);
+    const delay = Math.max(0, frameInterval - (Date.now() - startedAt));
+    if (screenTimer) screenTimer = setTimeout(scheduleCapture, delay);
   });
 }
 function startScreen(cfg, emit = null, viewer = 'client') {
@@ -897,19 +989,38 @@ function startScreen(cfg, emit = null, viewer = 'client') {
   screenViewer = viewer || 'client';
   screenCfg = { ...screenCfg, ...(cfg || {}) };
   if (!screenCfg.displayId) screenCfg.displayId = String(screen.getPrimaryDisplay().id);
-  captureFailures = 0; captureFrames = 0; lastCaptureMs = 0; captureEngine = 'electron';
+  captureFailures = 0; captureFrames = 0; captureDropped = 0; captureBytes = 0;
+  captureStartedAt = Date.now(); lastCaptureMs = 0; captureEngine = 'stream';
   writeLog('info', 'remote.capture.start', { ...screenCfg, displayId: screenCfg.displayId, viewer: screenViewer });
   sendScreenHealth({ starting: true });
-  screenTimer = setTimeout(scheduleCapture, 0);
+  prepareStreamCapture().catch((error) => {
+    captureFailures += 1;
+    writeLog('error', 'remote.capture.stream-start', { displayId: screenCfg.displayId, error });
+    startLegacyCapture(error.message);
+  });
+  captureFallbackTimer = setTimeout(() => {
+    if (!lastCaptureMs) startLegacyCapture('Потоковый захват не вернул первый кадр за 2,5 секунды');
+  }, 2500);
 }
 // Мгновенная смена монитора без перезапуска потока — следующий кадр уже с нового экрана.
 function switchScreen(displayId) {
   if (displayId) screenCfg.displayId = String(displayId);
-  if (!screenTimer) startScreen({});
+  if (screenEmit || screenTimer || captureWindowConfig) {
+    prepareStreamCapture().catch((error) => startLegacyCapture(error.message));
+  } else startScreen({});
 }
 function stopScreen() {
   if (screenTimer) { clearTimeout(screenTimer); screenTimer = null; }
-  writeLog('info', 'remote.capture.stop', { frames: captureFrames, failures: captureFailures, engine: captureEngine, viewer: screenViewer });
+  if (captureFallbackTimer) { clearTimeout(captureFallbackTimer); captureFallbackTimer = null; }
+  sendCaptureWindow('remote-capture-stop');
+  captureWindowConfig = null;
+  const elapsed = Math.max(1, Date.now() - (captureStartedAt || Date.now()));
+  writeLog('info', 'remote.capture.stop', {
+    frames: captureFrames, failures: captureFailures, dropped: captureDropped,
+    actualFps: Math.round(captureFrames * 10000 / elapsed) / 10,
+    avgKB: captureFrames ? Math.round(captureBytes / captureFrames / 1024) : 0,
+    engine: captureEngine, viewer: screenViewer,
+  });
   screenEmit = null;
   screenViewer = 'client';
 }
@@ -1531,6 +1642,12 @@ function createWindow() {
     recoverRenderer(details);
   });
   win.on('unresponsive', () => writeLog('error', 'window.unresponsive', {}));
+  win.on('closed', () => {
+    stopScreen();
+    try { if (captureWin && !captureWin.isDestroyed()) captureWin.destroy(); } catch {}
+    captureWin = null;
+    captureWindowReady = false;
+  });
   win.webContents.on('did-finish-load', () => {
     clearTimeout(rendererHealthyTimer);
     rendererHealthyTimer = setTimeout(() => {
@@ -2256,6 +2373,60 @@ ipcMain.handle('remote-screen-send', (_e, { deviceId, message } = {}) => {
     writeLog('error', 'remote-screen.send', { deviceId, type: message?.type, error });
     return { ok: false, error: error.message || 'Команда не отправлена' };
   }
+});
+
+ipcMain.on('remote-capture-ready', (event) => {
+  if (!captureWin || captureWin.isDestroyed() || event.sender !== captureWin.webContents) return;
+  captureWindowReady = true;
+  if (captureWindowConfig) sendCaptureWindow('remote-capture-start', captureWindowConfig);
+});
+
+ipcMain.on('remote-capture-frame', (event, payload = {}) => {
+  if (!captureWin || captureWin.isDestroyed() || event.sender !== captureWin.webContents) return;
+  if (!captureWindowConfig || !screenEmit || !payload.data) return;
+  if (screenSocketBackedUp()) { captureDropped += 1; return; }
+  try {
+    const buffer = Buffer.from(payload.data);
+    if (!buffer.length || buffer.length > 8 * 1024 * 1024) return;
+    if (screenTimer) { clearTimeout(screenTimer); screenTimer = null; }
+    if (captureFallbackTimer) { clearTimeout(captureFallbackTimer); captureFallbackTimer = null; }
+    captureEngine = 'stream';
+    captureFrames += 1;
+    captureBytes += buffer.length;
+    lastCaptureMs = Date.now();
+    emitScreenMessage({
+      type: 'screen_frame',
+      data: buffer.toString('base64'),
+      w: Number(payload.w) || captureWindowConfig.width,
+      h: Number(payload.h) || captureWindowConfig.height,
+      engine: captureEngine,
+      capturedAt: Number(payload.capturedAt) || Date.now(),
+      captureMs: Number(payload.captureMs) || 0,
+      frameSeq: captureFrames,
+    });
+    if (captureFrames === 1 || Date.now() - captureLogAt > 5000) {
+      captureLogAt = Date.now();
+      const elapsed = Math.max(1, Date.now() - captureStartedAt);
+      const actualFps = Math.round(captureFrames * 10000 / elapsed) / 10;
+      writeLog('info', 'remote.capture.frame', {
+        displayId: captureWindowConfig.displayId, engine: captureEngine, bytes: buffer.length,
+        frames: captureFrames, dropped: captureDropped, actualFps, captureMs: Number(payload.captureMs) || 0,
+        socketBuffered: ws?.bufferedAmount || 0,
+      });
+      sendScreenHealth({ actualFps, dropped: captureDropped, avgKB: Math.round(captureBytes / captureFrames / 1024) });
+    }
+  } catch (error) {
+    captureFailures += 1;
+    writeLog('error', 'remote.capture.stream-frame', error);
+  }
+});
+
+ipcMain.on('remote-capture-error', (event, payload = {}) => {
+  if (!captureWin || captureWin.isDestroyed() || event.sender !== captureWin.webContents) return;
+  captureFailures += 1;
+  const message = String(payload.message || 'Потоковый захват экрана завершился ошибкой');
+  writeLog('error', 'remote.capture.stream', { message, stack: payload.stack || '' });
+  startLegacyCapture(message);
 });
 
 // ---- Терминал/код: локальное использование самим ПК-приложением ----

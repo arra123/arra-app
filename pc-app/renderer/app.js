@@ -99,10 +99,11 @@ const remoteDesktop = {
   frame: null, frameW: 16, frameH: 9, frameQueued: false, lastFrameAt: 0,
   frameBytes: 0, startedAt: 0, restarting: false, nextRestartAt: 0, restartCount: 0,
   moveAt: 0, uiAt: 0, error: '', inputError: '', inputSeq: 0, inputAckAt: 0,
-  engine: '', frames: 0, failures: 0, blackFrames: 0,
+  moveInFlight: null, queuedMove: null, moveReleaseTimer: null, inputSentAt: new Map(), inputRtt: 0,
+  engine: '', frames: 0, failures: 0, blackFrames: 0, receiveFps: 0, frameLatency: 0,
 };
 
-const REMOTE_STREAM_CONFIG = Object.freeze({ fps: 8, quality: 80, width: 1920 });
+const REMOTE_STREAM_CONFIG = Object.freeze({ fps: 12, quality: 72, width: 1920 });
 
 function deviceRole(device, currentId, currentRole, deviceCount) {
   if (device.id === currentId) return currentRole || 'pc';
@@ -589,13 +590,47 @@ async function sendRemoteDesktop(message) {
   return result;
 }
 
-function sendRemoteInput(message) {
+function dispatchRemoteInput(message) {
   remoteDesktop.inputSeq += 1;
+  const seq = String(remoteDesktop.inputSeq);
+  remoteDesktop.inputSentAt.set(seq, Date.now());
+  while (remoteDesktop.inputSentAt.size > 80) remoteDesktop.inputSentAt.delete(remoteDesktop.inputSentAt.keys().next().value);
+  if (message.action === 'move') {
+    remoteDesktop.moveInFlight = seq;
+    clearTimeout(remoteDesktop.moveReleaseTimer);
+    remoteDesktop.moveReleaseTimer = setTimeout(() => releaseRemoteMove(seq), 180);
+  }
   return sendRemoteDesktop({
     ...message,
     type: 'screen_input',
-    seq: String(remoteDesktop.inputSeq),
+    seq,
   });
+}
+
+function releaseRemoteMove(seq) {
+  if (remoteDesktop.moveInFlight !== String(seq)) return;
+  remoteDesktop.moveInFlight = null;
+  clearTimeout(remoteDesktop.moveReleaseTimer);
+  remoteDesktop.moveReleaseTimer = null;
+  const queued = remoteDesktop.queuedMove;
+  remoteDesktop.queuedMove = null;
+  if (queued && remoteDesktop.running) dispatchRemoteInput(queued);
+}
+
+function sendRemoteInput(message) {
+  if (message.action === 'move') {
+    if (remoteDesktop.moveInFlight) {
+      // Pointer events arrive faster than a network round-trip. Retaining every
+      // intermediate coordinate creates a visible tail; only the newest point matters.
+      remoteDesktop.queuedMove = message;
+      return Promise.resolve({ ok: true, queued: true });
+    }
+    return dispatchRemoteInput(message);
+  }
+  // Click/down/up already carry their own coordinates, so an older queued move
+  // must not be replayed after the click.
+  remoteDesktop.queuedMove = null;
+  return dispatchRemoteInput(message);
 }
 
 async function startRemoteDesktop() {
@@ -611,6 +646,14 @@ async function startRemoteDesktop() {
   remoteDesktop.startedAt = Date.now();
   remoteDesktop.nextRestartAt = remoteDesktop.startedAt + 7000;
   remoteDesktop.restartCount = 0;
+  remoteDesktop.receiveFps = 0;
+  remoteDesktop.frameLatency = 0;
+  remoteDesktop.inputRtt = 0;
+  remoteDesktop.inputSentAt.clear();
+  remoteDesktop.moveInFlight = null;
+  remoteDesktop.queuedMove = null;
+  clearTimeout(remoteDesktop.moveReleaseTimer);
+  remoteDesktop.moveReleaseTimer = null;
   clearRemoteCanvas();
   updateRemoteDeviceUi();
   // Stop a previous diagnostic or dropped viewer before opening a new stream.
@@ -630,6 +673,11 @@ async function stopRemoteDesktop() {
   remoteDesktop.nextRestartAt = 0;
   remoteDesktop.restartCount = 0;
   remoteDesktop.inputError = '';
+  remoteDesktop.inputSentAt.clear();
+  remoteDesktop.moveInFlight = null;
+  remoteDesktop.queuedMove = null;
+  clearTimeout(remoteDesktop.moveReleaseTimer);
+  remoteDesktop.moveReleaseTimer = null;
   clearRemoteCanvas();
   updateRemoteDeviceUi();
 }
@@ -743,12 +791,26 @@ function drawRemoteFrame() {
   image.src = `data:image/jpeg;base64,${frame}`;
 }
 
-function queueRemoteFrame(data, width, height) {
+function queueRemoteFrame(data, width, height, capturedAt = 0) {
+  const previousFrameAt = remoteDesktop.lastFrameAt;
+  const now = Date.now();
   remoteDesktop.frame = data;
   remoteDesktop.frameW = Number(width) || remoteDesktop.frameW;
   remoteDesktop.frameH = Number(height) || remoteDesktop.frameH;
   remoteDesktop.frameBytes = Math.round(String(data || '').length * 0.75);
-  remoteDesktop.lastFrameAt = Date.now();
+  remoteDesktop.lastFrameAt = now;
+  if (previousFrameAt) {
+    const instantFps = 1000 / Math.max(1, now - previousFrameAt);
+    remoteDesktop.receiveFps = remoteDesktop.receiveFps
+      ? remoteDesktop.receiveFps * 0.75 + instantFps * 0.25
+      : instantFps;
+  }
+  if (Number(capturedAt) > 0) {
+    const latency = Math.max(0, now - Number(capturedAt));
+    remoteDesktop.frameLatency = remoteDesktop.frameLatency
+      ? remoteDesktop.frameLatency * 0.75 + latency * 0.25
+      : latency;
+  }
   remoteDesktop.error = '';
   remoteDesktop.restartCount = 0;
   remoteDesktop.nextRestartAt = remoteDesktop.lastFrameAt + 7000;
@@ -768,7 +830,7 @@ function handleRemoteDesktopEvent(message) {
   if (message.type === 'screen_frame' && message.data) {
     remoteDesktop.running = true;
     remoteDesktop.engine = message.engine || remoteDesktop.engine;
-    queueRemoteFrame(message.data, message.w, message.h);
+    queueRemoteFrame(message.data, message.w, message.h, message.capturedAt);
   } else if (message.type === 'screens') {
     remoteDesktop.screens = message.screens || [];
     remoteDesktop.activeScreen = remoteDesktop.activeScreen
@@ -784,6 +846,13 @@ function handleRemoteDesktopEvent(message) {
     updateRemoteDeviceUi();
   } else if (message.type === 'screen_input_ack') {
     remoteDesktop.inputAckAt = Date.now();
+    const sentAt = remoteDesktop.inputSentAt.get(String(message.seq));
+    if (sentAt) {
+      const rtt = Math.max(0, remoteDesktop.inputAckAt - sentAt);
+      remoteDesktop.inputRtt = remoteDesktop.inputRtt ? remoteDesktop.inputRtt * 0.7 + rtt * 0.3 : rtt;
+      remoteDesktop.inputSentAt.delete(String(message.seq));
+    }
+    if (message.action === 'move') releaseRemoteMove(message.seq);
     remoteDesktop.inputError = message.ok ? '' : (message.error || 'Удалённый компьютер не принял управление');
     updateRemoteDeviceUi();
   } else if (message.type === 'pc_offline') {
@@ -903,12 +972,15 @@ function updateRemoteDeviceUi() {
     const frameInfo = remoteDesktop.lastFrameAt
       ? ` · ${remoteDesktop.frameW}×${remoteDesktop.frameH}${remoteDesktop.frameBytes ? ` · ${Math.max(1, Math.round(remoteDesktop.frameBytes / 1024))} КБ` : ''}`
       : '';
+    const liveInfo = remoteDesktop.lastFrameAt
+      ? `${remoteDesktop.receiveFps ? ` · ${Math.max(1, Math.round(remoteDesktop.receiveFps))} кадр/с` : ''}${remoteDesktop.frameLatency ? ` · ${Math.round(remoteDesktop.frameLatency)} мс` : ''}${remoteDesktop.inputRtt ? ` · ввод ${Math.round(remoteDesktop.inputRtt)} мс` : ''}`
+      : '';
     status.textContent = displayError || (remoteDesktop.running
       ? (remoteDesktop.restarting || (frameAge != null && frameAge > 4)
         ? `Восстанавливаю экран${remoteDesktop.restartCount ? ` · попытка ${remoteDesktop.restartCount}` : ''}`
         : (!remoteDesktop.lastFrameAt
           ? 'Подключаю экран…'
-          : `Экран в сети${frameInfo}${remoteDesktop.engine ? ` · ${remoteDesktop.engine === 'windows' ? 'Windows' : 'Electron'}` : ''}`))
+          : `Экран в сети${frameInfo}${liveInfo}${remoteDesktop.engine ? ` · ${remoteDesktop.engine === 'stream' ? 'быстрый поток' : (remoteDesktop.engine === 'windows' ? 'Windows' : 'резервный режим')}` : ''}`))
       : (current?.online ? 'Готов к подключению' : 'Устройство не в сети'));
     status.className = displayError ? 'remote-status bad' : 'remote-status';
   }
