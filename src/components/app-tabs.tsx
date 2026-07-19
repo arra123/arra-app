@@ -10,28 +10,21 @@ import { WorkspaceProvider, WorkspaceProject, useWorkspace } from '@/lib/workspa
 
 const colors = Colors.dark;
 
-const ROUTES = [
-  { name: 'chat', label: 'Чат', icon: 'bubble.left.and.bubble.right' },
+const PRIMARY_ROUTES = [
   { name: 'pc', label: 'Компьютер', icon: 'desktopcomputer' },
   { name: 'files', label: 'Файлы', icon: 'paperplane' },
+] as const;
+
+const SECONDARY_ROUTES = [
   { name: 'notes', label: 'Заметки', icon: 'note.text' },
   { name: 'index', label: 'Возвраты', icon: 'creditcard' },
 ] as const;
-
-const projectMark = (project: WorkspaceProject) => {
-  const kind = String(project.kind || '').toLowerCase();
-  if (kind === 'javascript') return 'JS';
-  if (kind === 'python') return 'PY';
-  if (kind === 'dotnet') return '.N';
-  if (kind === 'rust') return 'RS';
-  if (kind === 'go') return 'GO';
-  return project.label?.slice(0, 1).toUpperCase() || '•';
-};
 
 function WorkspaceDrawerContent({ navigation, state }: any) {
   const insets = useSafeAreaInsets();
   const workspace = useWorkspace();
   const [query, setQuery] = useState('');
+  const [toolsExpanded, setToolsExpanded] = useState(false);
   const activeRoute = state.routeNames[state.index];
   const activeDevice = workspace.devices.find((device) => device.id === workspace.activeDeviceId);
   const projects = useMemo(() => {
@@ -39,6 +32,10 @@ function WorkspaceDrawerContent({ navigation, state }: any) {
     if (!needle) return workspace.projects;
     return workspace.projects.filter((project) => `${project.label} ${project.name} ${project.group}`.toLowerCase().includes(needle));
   }, [query, workspace.projects]);
+  const generalThreads = useMemo(() => workspace.threads.filter((thread) => !String(thread.thread_key || '').startsWith('project:') && !thread.project_name).slice(0, 6), [workspace.threads]);
+  const projectThreads = (project: WorkspaceProject) => workspace.threads.filter((thread) => (
+    thread.thread_key === `project:${project.name}` || thread.project_name === project.name || thread.project_name === project.label
+  )).slice(0, 5);
 
   const openRoute = (name: string) => {
     navigation.navigate(name);
@@ -80,7 +77,7 @@ function WorkspaceDrawerContent({ navigation, state }: any) {
 
       <ScrollView style={styles.drawerScroll} contentContainerStyle={styles.drawerScrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <View style={styles.routeList}>
-          {ROUTES.map((route) => (
+          {PRIMARY_ROUTES.map((route) => (
             <Pressable
               key={route.name}
               onPress={() => openRoute(route.name)}
@@ -89,24 +86,20 @@ function WorkspaceDrawerContent({ navigation, state }: any) {
               <ThemedText type="smallBold" style={activeRoute === route.name ? undefined : styles.mutedText}>{route.label}</ThemedText>
             </Pressable>
           ))}
+          <Pressable onPress={() => setToolsExpanded((value) => !value)} style={({ pressed }) => [styles.drawerRow, pressed && styles.pressed]}>
+            <SymbolView name="ellipsis" tintColor={colors.textSecondary} size={18} />
+            <ThemedText type="smallBold" style={styles.mutedText}>Инструменты</ThemedText>
+          </Pressable>
+          {toolsExpanded && <View style={styles.toolsMore}>{SECONDARY_ROUTES.map((route) => (
+            <Pressable
+              key={route.name}
+              onPress={() => openRoute(route.name)}
+              style={({ pressed }) => [styles.drawerRow, activeRoute === route.name && styles.drawerRowActive, pressed && styles.pressed]}>
+              <SymbolView name={route.icon as any} tintColor={activeRoute === route.name ? colors.text : colors.textSecondary} size={18} />
+              <ThemedText type="smallBold" style={activeRoute === route.name ? undefined : styles.mutedText}>{route.label}</ThemedText>
+            </Pressable>
+          ))}</View>}
         </View>
-
-        {!!workspace.threads.length && (
-          <>
-            <View style={styles.sectionHead}>
-              <ThemedText type="small" style={styles.sectionLabel}>Недавние</ThemedText>
-            </View>
-            {workspace.threads.slice(0, 6).map((thread) => (
-              <Pressable
-                key={thread.thread_key}
-                onPress={() => openThread(thread)}
-                style={({ pressed }) => [styles.threadRow, workspace.threadKey === thread.thread_key && styles.drawerRowActive, pressed && styles.pressed]}>
-                <SymbolView name={thread.project_name ? 'folder' : 'sparkles'} tintColor={colors.textSecondary} size={15} />
-                <ThemedText type="small" numberOfLines={1} style={styles.threadTitle}>{thread.title || thread.project_name || 'Новая задача'}</ThemedText>
-              </Pressable>
-            ))}
-          </>
-        )}
 
         <View style={styles.sectionHead}>
           <ThemedText type="small" style={styles.sectionLabel}>Проекты</ThemedText>
@@ -118,19 +111,37 @@ function WorkspaceDrawerContent({ navigation, state }: any) {
         {workspace.loading && !projects.length ? (
           <View style={styles.loadingRows}><View /><View /><View /></View>
         ) : projects.length ? projects.map((project) => (
-          <Pressable
-            key={`${project.deviceId || ''}:${project.name}`}
-            onPress={() => openProject(project)}
-            style={({ pressed }) => [styles.projectRow, workspace.activeProject?.name === project.name && styles.drawerRowActive, pressed && styles.pressed]}>
-            <View style={styles.projectMark}><ThemedText style={styles.projectMarkText}>{projectMark(project)}</ThemedText></View>
-            <View style={styles.projectCopy}>
-              <ThemedText type="smallBold" numberOfLines={1}>{project.label || project.name}</ThemedText>
-              {!!project.group && <ThemedText style={styles.projectGroup} numberOfLines={1}>{project.group}</ThemedText>}
-            </View>
-          </Pressable>
+          <View key={`${project.deviceId || ''}:${project.name}`}>
+            <Pressable
+              onPress={() => openProject(project)}
+              style={({ pressed }) => [styles.projectRow, workspace.activeProject?.name === project.name && styles.drawerRowActive, pressed && styles.pressed]}>
+              <SymbolView name="folder" tintColor={workspace.activeProject?.name === project.name ? colors.text : colors.textSecondary} size={18} />
+              <ThemedText type="smallBold" numberOfLines={1} style={styles.projectTitle}>{project.label || project.name}</ThemedText>
+              {workspace.activeProject?.name === project.name && <SymbolView name="ellipsis" tintColor={colors.textSecondary} size={15} />}
+            </Pressable>
+            {workspace.activeProject?.name === project.name && (
+              <View style={styles.projectThreads}>
+                {(projectThreads(project).length ? projectThreads(project) : [{ thread_key: `project:${project.name}`, title: 'Новая задача', project_name: project.name }]).map((thread) => (
+                  <Pressable key={thread.thread_key} onPress={() => openThread(thread as any)} style={({ pressed }) => [styles.projectThreadRow, workspace.threadKey === thread.thread_key && styles.drawerRowActive, pressed && styles.pressed]}>
+                    <ThemedText type="small" numberOfLines={1} style={styles.threadTitle}>{thread.title || 'Новая задача'}</ThemedText>
+                    {workspace.threadKey === thread.thread_key && <View style={styles.activeTaskDot} />}
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
         )) : (
           <ThemedText style={styles.emptyProjects}>{workspace.connected ? 'Проекты не найдены' : 'Компьютер не в сети'}</ThemedText>
         )}
+
+        {!!generalThreads.length && <>
+          <View style={styles.sectionHead}><ThemedText type="small" style={styles.sectionLabel}>Задачи</ThemedText></View>
+          {generalThreads.map((thread) => (
+            <Pressable key={thread.thread_key} onPress={() => openThread(thread)} style={({ pressed }) => [styles.threadRow, workspace.threadKey === thread.thread_key && styles.drawerRowActive, pressed && styles.pressed]}>
+              <ThemedText type="small" numberOfLines={1} style={styles.threadTitle}>{thread.title || 'Новая задача'}</ThemedText>
+            </Pressable>
+          ))}
+        </>}
       </ScrollView>
 
       <View style={styles.drawerBottom}>
@@ -180,7 +191,7 @@ function WorkspaceDrawer() {
         headerTitleAlign: 'center',
         headerTitleStyle: { fontSize: 15, fontWeight: '600' },
         headerRight: () => <WorkspaceHeaderRight />,
-        drawerStyle: { width: 310, backgroundColor: '#171717' },
+        drawerStyle: { width: 310, backgroundColor: '#1c242f' },
         overlayColor: 'rgba(0,0,0,0.58)',
         sceneStyle: { backgroundColor: colors.background },
         swipeEdgeWidth: 72,
@@ -204,28 +215,29 @@ export default function AppTabs() {
 }
 
 const styles = StyleSheet.create({
-  drawer: { flex: 1, backgroundColor: '#171717', paddingHorizontal: 10 },
+  drawer: { flex: 1, backgroundColor: '#1c242f', paddingHorizontal: 10 },
   brandRow: { height: 46, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 10 },
   brandMark: { width: 23, height: 23, borderRadius: 6 },
   brandName: { fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
   newTask: { minHeight: 42, marginTop: 3, paddingHorizontal: 11, borderRadius: 9, flexDirection: 'row', alignItems: 'center', gap: 11 },
   newTaskText: { flex: 1 },
-  search: { height: 38, marginTop: 4, paddingHorizontal: 11, borderRadius: 9, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#212121' },
+  search: { height: 38, marginTop: 4, paddingHorizontal: 11, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: '#34404d', flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#18202a' },
   searchInput: { flex: 1, height: 38, color: colors.text, fontSize: 13, paddingVertical: 0 },
   drawerScroll: { flex: 1, marginTop: 8 },
   drawerScrollContent: { paddingBottom: 14 },
   routeList: { gap: 2 },
+  toolsMore: { gap: 2, paddingLeft: 12 },
   drawerRow: { minHeight: 40, paddingHorizontal: 11, borderRadius: 9, flexDirection: 'row', alignItems: 'center', gap: 11 },
-  drawerRowActive: { backgroundColor: '#292929' },
+  drawerRowActive: { backgroundColor: 'rgba(255,255,255,0.08)' },
   pressed: { opacity: 0.68 },
   mutedText: { color: '#b3b3b3' },
   sectionHead: { height: 38, marginTop: 7, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionLabel: { color: '#777777', fontSize: 12 },
-  projectRow: { minHeight: 46, paddingHorizontal: 7, borderRadius: 9, flexDirection: 'row', alignItems: 'center', gap: 9 },
-  projectMark: { width: 28, height: 28, borderRadius: 7, borderWidth: StyleSheet.hairlineWidth, borderColor: '#3b3b3b', backgroundColor: '#242424', alignItems: 'center', justifyContent: 'center' },
-  projectMarkText: { color: '#c6c6c6', fontSize: 9, fontWeight: '800' },
-  projectCopy: { flex: 1, gap: 1 },
-  projectGroup: { color: '#707070', fontSize: 10 },
+  projectRow: { minHeight: 38, paddingHorizontal: 9, borderRadius: 9, flexDirection: 'row', alignItems: 'center', gap: 9 },
+  projectTitle: { flex: 1 },
+  projectThreads: { marginLeft: 28, gap: 2, paddingVertical: 2 },
+  projectThreadRow: { minHeight: 34, paddingLeft: 10, paddingRight: 11, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  activeTaskDot: { width: 7, height: 7, borderRadius: 4, borderWidth: 1.5, borderColor: '#9aa7b4' },
   threadRow: { minHeight: 36, paddingHorizontal: 11, borderRadius: 9, flexDirection: 'row', alignItems: 'center', gap: 9 },
   threadTitle: { flex: 1, color: '#aaa' },
   emptyProjects: { color: '#686868', fontSize: 12, paddingHorizontal: 11, paddingVertical: 14 },

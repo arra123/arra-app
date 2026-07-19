@@ -22,7 +22,15 @@ const nodaWorkspace = {
   chatLoaded: false,
   chatBusy: false,
   chatImage: '',
+  projectListExpanded: localStorage.getItem('noda-projects-expanded') === '1',
+  compactSidebar: localStorage.getItem('noda-compact-sidebar') === '1',
+  toolsExpanded: false,
+  environmentOpen: localStorage.getItem('noda-environment-open') !== '0',
+  environment: null,
+  environmentProject: '',
+  settingsQuery: '',
 };
+document.body.classList.toggle('workspace-compact-sidebar', nodaWorkspace.compactSidebar);
 
 const WORKSPACE_SECTIONS = new Set(['chat', 'term', 'files', 'sync', 'remote', 'notes', 'fin', 'settings']);
 const savedWorkspaceSection = localStorage.getItem('noda-section');
@@ -40,6 +48,11 @@ const workspaceIcons = {
   send: '<svg viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
   clip: '<svg viewBox="0 0 24 24"><path d="m20.5 11.5-8.8 8.8a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg>',
   sparkle: '<svg viewBox="0 0 24 24"><path d="m12 3 1.4 4.1L17.5 8.5l-4.1 1.4L12 14l-1.4-4.1-4.1-1.4 4.1-1.4L12 3Z"/><path d="m18.5 14 .8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg>',
+  back: '<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',
+  branch: '<svg viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="7" r="2"/><circle cx="6" cy="19" r="2"/><path d="M6 7v10M18 9c0 5-8 2-10 6"/></svg>',
+  panel: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>',
+  monitor: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
+  inbox: '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="m4 14 4-4h8l4 4M9 14a3 3 0 0 0 6 0"/></svg>',
 };
 
 function workspaceProjectKind(project) {
@@ -153,13 +166,24 @@ function workspaceProjectRows() {
   const query = nodaWorkspace.projectQuery.trim().toLowerCase();
   const rows = nodaWorkspace.projects.filter((project) => !query || `${project.label} ${project.name} ${project.group}`.toLowerCase().includes(query));
   if (!rows.length) return `<div class="workspace-project-empty">${query ? 'Ничего не найдено' : 'Проекты не найдены'}</div>`;
-  return rows.slice(0, query ? 80 : 32).map((project) => `<button class="workspace-project ${project.name === nodaWorkspace.activeProjectKey ? 'active' : ''}" data-project="${esc(project.name)}" title="${esc(project.path || project.name)}"><span class="workspace-project-mark kind-${esc(project.kind || 'folder')}">${esc(workspaceProjectKind(project))}</span><span><b>${esc(project.label || project.name)}</b>${project.group ? `<small>${esc(project.group)}</small>` : ''}</span><i data-project-terminal="${esc(project.name)}" title="Открыть терминал">${workspaceIcons.chevron}</i></button>`).join('');
+  const limit = query || nodaWorkspace.projectListExpanded ? 80 : 11;
+  const visibleRows = rows.slice(0, limit);
+  const projectHtml = visibleRows.map((project) => {
+    const active = project.name === nodaWorkspace.activeProjectKey;
+    const threadKey = workspaceProjectThreadKey(project.name);
+    const nested = nodaWorkspace.threads.filter((thread) => thread.thread_key === threadKey || thread.project_name === project.name || thread.project_name === project.label).slice(0, 6);
+    const taskRows = active ? (nested.length ? nested : [{ thread_key: threadKey, title: 'Новая задача' }]).map((thread) => `<button class="workspace-project-task ${thread.thread_key === nodaWorkspace.threadKey ? 'active' : ''}" data-thread="${esc(thread.thread_key)}" title="${esc(thread.title || 'Задача')}"><span>${esc(thread.title || 'Новая задача')}</span>${thread.thread_key === nodaWorkspace.threadKey ? '<i></i>' : ''}</button>`).join('') : '';
+    return `<div class="workspace-project-group"><button class="workspace-project ${active ? 'active' : ''}" data-project="${esc(project.name)}" title="${esc(project.path || project.name)}"><span class="workspace-project-folder">${workspaceIcons.folder}</span><b>${esc(project.label || project.name)}</b><i data-project-terminal="${esc(project.name)}" title="Открыть терминал">${workspaceIcons.dots}</i></button>${taskRows ? `<div class="workspace-project-tasks">${taskRows}</div>` : ''}</div>`;
+  }).join('');
+  const more = !query && rows.length > 11 ? `<button class="workspace-project-more" id="workspace-project-more">${nodaWorkspace.projectListExpanded ? 'Показать меньше' : `Показать ещё ${rows.length - 11}`}</button>` : '';
+  return projectHtml + more;
 }
 
 function workspaceRecentRows() {
   if (!nodaWorkspace.threadsLoaded) return '<div class="workspace-recent-skeleton"><i></i><i></i></div>';
-  if (!nodaWorkspace.threads.length) return '<div class="workspace-recent-empty">История появится после первого сообщения</div>';
-  return nodaWorkspace.threads.slice(0, 8).map((thread) => `<button class="workspace-recent ${thread.thread_key === nodaWorkspace.threadKey ? 'active' : ''}" data-thread="${esc(thread.thread_key)}" title="${esc(thread.title || thread.project_name || 'Задача')}"><span>${thread.project_name ? workspaceIcons.folder : workspaceIcons.sparkle}</span><b>${esc(thread.title || thread.project_name || 'Новая задача')}</b></button>`).join('');
+  const rows = nodaWorkspace.threads.filter((thread) => !String(thread.thread_key || '').startsWith('project:') && !thread.project_name).slice(0, 6);
+  if (!rows.length) return '<div class="workspace-recent-empty">Общие задачи появятся здесь</div>';
+  return rows.map((thread) => `<button class="workspace-recent ${thread.thread_key === nodaWorkspace.threadKey ? 'active' : ''}" data-thread="${esc(thread.thread_key)}" title="${esc(thread.title || 'Задача')}"><b>${esc(thread.title || 'Новая задача')}</b></button>`).join('');
 }
 
 const baseRenderNav = renderNav;
@@ -167,19 +191,14 @@ renderNav = async function renderWorkspaceNav() {
   nav.classList.remove('hidden');
   const status = state.presence.status || {};
   const currentRole = status.deviceProfile?.role;
-  const toolItems = [
-    ['chat', 'Чат', NAVICON.chat],
-    ['term', 'Терминал', NAVICON.term],
-    ['files', 'Файлы', NAVICON.files],
-    ['sync', 'Передача', NAVICON.sync],
-    ['remote', 'Удалённый ПК', NAVICON.remote],
-  ];
-  nav.innerHTML = `<div class="workspace-sidebar-head"><button class="workspace-new-task" id="workspace-new-task">${workspaceIcons.plus}<span>Новая задача</span><kbd>Ctrl N</kbd></button><label class="workspace-search">${workspaceIcons.search}<input id="workspace-project-search" placeholder="Поиск проектов" value="${esc(nodaWorkspace.projectQuery)}"/></label></div>
-    <div class="workspace-side-scroll"><section class="workspace-tools">${toolItems.map(([key, label, icon]) => `<button data-s="${key}" class="workspace-tool ${state.section === key ? 'active' : ''}">${icon}<span>${label}</span></button>`).join('')}</section>
-      <section class="workspace-recents"><header><span>Недавние</span></header><div id="workspace-recent-list">${workspaceRecentRows()}</div></section>
+  const primaryItems = [['remote', 'Компьютеры', workspaceIcons.monitor], ['sync', 'Передача', NAVICON.sync]];
+  const secondaryItems = [['term', 'Терминал', NAVICON.term], ['files', 'Файлы', NAVICON.files], ['notes', 'Заметки', NAVICON.notes], ['fin', 'Возвраты', NAVICON.fin]];
+  nav.innerHTML = `<div class="workspace-sidebar-head"><div class="workspace-brand-row"><button id="workspace-home" class="workspace-brand">Noda ${workspaceIcons.chevron}</button><button id="workspace-search-toggle" class="workspace-icon-button" title="Поиск">${workspaceIcons.search}</button></div><button class="workspace-new-task" id="workspace-new-task">${workspaceIcons.plus}<span>Новая задача</span></button><label class="workspace-search ${nodaWorkspace.projectQuery ? 'visible' : ''}">${workspaceIcons.search}<input id="workspace-project-search" placeholder="Поиск проектов и задач" value="${esc(nodaWorkspace.projectQuery)}"/></label></div>
+    <div class="workspace-side-scroll"><section class="workspace-tools">${primaryItems.map(([key, label, icon]) => `<button data-s="${key}" class="workspace-tool ${state.section === key ? 'active' : ''}">${icon}<span>${label}</span></button>`).join('')}<button class="workspace-tool" id="workspace-more-tools">${workspaceIcons.dots}<span>Инструменты</span></button>${nodaWorkspace.toolsExpanded ? `<div class="workspace-tools-more">${secondaryItems.map(([key, label, icon]) => `<button data-s="${key}" class="workspace-tool ${state.section === key ? 'active' : ''}">${icon}<span>${label}</span></button>`).join('')}</div>` : ''}</section>
       <section class="workspace-projects"><header><span>Проекты</span><button id="workspace-project-refresh" title="Обновить">${workspaceIcons.refresh}</button></header><div id="workspace-project-list">${workspaceProjectRows()}</div></section>
+      <section class="workspace-recents"><header><span>Задачи</span></header><div id="workspace-recent-list">${workspaceRecentRows()}</div></section>
     </div>
-    <div class="workspace-sidebar-foot"><div class="workspace-device"><i class="${status.online ? 'online' : ''}"></i><span><b>${esc(status.deviceName || (currentRole === 'laptop' ? 'Ноутбук' : 'Этот компьютер'))}</b><small>${status.online ? 'в сети' : 'нет связи'}</small></span></div><button class="workspace-foot-action ${state.section === 'notes' ? 'active' : ''}" data-s="notes">${NAVICON.notes}<span>Заметки</span></button><button class="workspace-foot-action ${state.section === 'fin' ? 'active' : ''}" data-s="fin">${NAVICON.fin}<span>Возвраты</span></button><button class="workspace-foot-action ${state.section === 'settings' ? 'active' : ''}" data-s="settings">${workspaceIcons.settings}<span>Настройки</span></button></div>`;
+    <div class="workspace-sidebar-foot"><button class="workspace-device" id="workspace-account"><span class="workspace-avatar">${esc((status.deviceName || 'N').slice(0, 1).toUpperCase())}</span><span><b>${esc(status.deviceName || (currentRole === 'laptop' ? 'Ноутбук' : 'Этот компьютер'))}</b><small>${status.online ? 'в сети' : 'нет связи'}</small></span><i class="${status.online ? 'online' : ''}"></i></button><button class="workspace-foot-action ${state.section === 'settings' ? 'active' : ''}" data-s="settings" title="Настройки">${workspaceIcons.settings}</button></div>`;
 
   nav.querySelectorAll('[data-s]').forEach((button) => { button.onclick = () => navigateWorkspace(button.dataset.s); });
   nav.querySelector('#workspace-new-task').onclick = () => {
@@ -192,6 +211,12 @@ renderNav = async function renderWorkspaceNav() {
     navigateWorkspace('chat');
   };
   const search = nav.querySelector('#workspace-project-search');
+  nav.querySelector('#workspace-search-toggle').onclick = () => {
+    search.closest('.workspace-search').classList.toggle('visible');
+    if (search.closest('.workspace-search').classList.contains('visible')) search.focus();
+  };
+  nav.querySelector('#workspace-home').onclick = () => navigateWorkspace('chat');
+  nav.querySelector('#workspace-more-tools').onclick = () => { nodaWorkspace.toolsExpanded = !nodaWorkspace.toolsExpanded; renderNav(); };
   search.oninput = () => {
     nodaWorkspace.projectQuery = search.value;
     const list = document.getElementById('workspace-project-list');
@@ -204,13 +229,20 @@ renderNav = async function renderWorkspaceNav() {
     await loadWorkspaceProjects(true);
     renderNav();
   };
-  nav.querySelectorAll('[data-thread]').forEach((button) => { button.onclick = () => openWorkspaceThread(button.dataset.thread); });
   bindWorkspaceProjectRows();
   if (!nodaWorkspace.projectsLoaded) loadWorkspaceProjects().then(() => { if (nav.isConnected) renderNav(); });
   if (!nodaWorkspace.threadsLoaded) loadWorkspaceThreads().then(() => { if (nav.isConnected) renderNav(); });
 };
 
 function bindWorkspaceProjectRows() {
+  nav.querySelectorAll('[data-thread]').forEach((button) => { button.onclick = (event) => { event.stopPropagation(); openWorkspaceThread(button.dataset.thread); }; });
+  nav.querySelector('#workspace-project-more')?.addEventListener('click', () => {
+    nodaWorkspace.projectListExpanded = !nodaWorkspace.projectListExpanded;
+    localStorage.setItem('noda-projects-expanded', nodaWorkspace.projectListExpanded ? '1' : '0');
+    const list = document.getElementById('workspace-project-list');
+    if (list) list.innerHTML = workspaceProjectRows();
+    bindWorkspaceProjectRows();
+  });
   nav.querySelectorAll('[data-project]').forEach((button) => {
     button.onclick = (event) => {
       const project = nodaWorkspace.projects.find((item) => item.name === button.dataset.project);
@@ -232,6 +264,33 @@ function bindWorkspaceProjectRows() {
 function selectedModelLabel() {
   if (nodaWorkspace.selectedModel === 'cloud') return 'Noda Cloud';
   return nodaWorkspace.selectedModel.replace(/^local:/, '');
+}
+
+function workspaceEnvironmentHtml(project) {
+  if (!project) return '';
+  const environment = nodaWorkspace.environmentProject === project.name ? nodaWorkspace.environment : null;
+  if (!environment) return '<div class="workspace-environment-loading"><i></i><i></i><i></i></div>';
+  if (!environment.ok) return `<div class="workspace-environment-error"><b>Среда недоступна</b><span>${esc(environment.error || 'Не удалось прочитать проект')}</span><button id="workspace-environment-retry">Повторить</button></div>`;
+  const status = state.presence.status || {};
+  if (!environment.git) return `<div class="workspace-environment-section"><h3>Среда</h3><button class="workspace-environment-row" data-environment-action="folder">${workspaceIcons.folder}<span><b>Локальный</b><small>${esc(status.deviceName || 'Этот компьютер')}</small></span></button><div class="workspace-environment-note">Git не настроен для этого проекта.</div></div>`;
+  const files = (environment.files || []).map((file) => `<button class="workspace-source" data-environment-action="folder" title="${esc(file.path)}"><span class="status-${esc(String(file.status || 'M').toLowerCase())}">${esc(file.status || 'M')}</span><b>${esc(file.path)}</b></button>`).join('');
+  return `<div class="workspace-environment-section"><header><h3>Среда</h3><button id="workspace-environment-refresh" title="Обновить">${workspaceIcons.refresh}</button></header><button class="workspace-environment-row" data-environment-action="folder">${workspaceIcons.inbox}<span><b>Изменения</b><small>${environment.changes ? `${environment.changes} файлов` : 'Рабочее дерево чистое'}</small></span><em><i class="additions">+${environment.additions || 0}</i><i class="deletions">-${environment.deletions || 0}</i></em></button><button class="workspace-environment-row" data-environment-action="folder">${workspaceIcons.monitor}<span><b>Локальный</b><small>${esc(status.deviceName || 'Этот компьютер')}</small></span>${workspaceIcons.chevron}</button><button class="workspace-environment-row" data-environment-action="terminal">${workspaceIcons.branch}<span><b>${esc(environment.branch || 'HEAD')}</b><small>${environment.ahead || environment.behind ? `впереди ${environment.ahead || 0} · позади ${environment.behind || 0}` : 'Текущая ветка'}</small></span>${workspaceIcons.chevron}</button><button class="workspace-environment-row" data-environment-action="status">${workspaceIcons.sparkle}<span><b>Создать коммит или отправить</b><small>Открыть Git в терминале проекта</small></span>${workspaceIcons.chevron}</button></div>${files ? `<div class="workspace-environment-section workspace-sources"><header><h3>Источники</h3><span>${environment.changes}</span></header>${files}</div>` : ''}`;
+}
+
+async function loadWorkspaceEnvironment(project, force = false) {
+  if (!project) return null;
+  if (!force && nodaWorkspace.environmentProject === project.name && nodaWorkspace.environment) return nodaWorkspace.environment;
+  nodaWorkspace.environmentProject = project.name;
+  nodaWorkspace.environment = null;
+  const result = await window.arra.projectEnvironment(project.path);
+  if (nodaWorkspace.environmentProject !== project.name) return result;
+  nodaWorkspace.environment = result;
+  const panel = document.getElementById('workspace-environment-body');
+  if (panel) {
+    panel.innerHTML = workspaceEnvironmentHtml(project);
+    bindWorkspaceEnvironment(project);
+  }
+  return result;
 }
 
 function workspaceMessageKey() {
@@ -269,7 +328,7 @@ async function loadWorkspaceMessages(force = false) {
 function workspaceMessagesHtml() {
   if (!nodaWorkspace.messages.length) {
     const project = activeWorkspaceProject();
-    return `<div class="workspace-chat-empty"><div class="workspace-empty-mark">${workspaceIcons.sparkle}</div><h1>${project ? esc(project.label || project.name) : 'С чего начнём?'}</h1><p>${project ? 'Контекст проекта выбран. Можно обсудить задачу или сразу открыть терминал.' : 'Выбери проект слева или начни общую задачу.'}</p><div class="workspace-suggestions">${project ? `<button data-chat-action="terminal">Открыть терминал</button><button data-chat-action="codex">Запустить Codex</button>` : ''}<button data-chat-action="models">Локальные модели</button><button data-chat-action="sync">Проверить проекты</button></div></div>`;
+    return `<div class="workspace-chat-empty"><h1>${project ? `Что делаем в ${esc(project.label || project.name)}?` : 'С чего начнём?'}</h1><p>${project ? 'Опиши задачу — Noda сохранит диалог внутри проекта.' : 'Создай задачу или выбери проект слева.'}</p><div class="workspace-suggestions">${project ? `<button data-chat-action="codex">Запустить Codex</button><button data-chat-action="terminal">Открыть терминал</button>` : ''}<button data-chat-action="models">Выбрать модель</button></div></div>`;
   }
   return nodaWorkspace.messages.map((message) => `<article class="workspace-message ${message.role === 'user' ? 'user' : 'assistant'}"><div class="workspace-message-role">${message.role === 'user' ? 'Вы' : (nodaWorkspace.selectedModel === 'cloud' ? 'Noda' : esc(selectedModelLabel()))}</div><div class="workspace-message-body">${esc(message.content || '')}</div></article>`).join('');
 }
@@ -281,10 +340,11 @@ function modelOptionsHtml() {
 
 renderChat = function renderWorkspaceChat() {
   const project = activeWorkspaceProject();
+  const currentThread = nodaWorkspace.threads.find((thread) => thread.thread_key === nodaWorkspace.threadKey);
   document.body.classList.add('workspace-chat-mode');
-  app.innerHTML = `<div class="workspace-chat"><header class="workspace-chat-head"><div class="workspace-chat-context">${project ? `<span class="workspace-project-mark kind-${esc(project.kind || 'folder')}">${esc(workspaceProjectKind(project))}</span><span><b>${esc(project.label || project.name)}</b><small>${esc(project.path || nodaWorkspace.projectsRoot)}</small></span>` : `<span><b>Новая задача</b><small>Общий контекст</small></span>`}</div><div class="workspace-chat-actions">${project ? `<button id="workspace-open-folder" title="Открыть папку">${workspaceIcons.folder}</button><button id="workspace-open-terminal" title="Терминал">${workspaceIcons.terminal}</button>` : ''}<label class="workspace-model-select"><i class="${nodaWorkspace.selectedModel === 'cloud' ? 'cloud' : 'local'}"></i><select id="workspace-model">${modelOptionsHtml()}</select></label></div></header>
-    <section class="workspace-chat-feed" id="workspace-chat-feed">${nodaWorkspace.chatLoaded && nodaWorkspace.messagesKey === workspaceMessageKey() ? workspaceMessagesHtml() : '<div class="workspace-chat-loading"><i></i><i></i><i></i></div>'}</section>
-    <footer class="workspace-composer-wrap"><div class="workspace-composer"><textarea id="workspace-chat-input" rows="1" placeholder="Спросить Noda"></textarea><div class="workspace-composer-actions"><button id="workspace-chat-attach" title="Добавить файл">${workspaceIcons.clip}</button><input id="workspace-chat-photo" type="file" accept="image/*" hidden/><span id="workspace-chat-context-label">${project ? esc(project.label || project.name) : 'Без проекта'}</span><button id="workspace-chat-mic" title="Голосовой ввод">${typeof liquidIcon === 'function' ? liquidIcon('mic') : workspaceIcons.sparkle}</button><button id="workspace-chat-send" class="workspace-send" title="Отправить">${workspaceIcons.send}</button></div></div><p>Ответ может содержать ошибки. Важные изменения проверяй перед запуском.</p></footer></div>`;
+  app.innerHTML = `<div class="workspace-chat"><header class="workspace-chat-head"><div class="workspace-chat-context">${workspaceIcons.folder}<b>${esc(currentThread?.title || project?.label || project?.name || 'Новая задача')}</b><button title="Действия">${workspaceIcons.dots}</button></div><div class="workspace-chat-actions">${project ? `<button id="workspace-open-in" class="workspace-open-in">${workspaceIcons.folder}<span>Открыть в</span>${workspaceIcons.chevron}</button><button id="workspace-toggle-environment" class="${nodaWorkspace.environmentOpen ? 'active' : ''}" title="Среда проекта">${workspaceIcons.panel}</button>` : ''}</div></header>
+    <div class="workspace-chat-layout ${project && nodaWorkspace.environmentOpen ? 'with-environment' : ''}"><div class="workspace-thread-column"><section class="workspace-chat-feed" id="workspace-chat-feed">${nodaWorkspace.chatLoaded && nodaWorkspace.messagesKey === workspaceMessageKey() ? workspaceMessagesHtml() : '<div class="workspace-chat-loading"><i></i><i></i><i></i></div>'}</section>
+      <footer class="workspace-composer-wrap">${project ? `<div class="workspace-goal-chip">${workspaceIcons.sparkle}<span><b>Проект</b> ${esc(project.label || project.name)}</span><small>${esc(selectedModelLabel())}</small></div>` : ''}<div class="workspace-composer"><textarea id="workspace-chat-input" rows="1" placeholder="Спросите что угодно"></textarea><div class="workspace-composer-actions"><button id="workspace-chat-attach" title="Добавить файл">${workspaceIcons.plus}</button><input id="workspace-chat-photo" type="file" accept="image/*" hidden/><button id="workspace-chat-settings" title="Настройки модели">${workspaceIcons.settings}</button><span id="workspace-chat-context-label">${project ? 'Пользовательский' : 'Общая задача'}</span><label class="workspace-model-inline"><i class="${nodaWorkspace.selectedModel === 'cloud' ? 'cloud' : 'local'}"></i><select id="workspace-model">${modelOptionsHtml()}</select></label><button id="workspace-chat-mic" title="Голосовой ввод">${typeof liquidIcon === 'function' ? liquidIcon('mic') : workspaceIcons.sparkle}</button><button id="workspace-chat-send" class="workspace-send" title="Отправить">${workspaceIcons.send}</button></div></div></footer></div>${project ? `<aside class="workspace-environment" id="workspace-environment"><div id="workspace-environment-body">${workspaceEnvironmentHtml(project)}</div></aside>` : ''}</div></div>`;
 
   const feed = document.getElementById('workspace-chat-feed');
   const input = document.getElementById('workspace-chat-input');
@@ -295,6 +355,7 @@ renderChat = function renderWorkspaceChat() {
     const select = document.getElementById('workspace-model');
     if (select) select.innerHTML = modelOptionsHtml();
   }).catch(() => {});
+  if (project) loadWorkspaceEnvironment(project).catch(() => {});
   input.oninput = () => { input.style.height = 'auto'; input.style.height = `${Math.min(190, input.scrollHeight)}px`; };
   const sendMessage = async () => {
     const text = input.value.trim();
@@ -343,10 +404,36 @@ renderChat = function renderWorkspaceChat() {
     localStorage.setItem('noda-chat-model', nodaWorkspace.selectedModel);
     nodaWorkspace.chatLoaded = false; nodaWorkspace.messages = []; renderChat();
   };
-  document.getElementById('workspace-open-folder')?.addEventListener('click', () => window.arra.openFile(project.path));
-  document.getElementById('workspace-open-terminal')?.addEventListener('click', () => openProjectTerminal(project));
+  document.getElementById('workspace-chat-settings')?.addEventListener('click', () => navigateWorkspace('settings'));
+  document.getElementById('workspace-open-in')?.addEventListener('click', (event) => {
+    showCtxMenu(event.clientX, event.clientY, [
+      { label: 'Показать в проводнике', action: () => window.arra.openFile(project.path) },
+      { label: 'Открыть терминал', action: () => openProjectTerminal(project) },
+      { label: 'Запустить Codex', action: () => { openProjectTerminal(project); setTimeout(() => launchTerminalPreset('codex --yolo'), 250); } },
+    ]);
+  });
+  document.getElementById('workspace-toggle-environment')?.addEventListener('click', () => {
+    nodaWorkspace.environmentOpen = !nodaWorkspace.environmentOpen;
+    localStorage.setItem('noda-environment-open', nodaWorkspace.environmentOpen ? '1' : '0');
+    document.querySelector('.workspace-chat-layout')?.classList.toggle('with-environment', nodaWorkspace.environmentOpen);
+    document.getElementById('workspace-toggle-environment')?.classList.toggle('active', nodaWorkspace.environmentOpen);
+  });
+  bindWorkspaceEnvironment(project);
   bindWorkspaceChatActions();
 };
+
+function bindWorkspaceEnvironment(project) {
+  if (!project) return;
+  document.getElementById('workspace-environment-refresh')?.addEventListener('click', () => loadWorkspaceEnvironment(project, true));
+  document.getElementById('workspace-environment-retry')?.addEventListener('click', () => loadWorkspaceEnvironment(project, true));
+  document.querySelectorAll('[data-environment-action]').forEach((button) => {
+    button.onclick = () => {
+      if (button.dataset.environmentAction === 'folder') window.arra.openFile(project.path);
+      else if (button.dataset.environmentAction === 'terminal') openProjectTerminal(project);
+      else if (button.dataset.environmentAction === 'status') { openProjectTerminal(project); setTimeout(() => addTermQuick(project.path || nodaWorkspace.projectsRoot), 30); }
+    };
+  });
+}
 
 function bindWorkspaceChatActions() {
   document.querySelectorAll('[data-chat-action]').forEach((button) => { button.onclick = () => {
@@ -363,12 +450,22 @@ async function renderWorkspaceSettings() {
   app.innerHTML = '<div class="workspace-settings-loading"><i></i><i></i><i></i></div>';
   const [settings] = await Promise.all([window.arra.workspaceSettings(), loadWorkspaceModels(true).catch(() => [])]);
   const devices = state.presence.devices || [];
-  app.innerHTML = `<div class="workspace-settings"><header><div><h1>Настройки</h1><p>Рабочая среда Noda на этом компьютере</p></div></header><div class="workspace-settings-layout"><nav><button class="active">Основные</button><button data-settings-anchor="models">Модели</button><button data-settings-anchor="devices">Устройства</button><button data-settings-anchor="updates">Обновления</button></nav><main>
-    <section class="workspace-settings-section"><h2>Рабочая область</h2><div class="workspace-setting-row"><span><b>Папка проектов</b><small>Проекты внутри появляются в боковой панели автоматически</small></span><code>${esc(settings.codeRoot)}</code><button id="workspace-choose-root">Изменить</button></div><div class="workspace-setting-row"><span><b>Полученные файлы</b><small>Фото и документы с телефона</small></span><code>${esc(settings.downloadFolder)}</code></div></section>
-    <section class="workspace-settings-section" id="settings-models"><h2>Локальные модели</h2><div class="workspace-setting-row column"><span><b>Ollama, LM Studio или совместимый сервер</b><small>Вычисление выполняется на выбранном компьютере; поддерживаются Ollama API и OpenAI-compatible API</small></span><div class="workspace-setting-input"><input id="workspace-model-host" value="${esc(settings.localAiUrl || nodaWorkspace.modelHost)}"/><button id="workspace-save-model-host">Сохранить</button><button id="workspace-refresh-models">Проверить</button></div><div id="workspace-model-state" class="workspace-model-state ${nodaWorkspace.modelOnline ? 'online' : 'offline'}"><i></i><span>${nodaWorkspace.modelOnline ? `${nodaWorkspace.models.length} моделей доступно` : esc(nodaWorkspace.modelError || 'Локальный AI не запущен')}</span></div>${nodaWorkspace.models.length ? `<div class="workspace-model-list">${nodaWorkspace.models.map((model) => `<div><span><b>${esc(model.name)}</b><small>${esc([model.family, model.parameterSize].filter(Boolean).join(' · ') || 'локальная модель')}</small></span><em>${model.size ? `${Math.round(model.size / 1024 / 1024 / 1024 * 10) / 10} ГБ` : ''}</em></div>`).join('')}</div>` : ''}</div></section>
-    <section class="workspace-settings-section" id="settings-devices"><h2>Устройства</h2><div class="workspace-device-list">${devices.map((device) => `<div><i class="${device.online ? 'online' : ''}"></i><span><b>${esc(device.name || device.hostname || 'Компьютер')}</b><small>${device.id === state.presence.currentId ? 'это устройство' : (device.online ? 'в сети' : 'не в сети')}</small></span><em>${esc(device.role === 'laptop' ? 'Ноутбук' : 'ПК')}</em></div>`).join('') || '<p>Других устройств пока нет</p>'}</div></section>
-    <section class="workspace-settings-section" id="settings-updates"><h2>Обновления и диагностика</h2><div class="workspace-setting-row"><span><b>Версия приложения</b><small>Проверка и установка новой версии Noda</small></span><button id="workspace-update-check">Проверить обновление</button></div><div class="workspace-setting-row"><span><b>Журнал ошибок</b><small>Логи синхронизации, удалённого экрана и моделей</small></span><button id="workspace-open-logs">Открыть логи</button></div></section>
-    </main></div></div>`;
+  const settingNav = [
+    ['general', 'Основные', workspaceIcons.settings], ['appearance', 'Внешний вид', workspaceIcons.sparkle], ['models', 'Модели', NAVICON.chat],
+    ['projects', 'Проекты', workspaceIcons.folder], ['devices', 'Устройства', workspaceIcons.monitor], ['terminal', 'Терминал', NAVICON.term],
+    ['updates', 'Обновления', workspaceIcons.refresh], ['diagnostics', 'Диагностика', workspaceIcons.inbox],
+  ];
+  app.innerHTML = `<div class="workspace-settings"><aside class="workspace-settings-nav"><button id="workspace-settings-back" class="workspace-settings-back">${workspaceIcons.back}<span>Вернуться в приложение</span></button><label class="workspace-settings-search">${workspaceIcons.search}<input id="workspace-settings-search" placeholder="Поиск настроек" value="${esc(nodaWorkspace.settingsQuery)}"/></label><div class="workspace-settings-nav-scroll"><h3>Настройки Noda</h3>${settingNav.slice(0, 3).map(([key, label, icon], index) => `<button class="${index === 0 ? 'active' : ''}" data-settings-anchor="${key}" data-settings-label="${label.toLowerCase()}">${icon}<span>${label}</span></button>`).join('')}<h3>Рабочая область</h3>${settingNav.slice(3, 6).map(([key, label, icon]) => `<button data-settings-anchor="${key}" data-settings-label="${label.toLowerCase()}">${icon}<span>${label}</span></button>`).join('')}<h3>Система</h3>${settingNav.slice(6).map(([key, label, icon]) => `<button data-settings-anchor="${key}" data-settings-label="${label.toLowerCase()}">${icon}<span>${label}</span></button>`).join('')}</div></aside><main class="workspace-settings-main"><div class="workspace-settings-content">
+    <section class="workspace-settings-section active-section" id="settings-general"><h1>Основные</h1><h2>Поведение</h2><div class="workspace-setting-group"><div class="workspace-setting-row"><span><b>Среда проекта</b><small>Показывать Git, ветку и изменённые файлы справа от задачи</small></span><button class="workspace-switch ${nodaWorkspace.environmentOpen ? 'active' : ''}" id="workspace-setting-environment" role="switch" aria-checked="${nodaWorkspace.environmentOpen}"><i></i></button></div><div class="workspace-setting-row"><span><b>Новая задача</b><small>Открывать чистую задачу без выбранного проекта</small></span><em>Ctrl N</em></div></div></section>
+    <section class="workspace-settings-section" id="settings-appearance"><h1>Внешний вид</h1><h2>Интерфейс</h2><div class="workspace-setting-group"><div class="workspace-setting-row"><span><b>Тема</b><small>Единая тёмная тема Noda</small></span><em>Тёмная</em></div><div class="workspace-setting-row"><span><b>Компактная боковая панель</b><small>Уменьшить ширину списка проектов и задач</small></span><button class="workspace-switch ${nodaWorkspace.compactSidebar ? 'active' : ''}" id="workspace-setting-compact" role="switch" aria-checked="${nodaWorkspace.compactSidebar}"><i></i></button></div></div></section>
+    <section class="workspace-settings-section" id="settings-models"><h1>Модели</h1><h2>Локальный запуск</h2><div class="workspace-setting-group"><div class="workspace-setting-row column"><span><b>Ollama или LM Studio</b><small>Диалог обрабатывается на выбранном компьютере и не отправляется во внешний API</small></span><div class="workspace-setting-input"><input id="workspace-model-host" value="${esc(settings.localAiUrl || nodaWorkspace.modelHost)}"/><button id="workspace-save-model-host">Сохранить</button><button id="workspace-refresh-models">Проверить</button></div><div id="workspace-model-state" class="workspace-model-state ${nodaWorkspace.modelOnline ? 'online' : 'offline'}"><i></i><span>${nodaWorkspace.modelOnline ? `${nodaWorkspace.models.length} моделей доступно` : esc(nodaWorkspace.modelError || 'Локальная модель не запущена')}</span></div>${nodaWorkspace.models.length ? `<div class="workspace-model-list">${nodaWorkspace.models.map((model) => `<div><span><b>${esc(model.name)}</b><small>${esc([model.family, model.parameterSize].filter(Boolean).join(' · ') || 'локальная модель')}</small></span><em>${model.size ? `${Math.round(model.size / 1024 / 1024 / 1024 * 10) / 10} ГБ` : ''}</em></div>`).join('')}</div>` : ''}</div></div></section>
+    <section class="workspace-settings-section" id="settings-projects"><h1>Проекты</h1><h2>Автоматическое обнаружение</h2><div class="workspace-setting-group"><div class="workspace-setting-row"><span><b>Папка проектов</b><small>Вложенные проекты автоматически появляются в боковой панели</small></span><code>${esc(settings.codeRoot)}</code><button id="workspace-choose-root">Изменить</button></div><div class="workspace-setting-row"><span><b>Полученные файлы</b><small>Фото и документы с телефона</small></span><code>${esc(settings.downloadFolder)}</code></div></div></section>
+    <section class="workspace-settings-section" id="settings-devices"><h1>Устройства</h1><h2>Компьютеры Noda</h2><div class="workspace-device-list">${devices.map((device) => `<div><i class="${device.online ? 'online' : ''}"></i><span><b>${esc(device.name || device.hostname || 'Компьютер')}</b><small>${device.id === state.presence.currentId ? 'это устройство' : (device.online ? 'в сети' : 'не в сети')}</small></span><em>${esc(device.role === 'laptop' ? 'Ноутбук' : 'ПК')}</em></div>`).join('') || '<p>Других устройств пока нет</p>'}</div></section>
+    <section class="workspace-settings-section" id="settings-terminal"><h1>Терминал</h1><h2>Оболочка</h2><div class="workspace-setting-group"><div class="workspace-setting-row"><span><b>Оболочка по умолчанию</b><small>Встроенный терминал проекта</small></span><em>PowerShell</em></div><div class="workspace-setting-row"><span><b>Codex</b><small>Быстрый запуск в папке выбранного проекта</small></span><code>codex --yolo</code></div></div></section>
+    <section class="workspace-settings-section" id="settings-updates"><h1>Обновления</h1><h2>Приложение</h2><div class="workspace-setting-group"><div class="workspace-setting-row"><span><b>Обновить Noda</b><small>Одна кнопка проверяет версию, скачивает, проверяет и устанавливает обновление</small></span><button id="workspace-update-check" class="${esc(updateUiState)}">${esc(updateUiLabel)}</button></div></div></section>
+    <section class="workspace-settings-section" id="settings-diagnostics"><h1>Диагностика</h1><h2>Журналы</h2><div class="workspace-setting-group"><div class="workspace-setting-row"><span><b>Журнал ошибок</b><small>Синхронизация, удалённый экран, терминал и локальные модели</small></span><button id="workspace-open-logs">Открыть логи</button></div></div></section>
+    </div></main></div>`;
+  document.getElementById('workspace-settings-back').onclick = () => navigateWorkspace('chat');
   document.getElementById('workspace-choose-root').onclick = async () => { await window.arra.chooseCodeRoot(); nodaWorkspace.projectsLoaded = false; await loadWorkspaceProjects(true); renderNav(); renderWorkspaceSettings(); };
   document.getElementById('workspace-save-model-host').onclick = async () => {
     const result = await window.arra.setLocalAiUrl(document.getElementById('workspace-model-host').value);
@@ -378,7 +475,30 @@ async function renderWorkspaceSettings() {
   document.getElementById('workspace-refresh-models').onclick = async () => { nodaWorkspace.modelsLoadedAt = 0; await loadWorkspaceModels(true); renderWorkspaceSettings(); };
   document.getElementById('workspace-update-check').onclick = triggerUpdateCheck;
   document.getElementById('workspace-open-logs').onclick = () => window.arra.openLogs();
-  app.querySelectorAll('[data-settings-anchor]').forEach((button) => { button.onclick = () => document.getElementById(`settings-${button.dataset.settingsAnchor}`)?.scrollIntoView({ behavior: 'smooth' }); });
+  document.getElementById('workspace-setting-environment').onclick = (event) => {
+    nodaWorkspace.environmentOpen = !nodaWorkspace.environmentOpen;
+    localStorage.setItem('noda-environment-open', nodaWorkspace.environmentOpen ? '1' : '0');
+    event.currentTarget.classList.toggle('active', nodaWorkspace.environmentOpen);
+    event.currentTarget.setAttribute('aria-checked', String(nodaWorkspace.environmentOpen));
+  };
+  document.getElementById('workspace-setting-compact').onclick = (event) => {
+    nodaWorkspace.compactSidebar = !nodaWorkspace.compactSidebar;
+    localStorage.setItem('noda-compact-sidebar', nodaWorkspace.compactSidebar ? '1' : '0');
+    document.body.classList.toggle('workspace-compact-sidebar', nodaWorkspace.compactSidebar);
+    event.currentTarget.classList.toggle('active', nodaWorkspace.compactSidebar);
+    event.currentTarget.setAttribute('aria-checked', String(nodaWorkspace.compactSidebar));
+  };
+  const settingsMain = app.querySelector('.workspace-settings-main');
+  app.querySelectorAll('[data-settings-anchor]').forEach((button) => { button.onclick = () => {
+    app.querySelectorAll('[data-settings-anchor]').forEach((item) => item.classList.toggle('active', item === button));
+    app.querySelectorAll('.workspace-settings-section').forEach((section) => section.classList.toggle('active-section', section.id === `settings-${button.dataset.settingsAnchor}`));
+    settingsMain.scrollTop = 0;
+  }; });
+  document.getElementById('workspace-settings-search').oninput = (event) => {
+    nodaWorkspace.settingsQuery = event.target.value;
+    const query = nodaWorkspace.settingsQuery.trim().toLowerCase();
+    app.querySelectorAll('[data-settings-label]').forEach((button) => { button.hidden = !!query && !button.dataset.settingsLabel.includes(query); });
+  };
 }
 
 const baseRoute = route;

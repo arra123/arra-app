@@ -3,7 +3,7 @@
     "name": "Noda",
     "slug": "aura",
     "owner": "arratima",
-    "version": "1.5.0",
+    "version": "1.5.2",
     "orientation": "default",
     "icon": "./assets/images/noda-app-icon.png",
     "scheme": "aura",
@@ -28,7 +28,7 @@
     "android": {
       "icon": "./assets/images/noda-app-icon.png",
       "adaptiveIcon": {
-        "backgroundColor": "#171717",
+        "backgroundColor": "#1c242f",
         "foregroundImage": "./assets/images/noda-mark.png",
         "monochromeImage": "./assets/images/noda-mark.png"
       },
@@ -49,12 +49,12 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#171717",
+          "backgroundColor": "#1c242f",
           "image": "./assets/images/noda-mark.png",
           "imageWidth": 110,
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#171717",
+            "backgroundColor": "#1c242f",
             "image": "./assets/images/noda-mark.png",
             "imageWidth": 110
           }
@@ -82,7 +82,7 @@
     },
     "updates": {
       "url": "https://u.expo.dev/804ef682-ea7e-4d3f-9994-d578dd0e4c79",
-      "enabled": false,
+      "enabled": true,
       "checkAutomatically": "NEVER",
       "fallbackToCacheTimeout": 0
     }

@@ -26,16 +26,16 @@ export const Colors = {
   dark: {
     // Та же холодная серо-голубая система, что и в настольном приложении.
     text: '#ECECEC',
-    background: '#212121',
-    backgroundElement: '#2F2F2F',
-    backgroundSelected: '#3A3A3A',
+    background: '#101010',
+    backgroundElement: '#1C1C1C',
+    backgroundSelected: '#2B3542',
     textSecondary: '#9B9B9B',
     tint: '#8F8F8F',
     accent: '#ECECEC',
     success: '#2FBF71',
     danger: '#EF6464',
     warning: '#F0B94F',
-    glass: 'rgba(47,47,47,0.94)',
+    glass: 'rgba(28,28,28,0.96)',
     glassBorder: 'rgba(255,255,255,0.10)',
     separator: 'rgba(255,255,255,0.09)',
   },
@@ -97,4 +97,4 @@ export const BottomTabInset = 0;
 export const MaxContentWidth = 800;
 
 /** Пользовательская версия Noda. Меняется только вместе с нативной TestFlight-сборкой. */
-export const APP_BUILD = 76;
+export const APP_BUILD = 78;

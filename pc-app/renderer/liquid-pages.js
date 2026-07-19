@@ -22,15 +22,18 @@ const LIQUID_ICON = {
   car: '<svg viewBox="0 0 24 24"><path d="m5 16-1-3 2-5h12l2 5-1 3z"/><path d="M6 16v3M18 16v3M4 13h16M7 13h.01M17 13h.01"/></svg>',
   cloud: '<svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.8-7.9A6 6 0 0 1 17.7 9 4.5 4.5 0 0 1 18 18z"/></svg>',
   food: '<svg viewBox="0 0 24 24"><path d="M7 3v8M4 3v5a3 3 0 0 0 6 0V3M7 11v10M16 3v18M16 3c4 2 5 6 0 9"/></svg>',
+  folder: '<svg viewBox="0 0 24 24"><path d="M3 6.5h7l2 2h9v10.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  image: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m5 18 5-5 3 3 2-2 4 4"/></svg>',
+  copy: '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>',
 };
 function liquidIcon(name) { return LIQUID_ICON[name] || LIQUID_ICON.sparkle; }
 function liquidCompanyMark(className = '') {
   return `<span class="liquid-company-mark ${className}" aria-hidden="true">${liquidIcon('company')}</span>`;
 }
 const FINANCE_BRANDS = [
-  { test: /belka|белк/i, title: 'BelkaCar', merchant: 'belkacar', logo: 'https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/00/f3/3c/00f33c50-919e-25b2-58a4-2316eca1a104/ReleaseBelkacarAppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/100x100bb.jpg' },
-  { test: /city\s*drive|citydrive|ситидрайв|сити\s*драйв/i, title: 'City Drive', merchant: 'citydrive' },
-  { test: /delimobil|делимоб|дели\b/i, title: 'Делимобиль', merchant: 'delimobil' },
+  { test: /belka|белк/i, title: 'BelkaCar', merchant: 'belkacar', logo: 'assets/brands/belkacar.jpg' },
+  { test: /city\s*drive|citydrive|ситидрайв|сити\s*драйв/i, title: 'City Drive', merchant: 'citydrive', logo: 'assets/brands/citydrive.jpg' },
+  { test: /delimobil|делимоб|дели\b/i, title: 'Делимобиль', merchant: 'delimobil', logo: 'assets/brands/delimobil.jpg' },
   { test: /яндекс[.\s-]*(драйв|drive)|yandex[.\s-]*drive/i, title: 'Яндекс Драйв', merchant: 'яндекс драйв' },
   { test: /chat\s*gpt|open\s*ai|gpt(?:-|\s|\d|$)|codex/i, title: 'OpenAI', merchant: 'openai' },
   { test: /anthropic|claude|клод/i, title: 'Anthropic', merchant: 'anthropic' },
@@ -307,7 +310,9 @@ function financeMonthOptions() {
   return [...new Set(options)].sort().reverse();
 }
 function financePeriodHtml(records, withGrouping = false) {
-  const total = records.reduce((sum, record) => sum + record.amount, 0);
+  const activeRecords = records.filter((record) => !record.closed);
+  const returned = records.filter((record) => record.closed).reduce((sum, record) => sum + record.amount, 0);
+  const total = activeRecords.reduce((sum, record) => sum + record.amount, 0);
   return `<div class="finance-list-toolbar">
     <div class="finance-month-picker">
       <button type="button" data-fin-month-step="-1" title="Предыдущий месяц">${liquidIcon('left')}</button>
@@ -320,7 +325,7 @@ function financePeriodHtml(records, withGrouping = false) {
       <button type="button" data-fin-month-step="1" title="Следующий месяц">${liquidIcon('right')}</button>
     </div>
     ${withGrouping ? `<nav class="finance-view-switch" aria-label="Группировка"><button type="button" data-fin-group="week" class="${liquidFinance.groupMode === 'week' ? 'active' : ''}">По неделям</button><button type="button" data-fin-group="service" class="${liquidFinance.groupMode === 'service' ? 'active' : ''}">По сервисам</button></nav>` : ''}
-    <div class="finance-period-total"><small>За ${financeMonthLabel(liquidFinance.month)}</small><strong>${fmt(total)} ₽</strong><span>${records.length} ${records.length === 1 ? 'запись' : records.length > 1 && records.length < 5 ? 'записи' : 'записей'}</span></div>
+    <div class="finance-period-total"><small>Осталось вернуть</small><strong>${fmt(total)} ₽</strong><span>${activeRecords.length} ${activeRecords.length === 1 ? 'запись' : activeRecords.length > 1 && activeRecords.length < 5 ? 'записи' : 'записей'}${returned ? ` · возвращено ${fmt(returned)} ₽` : ''}</span></div>
   </div>`;
 }
 function financeRecordRow(record) {
@@ -341,8 +346,8 @@ function financeTableHtml() {
   return `<div class="liquid-money-table-shell"><table class="liquid-money-table finance-week-table">
     <thead><tr><th>Кто</th><th>За что</th><th>Кому</th><th><button class="finance-date-sort" type="button" title="Изменить порядок">Когда <span>${liquidFinance.dateSort === 'desc' ? '↓' : '↑'}</span></button></th><th class="money">Сумма</th><th aria-label="Действия"></th></tr></thead>
     ${liquidFinance.groupMode === 'service'
-      ? groups.map((group) => { const expanded = liquidFinance.expandedServices.has(group.key); return `<tbody class="finance-service-group ${expanded ? 'expanded' : ''}"><tr class="finance-service-row" data-fin-service-toggle="${esc(group.key)}" tabindex="0" role="button" aria-expanded="${expanded}"><td colspan="4"><div>${group.icon}<b>${esc(group.label)}</b><small>${group.records.length}</small></div></td><td class="money"><strong>${fmt(group.total)} ₽</strong></td><td><span class="finance-service-chevron">${liquidIcon('right')}</span></td></tr>${expanded ? group.records.map(financeRecordRow).join('') : ''}</tbody>`; }).join('')
-      : groups.map((group) => `<tbody class="finance-week-group"><tr class="finance-week-row"><td colspan="4"><div><em>Неделя</em><b>${financeWeekLabel(group.start)}</b><small>${financeOperationCount(group.records.length)}</small></div></td><td class="money"><strong>${fmt(group.total)} ₽</strong></td><td></td></tr>${group.records.map(financeRecordRow).join('')}</tbody>`).join('')}
+      ? groups.map((group) => { const expanded = liquidFinance.expandedServices.has(group.key); const outstanding = group.records.filter((record) => !record.closed).reduce((sum, record) => sum + record.amount, 0); return `<tbody class="finance-service-group ${expanded ? 'expanded' : ''}"><tr class="finance-service-row" data-fin-service-toggle="${esc(group.key)}" tabindex="0" role="button" aria-expanded="${expanded}"><td colspan="4"><div>${group.icon}<b>${esc(group.label)}</b><small>${group.records.length}</small></div></td><td class="money"><strong>${fmt(outstanding)} ₽</strong></td><td><span class="finance-service-chevron">${liquidIcon('right')}</span></td></tr>${expanded ? group.records.map(financeRecordRow).join('') : ''}</tbody>`; }).join('')
+      : groups.map((group) => { const outstanding = group.records.filter((record) => !record.closed).reduce((sum, record) => sum + record.amount, 0); return `<tbody class="finance-week-group"><tr class="finance-week-row"><td colspan="4"><div><em>Неделя</em><b>${financeWeekLabel(group.start)}</b><small>${financeOperationCount(group.records.length)}</small></div></td><td class="money"><strong>${fmt(outstanding)} ₽</strong></td><td></td></tr>${group.records.map(financeRecordRow).join('')}</tbody>`; }).join('')}
     </table></div>`;
 }
 function financeLocalDateTime(value) {
@@ -717,6 +722,35 @@ renderNotes = function renderLiquidNotes() {
     const list = document.getElementById('liquid-note-list');
     if (list && !liquidNotes.loaded) list.innerHTML = `<div class="liquid-empty error">${esc(error.message)}</div>`;
   });
+};
+
+function liquidFilesHtml() {
+  const files = [...state.files].reverse();
+  if (!files.length) return `<div class="liquid-files-empty">${liquidIcon('folder')}<b>Файлов пока нет</b></div>`;
+  const images = files.filter((file) => String(file.mime || '').startsWith('image'));
+  const documents = files.filter((file) => !String(file.mime || '').startsWith('image'));
+  return `${images.length ? `<section class="liquid-file-group"><header><b>Изображения</b><span>${images.length}</span></header><div class="liquid-image-grid">${images.map((file) => `<button type="button" class="liquid-image-card" data-file-image="${esc(file.path)}" title="${esc(file.name || file.path)}"><img src="${esc(fileURL(file.path))}" loading="lazy" decoding="async"/><span>${esc(file.name || 'Изображение')}</span></button>`).join('')}</div></section>` : ''}
+    ${documents.length ? `<section class="liquid-file-group"><header><b>Документы</b><span>${documents.length}</span></header><div class="liquid-file-list">${documents.map((file) => `<button type="button" class="liquid-file-row" data-file-path="${esc(file.path)}"><span>${liquidIcon('receipt')}</span><div><b>${esc(file.name || file.path)}</b><small>${esc(file.time || 'Нажмите, чтобы скопировать путь')}</small></div>${liquidIcon('copy')}</button>`).join('')}</div></section>` : ''}`;
+}
+function bindLiquidFiles() {
+  app.querySelectorAll('[data-file-image]').forEach((button) => button.onclick = () => openViewer(button.dataset.fileImage));
+  app.querySelectorAll('[data-file-path]').forEach((button) => button.onclick = async () => {
+    await window.arra.copyPath(button.dataset.filePath); button.classList.add('copied'); button.querySelector('small').textContent = 'Путь скопирован';
+  });
+}
+renderFiles = async function renderLiquidFiles() {
+  let status;
+  try { status = await window.arra.getStatus(); } catch { status = {}; }
+  const mode = status.mode === 'file' ? 'file' : 'path';
+  app.innerHTML = `<div class="liquid-page files-liquid"><header class="liquid-head liquid-files-head"><div><h1>Файлы</h1><span class="liquid-device-state ${status.phoneOnline || status.online ? 'online' : ''}"><i></i>${status.phoneOnline || status.online ? 'Телефон в сети' : 'Телефон не в сети'}</span></div><div class="liquid-files-actions"><code title="${esc(status.folder || '')}">${esc(status.folder || 'Папка не выбрана')}</code><button type="button" id="liquid-open-folder" title="Открыть папку">${liquidIcon('folder')}</button><button type="button" id="liquid-change-folder">Изменить</button></div></header>
+    <nav class="liquid-subtabs liquid-file-mode" aria-label="Как принимать файлы"><button type="button" data-file-mode="path" class="${mode === 'path' ? 'active' : ''}">Копировать путь</button><button type="button" data-file-mode="file" class="${mode === 'file' ? 'active' : ''}">Передавать файл</button></nav>
+    <section class="liquid-files-content" id="liquid-files-content">${liquidFilesHtml()}</section></div>`;
+  document.getElementById('liquid-open-folder').onclick = () => window.arra.openFolder();
+  document.getElementById('liquid-change-folder').onclick = async () => { await window.arra.chooseFolder(); renderFiles(); };
+  app.querySelectorAll('[data-file-mode]').forEach((button) => button.onclick = () => {
+    app.querySelector('[data-file-mode].active')?.classList.remove('active'); button.classList.add('active'); window.arra.setMode(button.dataset.fileMode);
+  });
+  bindLiquidFiles();
 };
 
 // Repaint an already active page only for an authenticated workspace. During

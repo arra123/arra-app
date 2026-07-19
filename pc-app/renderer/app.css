@@ -140,7 +140,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 input:focus, textarea:focus, select:focus { border-color: var(--tint); box-shadow: 0 0 0 3px var(--tint-soft); }
 textarea { resize: none; line-height: 1.5; }
 
-.btn { padding: 11px 16px; border-radius: 11px; border: none; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600; color: #fff; background: var(--tint); display: inline-flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 2px 8px rgba(94,106,210,0.28); transition: filter .12s, transform .04s; }
+.btn { padding: 11px 16px; border-radius: 11px; border: none; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: 600; color: #fff; background: var(--action, var(--tint)); display: inline-flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 2px 8px rgba(94,106,210,0.28); transition: filter .12s, transform .04s; }
 .btn:hover { filter: brightness(1.06); }
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
@@ -274,7 +274,7 @@ body.chat-mode .chat { flex: 1; min-height: 0; overflow-y: auto; padding-right: 
 .term-preset-note { margin-left: auto; color: var(--muted); font-size: 11px; }
 .termtabs { display: flex; align-items: center; gap: 4px; flex: none; flex-wrap: wrap; }
 .ttab { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--hair); background: var(--surface); color: var(--text-2); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-.ttab.on { background: var(--tint); color: #fff; border-color: transparent; }
+.ttab.on { background: var(--action, var(--tint)); color: #fff; border-color: transparent; }
 /* Имя терминала во вкладке (как в VS Code: иконка + имя папки проекта) */
 .ttab .ticon { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
 .ttab .tname { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -313,7 +313,7 @@ body.chat-mode .chat { flex: 1; min-height: 0; overflow-y: auto; padding-right: 
 .syncacts { display: flex; gap: 8px; flex-wrap: wrap; }
 .syncprogwrap { margin-bottom: 18px; }
 .syncprogtrack { height: 8px; border-radius: 6px; background: var(--surface-2); overflow: hidden; }
-.syncprogbar { height: 100%; width: 0; background: var(--tint); border-radius: 6px; transition: width .15s ease; }
+.syncprogbar { height: 100%; width: 0; background: var(--action, var(--tint)); border-radius: 6px; transition: width .15s ease; }
 .syncprojects { display: flex; flex-direction: column; gap: 10px; }
 .synccard { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--hair); border-radius: 12px; box-shadow: var(--shadow); }
 .syncinfo { min-width: 0; flex: 1; }
@@ -657,7 +657,7 @@ body:not([data-theme="dark"]) .sync-device.server { background: #EEF3EB; }
 .sync-v3 .sync-workbench { grid-template-columns:minmax(320px,360px) minmax(440px,1fr); min-height:560px; }
 .sync-v3 .sync-command { padding:22px; }
 .sync-v3 .sync-transfer-list { display:grid; gap:10px; border:0; }
-.sync-transfer-choice { width:100%; min-height:84px; display:flex; align-items:center; justify-content:space-between; gap:18px; padding:0 18px; border:1px solid color-mix(in srgb,var(--tint) 52%,var(--hair)); border-radius:11px; background:var(--tint); color:#fff; cursor:pointer; transition:transform .16s ease,filter .16s ease,border-color .16s ease; }
+.sync-transfer-choice { width:100%; min-height:84px; display:flex; align-items:center; justify-content:space-between; gap:18px; padding:0 18px; border:1px solid color-mix(in srgb,var(--action, var(--tint)) 52%,var(--hair)); border-radius:11px; background:var(--action, var(--tint)); color:#fff; cursor:pointer; transition:transform .16s ease,filter .16s ease,border-color .16s ease; }
 .sync-transfer-choice:hover { filter:brightness(1.07); transform:translateY(-1px); }
 .sync-transfer-choice:active { transform:translateY(1px) scale(.995); }
 .sync-transfer-choice:focus-visible { outline:2px solid color-mix(in srgb,var(--tint) 70%,white); outline-offset:3px; }
@@ -784,16 +784,24 @@ body:not([data-theme="dark"]) .sync-device.server { background: #EEF3EB; }
 .remote-monitors button { display:flex; align-items:center; gap:6px; height:28px; padding:0 9px; border:1px solid var(--hair); border-radius:7px; background:transparent; color:var(--muted); font:650 9px/1 inherit; cursor:pointer; }
 .remote-monitors button:hover,.remote-monitors button.active { border-color:color-mix(in srgb,var(--tint) 55%,var(--hair)); background:var(--surface-3); color:var(--text); }
 .remote-monitors small { color:var(--muted); font-size:8px; }
+.remote-audio { width:30px;height:30px;margin-left:auto;display:grid;place-items:center;border:1px solid var(--hair);border-radius:8px;background:var(--surface-2);color:var(--text-2);cursor:pointer;transition:background .16s ease,color .16s ease,border-color .16s ease,transform .16s ease; }
+.remote-audio:hover:not(:disabled) { border-color:color-mix(in srgb,var(--tint) 45%,var(--hair));background:var(--surface-3);transform:translateY(-1px); }
+.remote-audio:disabled { opacity:.38;cursor:not-allowed; }
+.remote-audio.is-muted { color:var(--muted); }
+.remote-audio svg { width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round; }
 .remote-help { margin-left:auto; color:var(--muted); font-size:9px; text-align:right; }
 .remote-stage { position:relative; min-height:300px; flex:1; display:grid; place-items:center; overflow:hidden; border:1px solid var(--hair); border-radius:12px; background:#070809; box-shadow:0 16px 42px rgba(0,0,0,.26); }
 .remote-stage::before { content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(circle at 50% 38%,rgba(110,121,230,.08),transparent 52%); }
-.remote-stage canvas { position:relative; z-index:2; display:block; max-width:100%; max-height:100%; background:#000; outline:none; cursor:default; box-shadow:0 0 0 1px rgba(255,255,255,.035); }
-.remote-stage.is-live canvas { cursor:none; }
+.remote-stage canvas,.remote-stage video { position:relative; z-index:2; display:block; max-width:100%; max-height:100%; background:#000; outline:none; cursor:default; box-shadow:0 0 0 1px rgba(255,255,255,.035);object-fit:contain; }
+.remote-stage video { position:absolute;opacity:0;pointer-events:none;transition:opacity .18s ease; }
+.remote-stage.is-webrtc video { opacity:1;pointer-events:auto; }
+.remote-stage.is-webrtc canvas { opacity:0;pointer-events:none; }
+.remote-stage.is-live canvas,.remote-stage.is-live video { cursor:none; }
 .remote-cursor { position:absolute; z-index:4; top:0; left:0; width:19px; height:24px; pointer-events:none; transform:translate3d(-40px,-40px,0); filter:drop-shadow(0 2px 2px rgba(0,0,0,.72)); will-change:transform; }
 .remote-cursor[hidden] { display:none; }
 .remote-cursor svg { display:block; width:100%; height:100%; overflow:visible; }
 .remote-cursor path { fill:#fff; stroke:#08090b; stroke-width:1.8; stroke-linejoin:round; }
-.remote-stage canvas:focus { box-shadow:0 0 0 2px color-mix(in srgb,var(--tint) 72%,transparent); }
+.remote-stage canvas:focus,.remote-stage video:focus { box-shadow:0 0 0 2px color-mix(in srgb,var(--tint) 72%,transparent); }
 .remote-stage-hint { position:absolute; z-index:1; display:grid; justify-items:center; gap:6px; max-width:370px; padding:28px; text-align:center; }
 .remote-stage-hint[hidden] { display:none; }
 .remote-stage-hint b { color:var(--text-2); font-size:13px; }

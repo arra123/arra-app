@@ -1,4 +1,5 @@
 import { SymbolView } from 'expo-symbols';
+import * as Updates from 'expo-updates';
 import { useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Alert, Linking, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -28,7 +29,7 @@ export default function ProfileScreen({ embedded = false }: { embedded?: boolean
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
   const workspace = useWorkspace();
-  const [openingTestFlight, setOpeningTestFlight] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
   const [pcCount, setPcCount] = useState(0);
   const initial = (user?.name || user?.email || 'N').trim()[0]?.toUpperCase() || 'N';
@@ -39,15 +40,33 @@ export default function ProfileScreen({ embedded = false }: { embedded?: boolean
   }, []);
 
   async function openTestFlight() {
-    if (openingTestFlight) return;
-    setOpeningTestFlight(true);
     try {
       await Linking.openURL(Platform.OS === 'ios' ? 'itms-beta://' : 'https://apps.apple.com/app/testflight/id899247664');
     } catch {
       try { await Linking.openURL('https://apps.apple.com/app/testflight/id899247664'); }
       catch { Alert.alert('Не удалось открыть TestFlight'); }
+    }
+  }
+
+  async function checkUpdate() {
+    if (updating) return;
+    setUpdating(true);
+    try {
+      if (Updates.isEnabled && !__DEV__) {
+        const update = await Updates.checkForUpdateAsync();
+        if (update.isAvailable) {
+          await Updates.fetchUpdateAsync();
+          await Updates.reloadAsync();
+          return;
+        }
+        Alert.alert('Noda обновлена', 'Установлена актуальная версия.');
+        return;
+      }
+      await openTestFlight();
+    } catch {
+      await openTestFlight();
     } finally {
-      setOpeningTestFlight(false);
+      setUpdating(false);
     }
   }
 
@@ -97,7 +116,7 @@ export default function ProfileScreen({ embedded = false }: { embedded?: boolean
 
         <SettingsSection label="Приложение">
           <SettingRow icon="moon.fill" title="Оформление" value="Тёмное" />
-          <SettingRow icon="arrow.up.forward.app" title="TestFlight" value={`Версия ${APP_BUILD}`} loading={openingTestFlight} onPress={openTestFlight} />
+          <SettingRow icon="arrow.triangle.2.circlepath" title="Проверить обновление" value={`Версия ${APP_BUILD}`} loading={updating} onPress={checkUpdate} />
           <SettingRow icon="clock.arrow.circlepath" title="Что нового" onPress={() => setShowChangelog(true)} last />
         </SettingsSection>
 

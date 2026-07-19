@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('arra', {
   syncRun: (mode, only, role) => ipcRenderer.invoke('sync-run', { mode, only, role }),
   syncLocalInventory: () => ipcRenderer.invoke('sync-local-inventory'),
   workspaceSettings: () => ipcRenderer.invoke('workspace-settings'),
+  projectEnvironment: (projectPath) => ipcRenderer.invoke('project-environment', projectPath),
   setLocalAiUrl: (url) => ipcRenderer.invoke('set-local-ai-url', url),
   localModels: () => ipcRenderer.invoke('local-models'),
   localChat: (model, messages, project) => ipcRenderer.invoke('local-chat', { model, messages, project }),
@@ -64,6 +65,7 @@ contextBridge.exposeInMainWorld('arra', {
   log: (level, source, payload) => ipcRenderer.invoke('app-log', { level, source, payload }),
   openLogs: () => ipcRenderer.invoke('open-logs'),
   logPath: () => ipcRenderer.invoke('log-path'),
+  heartbeat: (payload) => ipcRenderer.send('renderer-heartbeat', payload),
   // Голосовой ввод помощника: аудио → текст
   transcribe: (base64, mime) => ipcRenderer.invoke('transcribe', { base64, mime }),
 });

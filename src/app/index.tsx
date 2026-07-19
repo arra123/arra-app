@@ -1,7 +1,7 @@
 import { useFocusEffect } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -73,12 +73,28 @@ const STATUS: Record<ReimbursementStatus, { label: string; color: string }> = {
   rejected: { label: 'Отклонено', color: '#EB6A6A' },
 };
 const fmt = (value: number) => Math.round(value).toLocaleString('ru-RU');
-const COMPANY_ICON = require('../../assets/images/company-reimbursement-2d-256.png');
 const RECIPIENT_KEY = 'noda-finance-recipient';
 const dateInput = (value?: string | null) => value ? value.slice(0, 10) : '';
 const dateLabel = (value?: string | null) => value
   ? new Date(value).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' })
   : 'дата не указана';
+const timeLabel = (value?: string | null) => value
+  ? new Date(value).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+  : '';
+
+function weekRange(value: string) {
+  const date = new Date(value);
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  const key = start.toISOString().slice(0, 10);
+  const sameMonth = start.getMonth() === end.getMonth();
+  const label = sameMonth
+    ? `${start.getDate()}–${end.getDate()} ${end.toLocaleDateString('ru-RU', { month: 'long' })}`
+    : `${start.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} – ${end.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}`;
+  return { key, label };
+}
 
 export default function MoneyScreen() {
   const theme = useTheme();
@@ -90,6 +106,7 @@ export default function MoneyScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showDebts, setShowDebts] = useState(false);
+  const [listMonth, setListMonth] = useState(() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1); });
   const [editing, setEditing] = useState<Reimbursement | null>(null);
   const [draftReady, setDraftReady] = useState(false);
   const [lastSaved, setLastSaved] = useState<SavedEntry | null>(null);
@@ -178,6 +195,21 @@ export default function MoneyScreen() {
   const visibleItems = items
     .filter((item) => showClosed === ['reimbursed', 'rejected'].includes(item.status))
     .sort((a, b) => new Date(b.occurred_at || b.updated_at).getTime() - new Date(a.occurred_at || a.updated_at).getTime());
+  const monthItems = visibleItems.filter((item) => {
+    const date = new Date(item.occurred_at || item.updated_at);
+    return date.getFullYear() === listMonth.getFullYear() && date.getMonth() === listMonth.getMonth();
+  });
+  const weeklyItems = useMemo(() => {
+    const groups = new Map<string, { key: string; label: string; items: Reimbursement[]; total: number }>();
+    for (const item of monthItems) {
+      const week = weekRange(item.occurred_at || item.updated_at);
+      const group = groups.get(week.key) || { ...week, items: [], total: 0 };
+      group.items.push(item);
+      group.total += Number(item.amount);
+      groups.set(week.key, group);
+    }
+    return [...groups.values()].sort((a, b) => b.key.localeCompare(a.key));
+  }, [monthItems]);
   const activeDebts = debts.filter((debt) => !debt.settled);
   const toReturn = activeItems.reduce((sum, item) => sum + Number(item.amount), 0);
   const timaReturn = activeItems.filter((item) => (item.recipient || 'Тима') === 'Тима').reduce((sum, item) => sum + Number(item.amount), 0);
@@ -359,30 +391,26 @@ export default function MoneyScreen() {
           showsVerticalScrollIndicator={false}
           keyboardDismissMode="interactive"
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.tint} />}>
-            <View style={[styles.hero, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
-              <View style={styles.heroTop}>
-                <ThemedText type="small" themeColor="textSecondary">К возврату</ThemedText>
+            <View style={[styles.summary, { borderColor: theme.separator }]}>
+              <View style={styles.summaryMain}>
+                <View style={[styles.summaryIcon, { backgroundColor: theme.backgroundSelected }]}><SymbolView name="building.2" tintColor={theme.tint} size={20} /></View>
+                <View style={{ flex: 1 }}><ThemedText type="small" themeColor="textSecondary">Осталось вернуть</ThemedText><ThemedText style={styles.summaryValue}>{fmt(toReturn)} ₽</ThemedText></View>
                 <ThemedText type="small" themeColor="textSecondary">{activeItems.length}</ThemedText>
               </View>
-              <ThemedText style={[styles.heroValue, { color: theme.text }]}>{fmt(toReturn)} ₽</ThemedText>
-              <View style={styles.heroRecipients}>
-                <View style={[styles.recipientTotal, { backgroundColor: theme.backgroundSelected }]}><ThemedText type="small" themeColor="textSecondary">Тима</ThemedText><ThemedText type="smallBold">{fmt(timaReturn)} ₽</ThemedText></View>
-                <View style={[styles.recipientTotal, { backgroundColor: theme.backgroundSelected }]}><ThemedText type="small" themeColor="textSecondary">Дани</ThemedText><ThemedText type="smallBold">{fmt(daniReturn)} ₽</ThemedText></View>
-                <View style={[styles.recipientTotal, { backgroundColor: theme.backgroundSelected }]}><ThemedText type="small" themeColor="textSecondary">Женя</ThemedText><ThemedText type="smallBold">{fmt(zhenyaReturn)} ₽</ThemedText></View>
+              <View style={styles.recipientLine}>
+                <ThemedText type="small" themeColor="textSecondary">Тима <ThemedText type="smallBold">{fmt(timaReturn)} ₽</ThemedText></ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">Даня <ThemedText type="smallBold">{fmt(daniReturn)} ₽</ThemedText></ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">Женя <ThemedText type="smallBold">{fmt(zhenyaReturn)} ₽</ThemedText></ThemedText>
               </View>
-            </View>
-
-            <View style={styles.statsRow}>
-              <MoneyStat label="Мне должны" value={owedToMe} color={theme.success} sign="+" />
-              <MoneyStat label="Я должен" value={iOwe} color={theme.warning} sign="−" />
-              <TouchableOpacity onPress={() => setShowDebts(true)} style={[styles.allDebts, { backgroundColor: theme.backgroundElement }]}>
-                <SymbolView name="chevron.right" tintColor={theme.textSecondary} size={17} />
+              <TouchableOpacity onPress={() => setShowDebts(true)} style={[styles.debtLine, { borderTopColor: theme.separator }]}>
                 <ThemedText type="small" themeColor="textSecondary">Долги</ThemedText>
+                <ThemedText type="smallBold" style={{ color: theme.success }}>Мне +{fmt(owedToMe)} ₽</ThemedText>
+                <ThemedText type="smallBold" style={{ color: theme.warning }}>Я −{fmt(iOwe)} ₽</ThemedText>
+                <SymbolView name="chevron.right" tintColor={theme.textSecondary} size={13} />
               </TouchableOpacity>
             </View>
 
             <View style={styles.listHeader}>
-              <ThemedText type="smallBold">Компенсации</ThemedText>
               <SlidingSegment
                 compact
                 value={showClosed ? 'closed' : 'active'}
@@ -395,16 +423,24 @@ export default function MoneyScreen() {
               />
             </View>
 
+            <View style={[styles.periodBar, { borderColor: theme.separator }]}>
+              <TouchableOpacity accessibilityLabel="Предыдущий месяц" onPress={() => setListMonth(new Date(listMonth.getFullYear(), listMonth.getMonth() - 1, 1))} style={styles.periodButton}><SymbolView name="chevron.left" tintColor={theme.textSecondary} size={14} /></TouchableOpacity>
+              <ThemedText type="smallBold" style={styles.periodLabel}>{listMonth.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}</ThemedText>
+              <TouchableOpacity accessibilityLabel="Следующий месяц" onPress={() => setListMonth(new Date(listMonth.getFullYear(), listMonth.getMonth() + 1, 1))} style={styles.periodButton}><SymbolView name="chevron.right" tintColor={theme.textSecondary} size={14} /></TouchableOpacity>
+            </View>
+
             {loading ? (
               <ActivityIndicator color={theme.tint} style={{ marginTop: Spacing.four }} />
-            ) : visibleItems.length === 0 ? (
+            ) : monthItems.length === 0 ? (
               <View style={[styles.empty, { borderColor: theme.separator }]}>
                 <SymbolView name="tray.fill" tintColor={theme.textSecondary} size={28} />
                 <ThemedText type="smallBold">{showClosed ? 'Закрытых компенсаций нет' : 'Нечего возвращать'}</ThemedText>
               </View>
             ) : (
-              <View style={styles.list}>
-                {visibleItems.map((item, index) => (
+              <View style={styles.weekList}>
+                {weeklyItems.map((week) => <View key={week.key} style={styles.weekGroup}>
+                  <View style={[styles.weekHeader, { borderBottomColor: theme.separator }]}><View><ThemedText type="smallBold">{week.label}</ThemedText><ThemedText type="small" themeColor="textSecondary">{week.items.length} записей</ThemedText></View><ThemedText type="smallBold">{fmt(week.total)} ₽</ThemedText></View>
+                  <View style={styles.list}>{week.items.map((item, index) => (
                   <TouchableOpacity
                     key={item.id}
                     activeOpacity={0.72}
@@ -412,17 +448,16 @@ export default function MoneyScreen() {
                     style={[styles.item, { backgroundColor: theme.backgroundElement }, index < visibleItems.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.separator }]}>
                     {item.merchant
                       ? <MerchantLogo merchant={item.merchant} size={40} />
-                      : <View style={styles.itemIcon}><Image source={COMPANY_ICON} style={styles.companyIcon} resizeMode="contain" /></View>}
+                      : <View style={[styles.itemIcon, { backgroundColor: theme.backgroundSelected }]}><SymbolView name="building.2" tintColor={theme.tint} size={17} /></View>}
                     <View style={{ flex: 1, gap: 3 }}>
                       <ThemedText type="smallBold" numberOfLines={1}>{item.purpose}</ThemedText>
                       <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                        {[item.merchant, item.location, dateLabel(item.occurred_at)].filter(Boolean).join(' · ')}
+                        {[item.merchant, item.recipient === 'Дани' ? 'Даня' : (item.recipient || 'Тима'), `${dateLabel(item.occurred_at)} · ${timeLabel(item.occurred_at)}`].filter(Boolean).join(' · ')}
                       </ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{item.recipient || 'Тима'} · {item.company}</ThemedText>
                     </View>
                     <ThemedText style={styles.itemAmount}>{fmt(Number(item.amount))} ₽</ThemedText>
                   </TouchableOpacity>
-                ))}
+                ))}</View></View>)}
               </View>
             )}
         </ScrollView>
@@ -483,7 +518,7 @@ export default function MoneyScreen() {
                     <View style={styles.formCardHeader}>
                       <View style={[styles.formIcon, kind !== 'reimbursement' && { backgroundColor: `${theme.tint}1F` }]}>
                         {kind === 'reimbursement'
-                          ? <Image source={COMPANY_ICON} style={styles.companyIcon} resizeMode="contain" />
+                          ? <SymbolView name="building.2" tintColor={theme.tint} size={19} />
                           : <SymbolView name="person.2.fill" tintColor={theme.tint} size={18} />}
                       </View>
                       <ThemedText type="smallBold" style={{ flex: 1 }}>
@@ -578,16 +613,6 @@ export default function MoneyScreen() {
       <DebtsModal visible={showDebts} onClose={() => setShowDebts(false)} onChanged={load} />
       {!!editing && <ReimbursementEditor key={editing.id} item={editing} onClose={() => setEditing(null)} onChanged={async () => { setEditing(null); await load(); }} />}
     </ThemedView>
-  );
-}
-
-function MoneyStat({ label, value, color, sign }: { label: string; value: number; color: string; sign: string }) {
-  const theme = useTheme();
-  return (
-    <View style={[styles.moneyStat, { backgroundColor: theme.backgroundElement }]}>
-      <ThemedText type="small" themeColor="textSecondary">{label}</ThemedText>
-      <ThemedText type="smallBold" style={{ color }}>{sign}{fmt(value)} ₽</ThemedText>
-    </View>
   );
 }
 
@@ -692,23 +717,26 @@ const styles = StyleSheet.create({
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   roundButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   body: { flex: 1 },
-  overviewContent: { flexGrow: 1, paddingHorizontal: Spacing.three, paddingTop: Spacing.two, gap: Spacing.three },
-  hero: { borderRadius: Radius.lg, padding: Spacing.three, minHeight: 142, justifyContent: 'flex-end', borderWidth: StyleSheet.hairlineWidth },
-  heroTop: { position: 'absolute', left: Spacing.three, top: Spacing.three, right: Spacing.three, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  companyIcon: { width: '100%', height: '100%' },
-  heroValue: { fontSize: 34, lineHeight: 40, fontWeight: '700', letterSpacing: -1.25, fontVariant: ['tabular-nums'] },
-  heroRecipients: { flexDirection: 'row', gap: 8, marginTop: 12 },
-  recipientTotal: { flex: 1, minHeight: 38, paddingHorizontal: 10, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  statsRow: { flexDirection: 'row', gap: Spacing.two },
-  moneyStat: { flex: 1, borderRadius: Radius.md, padding: 12, gap: 2 },
-  allDebts: { width: 64, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', gap: 3 },
-  listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
-  statusSegment: { width: 190 },
-  empty: { alignItems: 'center', gap: 8, paddingVertical: Spacing.five, paddingHorizontal: Spacing.four, borderWidth: StyleSheet.hairlineWidth, borderRadius: Radius.lg },
-  list: { overflow: 'hidden', borderRadius: 14 },
-  item: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 13, paddingVertical: 12 },
-  itemIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  itemAmount: { fontSize: 17, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  overviewContent: { flexGrow: 1, paddingHorizontal: Spacing.three, paddingTop: Spacing.two, gap: 12 },
+  summary: { overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderRadius: 16 },
+  summaryMain: { minHeight: 76, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 11 },
+  summaryIcon: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  summaryValue: { marginTop: 2, fontSize: 24, lineHeight: 28, fontWeight: '700', letterSpacing: -0.7, fontVariant: ['tabular-nums'] },
+  recipientLine: { minHeight: 37, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  debtLine: { minHeight: 42, paddingHorizontal: 14, borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 11 },
+  listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end' },
+  statusSegment: { width: 184 },
+  periodBar: { minHeight: 42, borderWidth: StyleSheet.hairlineWidth, borderRadius: 12, flexDirection: 'row', alignItems: 'center' },
+  periodButton: { width: 42, height: 40, alignItems: 'center', justifyContent: 'center' },
+  periodLabel: { flex: 1, textAlign: 'center', textTransform: 'capitalize' },
+  empty: { alignItems: 'center', gap: 8, paddingVertical: Spacing.five, paddingHorizontal: Spacing.four, borderWidth: StyleSheet.hairlineWidth, borderRadius: 14 },
+  weekList: { gap: 12 },
+  weekGroup: { gap: 0 },
+  weekHeader: { minHeight: 48, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  list: { overflow: 'hidden' },
+  item: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 3, paddingVertical: 11 },
+  itemIcon: { width: 40, height: 40, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  itemAmount: { fontSize: 15, fontWeight: '700', fontVariant: ['tabular-nums'] },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
   conversation: { flex: 1 },

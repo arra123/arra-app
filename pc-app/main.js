@@ -674,10 +674,12 @@ let screenTimer = null;
 let captureFallbackTimer = null;
 let captureWindowReady = false;
 let captureWindowConfig = null;
+let pendingCaptureSignals = [];
+let rtcCaptureConnected = false;
 // A persistent Chromium capture stream is substantially faster than requesting
 // a brand-new desktopCapturer thumbnail for every frame. Keep the latter only as
 // a compatibility fallback for machines where desktop media capture is blocked.
-let screenCfg = { displayId: null, quality: 72, fps: 12, width: 1920 };
+let screenCfg = { displayId: null, quality: 76, fps: 30, width: 2560, rtc: true };
 let screenBusy = false;
 let lastCaptureMs = 0;
 let captureEngine = 'electron';
@@ -730,14 +732,41 @@ function ensureCaptureWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
+      partition: 'noda-capture',
     },
   });
+  // The supported Electron path for system audio is getDisplayMedia with a
+  // display-media handler. Isolating the capture session keeps these elevated
+  // media permissions away from the visible application window.
+  try {
+    const captureSession = captureWin.webContents.session;
+    captureSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+      callback(permission === 'media' || permission === 'display-capture' || permission === 'audioCapture');
+    });
+    captureSession.setDisplayMediaRequestHandler((_request, callback) => {
+      desktopCapturer.getSources({
+        types: ['screen'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: false,
+      }).then((sources) => {
+        const selected = sources.find((source) => source.id === captureWindowConfig?.sourceId)
+          || sources.find((source) => String(source.display_id) === String(captureWindowConfig?.displayId))
+          || sources[0];
+        if (!selected) { callback({}); return; }
+        callback({ video: selected, audio: 'loopback' });
+      }).catch((error) => {
+        writeLog('error', 'remote.capture.display-media', error);
+        callback({});
+      });
+    }, { useSystemPicker: false });
+  } catch (error) {
+    writeLog('warn', 'remote.capture.display-media-handler', error);
+  }
   captureWin.loadFile(path.join(__dirname, 'renderer', 'capture.html')).catch((error) => {
     writeLog('error', 'remote.capture.stream-load', error);
   });
   captureWin.on('closed', () => {
     captureWin = null;
     captureWindowReady = false;
+    rtcCaptureConnected = false;
   });
   return captureWin;
 }
@@ -769,7 +798,7 @@ async function prepareStreamCapture() {
     displayId: String(disp.id),
     width,
     height: Math.max(360, Math.round(width * disp.size.height / Math.max(1, disp.size.width))),
-    fps: Math.max(4, Math.min(20, Number(screenCfg.fps) || 12)),
+    fps: Math.max(8, Math.min(60, Number(screenCfg.fps) || 30)),
     quality: Math.max(20, Math.min(85, Number(screenCfg.quality) || 72)),
   };
   if (captureWindowReady) sendCaptureWindow('remote-capture-start', captureWindowConfig);
@@ -1005,6 +1034,7 @@ function startScreen(cfg, emit = null, viewer = 'client') {
   if (!screenCfg.displayId) screenCfg.displayId = String(screen.getPrimaryDisplay().id);
   captureFailures = 0; captureFrames = 0; captureDropped = 0; captureBytes = 0;
   captureStartedAt = Date.now(); lastCaptureMs = 0; captureEngine = 'stream';
+  rtcCaptureConnected = false;
   writeLog('info', 'remote.capture.start', { ...screenCfg, displayId: screenCfg.displayId, viewer: screenViewer });
   sendScreenHealth({ starting: true });
   prepareStreamCapture().catch((error) => {
@@ -1028,6 +1058,8 @@ function stopScreen() {
   if (captureFallbackTimer) { clearTimeout(captureFallbackTimer); captureFallbackTimer = null; }
   sendCaptureWindow('remote-capture-stop');
   captureWindowConfig = null;
+  pendingCaptureSignals = [];
+  rtcCaptureConnected = false;
   const elapsed = Math.max(1, Date.now() - (captureStartedAt || Date.now()));
   writeLog('info', 'remote.capture.stop', {
     frames: captureFrames, failures: captureFailures, dropped: captureDropped,
@@ -1367,6 +1399,13 @@ function handleRelay(msg, send) {
     case 'pc_offline':
       winSend('remote-screen-event', msg);
       break;
+    case 'screen_rtc_signal':
+      if (msg.role === 'host') winSend('remote-screen-event', msg);
+      else sendCaptureRtcSignal(msg.signal || {});
+      break;
+    case 'screen_rtc_state':
+      winSend('remote-screen-event', msg);
+      break;
     case 'hello':
       send({ type: 'cwd', cwd: getTermCwd(), root: codeRoot() });
       break;
@@ -1375,7 +1414,7 @@ function handleRelay(msg, send) {
       break;
     case 'screen_start':
       startScreen(
-        { displayId: msg.displayId, fps: msg.fps, quality: msg.quality, width: msg.width },
+        { displayId: msg.displayId, fps: msg.fps, quality: msg.quality, width: msg.width, rtc: !!msg.rtc },
         send,
         msg.sourceDeviceId || (msg.clientKind === 'desktop' ? 'desktop' : 'client'),
       );
@@ -1386,9 +1425,9 @@ function handleRelay(msg, send) {
       break;
     case 'screen_cfg':
       // Подстройка качества/частоты на лету (напр. при зуме — резче, в обзоре — быстрее)
-      if (msg.fps) screenCfg.fps = Math.max(4, Math.min(20, msg.fps));
+      if (msg.fps) screenCfg.fps = Math.max(8, Math.min(60, msg.fps));
       if (msg.quality) screenCfg.quality = Math.max(20, Math.min(80, msg.quality));
-      if (msg.width) screenCfg.width = Math.max(640, Math.min(1920, msg.width));
+      if (msg.width) screenCfg.width = Math.max(640, Math.min(3840, msg.width));
       break;
     case 'screen_stop':
       stopScreen();
@@ -1485,6 +1524,14 @@ function httpJson(method, urlPath, body, token) {
     if (data) req.write(data);
     req.end();
   });
+}
+
+function sendCaptureRtcSignal(signal) {
+  if (sendCaptureWindow('remote-capture-rtc-signal', signal)) return true;
+  pendingCaptureSignals.push(signal);
+  if (pendingCaptureSignals.length > 100) pendingCaptureSignals = pendingCaptureSignals.slice(-100);
+  ensureCaptureWindow();
+  return false;
 }
 
 function localAiBase() {
@@ -1667,6 +1714,8 @@ function connectWS() {
 let rendererRecoveryAttempts = 0;
 let rendererRecoveryWindowStartedAt = 0;
 let rendererHealthyTimer = null;
+let rendererHeartbeatAt = 0;
+let rendererWatchdogTimer = null;
 
 function recoverRenderer(details) {
   if (!win || win.isDestroyed() || manualClose || details?.reason === 'clean-exit') return;
@@ -1681,6 +1730,7 @@ function recoverRenderer(details) {
     return;
   }
   const delay = Math.min(1200, 250 * rendererRecoveryAttempts);
+  rendererHeartbeatAt = Date.now();
   writeLog('warn', 'renderer.recovery-scheduled', { details, attempt: rendererRecoveryAttempts, delay });
   setTimeout(() => {
     if (!win || win.isDestroyed() || manualClose) return;
@@ -1705,6 +1755,7 @@ function createWindow() {
   win.webContents.on('did-fail-load', (_e, code, description, validatedURL, isMainFrame) => {
     writeLog('error', 'renderer.did-fail-load', { code, description, validatedURL, isMainFrame });
     console.error('[renderer load]', code, description);
+    if (isMainFrame) recoverRenderer({ reason: 'did-fail-load', code, description, validatedURL });
   });
   win.webContents.on('console-message', (_e, ...args) => {
     const d = args.length === 1 && typeof args[0] === 'object' ? args[0] : { level: args[0], message: args[1], lineNumber: args[2], sourceId: args[3] };
@@ -1721,20 +1772,34 @@ function createWindow() {
     writeLog('fatal', 'renderer.process-gone', details);
     recoverRenderer(details);
   });
-  win.on('unresponsive', () => writeLog('error', 'window.unresponsive', {}));
+  win.on('unresponsive', () => {
+    writeLog('error', 'window.unresponsive', {});
+    recoverRenderer({ reason: 'unresponsive' });
+  });
   win.on('closed', () => {
     stopScreen();
     try { if (captureWin && !captureWin.isDestroyed()) captureWin.destroy(); } catch {}
     captureWin = null;
     captureWindowReady = false;
+    clearInterval(rendererWatchdogTimer);
+    rendererWatchdogTimer = null;
   });
   win.webContents.on('did-finish-load', () => {
+    rendererHeartbeatAt = Date.now();
     clearTimeout(rendererHealthyTimer);
     rendererHealthyTimer = setTimeout(() => {
       rendererRecoveryAttempts = 0;
       rendererRecoveryWindowStartedAt = 0;
     }, 30000);
   });
+  clearInterval(rendererWatchdogTimer);
+  rendererWatchdogTimer = setInterval(() => {
+    if (!win || win.isDestroyed() || !win.isVisible() || win.isMinimized() || win.webContents.isLoading()) return;
+    if (Date.now() - rendererHeartbeatAt <= 20000) return;
+    writeLog('error', 'renderer.heartbeat-timeout', { lastHeartbeatAt: rendererHeartbeatAt });
+    recoverRenderer({ reason: 'heartbeat-timeout', lastHeartbeatAt: rendererHeartbeatAt });
+  }, 5000);
+  rendererWatchdogTimer.unref?.();
   win.webContents.once('did-finish-load', () => {
     win.webContents.executeJavaScript(`({ title: document.title, body: document.body && document.body.innerText.slice(0,120), hasArra: !!window.arra })`)
       .then((state) => console.log('[renderer ready]', state)).catch((e) => { writeLog('error', 'renderer.inspect', e); console.error('[renderer inspect]', e); });
@@ -1794,11 +1859,21 @@ app.whenReady().then(async () => {
 });
 
 // Ручная проверка обновления из UI.
-ipcMain.handle('update-check', () => {
-  try { checkUpdatesNow(); writeLog('info', 'updater.manual-check', {}); return { ok: true }; }
+ipcMain.handle('update-check', async () => {
+  try {
+    writeLog('info', 'updater.manual-check', {});
+    return await checkUpdatesNow();
+  }
   catch (error) { writeLog('error', 'updater.manual-check', error); return { ok: false, error: error.message }; }
 });
 ipcMain.handle('app-version', () => app.getVersion());
+ipcMain.on('renderer-heartbeat', (_event, payload = {}) => {
+  rendererHeartbeatAt = Date.now();
+  if (payload.healthy === false) {
+    writeLog('error', 'renderer.unhealthy-dom', payload);
+    recoverRenderer({ reason: 'unhealthy-dom', payload });
+  }
+});
 ipcMain.handle('app-log', (_e, { level = 'info', source = 'renderer', payload = {} } = {}) => {
   writeLog(String(level).slice(0, 16), String(source).slice(0, 120), payload);
   return { ok: true };
@@ -2254,6 +2329,60 @@ ipcMain.handle('workspace-settings', () => ({
   deviceName: settings.deviceName || os.hostname(),
   deviceRole: settings.deviceProfile?.role || '',
 }));
+ipcMain.handle('project-environment', (_event, projectPath) => {
+  const requested = path.resolve(String(projectPath || ''));
+  const root = path.resolve(codeRoot());
+  const relative = path.relative(root, requested);
+  if (!projectPath || relative.startsWith('..') || path.isAbsolute(relative)) {
+    return { ok: false, error: 'Проект находится вне рабочей папки' };
+  }
+  try {
+    if (!fs.statSync(requested).isDirectory()) throw new Error('Папка проекта не найдена');
+    const runGit = (args, timeout = 6000) => {
+      const result = spawnSync('git', args, { cwd: requested, encoding: 'utf8', windowsHide: true, timeout });
+      if (result.error) throw result.error;
+      return { stdout: String(result.stdout || '').trim(), stderr: String(result.stderr || '').trim(), status: result.status };
+    };
+    const inside = runGit(['rev-parse', '--is-inside-work-tree']);
+    if (inside.status !== 0 || inside.stdout !== 'true') return { ok: true, git: false, path: requested };
+    const branchResult = runGit(['branch', '--show-current']);
+    const statusResult = runGit(['status', '--porcelain=v1']);
+    const diffResult = runGit(['diff', 'HEAD', '--numstat']);
+    const remoteResult = runGit(['remote', '-v']);
+    const files = statusResult.stdout ? statusResult.stdout.split(/\r?\n/).filter(Boolean) : [];
+    let additions = 0;
+    let deletions = 0;
+    for (const line of diffResult.stdout.split(/\r?\n/)) {
+      const [added, deleted] = line.split(/\s+/);
+      if (/^\d+$/.test(added)) additions += Number(added);
+      if (/^\d+$/.test(deleted)) deletions += Number(deleted);
+    }
+    let ahead = 0;
+    let behind = 0;
+    try {
+      const upstream = runGit(['rev-list', '--left-right', '--count', '@{upstream}...HEAD']);
+      const [behindValue, aheadValue] = upstream.stdout.split(/\s+/).map(Number);
+      behind = Number.isFinite(behindValue) ? behindValue : 0;
+      ahead = Number.isFinite(aheadValue) ? aheadValue : 0;
+    } catch {}
+    return {
+      ok: true,
+      git: true,
+      path: requested,
+      branch: branchResult.stdout || 'HEAD',
+      changes: files.length,
+      additions,
+      deletions,
+      ahead,
+      behind,
+      remote: remoteResult.stdout.split(/\r?\n/).find((line) => /\(fetch\)$/.test(line)) || '',
+      files: files.slice(0, 12).map((line) => ({ status: line.slice(0, 2).trim() || 'M', path: line.slice(3).trim() })),
+    };
+  } catch (error) {
+    writeLog('warn', 'workspace.project-environment', { projectPath: requested, error });
+    return { ok: false, error: error.message || 'Не удалось прочитать состояние проекта' };
+  }
+});
 ipcMain.handle('set-local-ai-url', (_event, value) => {
   try {
     const parsed = new URL(String(value || '').trim());
@@ -2591,6 +2720,34 @@ ipcMain.on('remote-capture-ready', (event) => {
   if (!captureWin || captureWin.isDestroyed() || event.sender !== captureWin.webContents) return;
   captureWindowReady = true;
   if (captureWindowConfig) sendCaptureWindow('remote-capture-start', captureWindowConfig);
+  const queuedSignals = pendingCaptureSignals;
+  pendingCaptureSignals = [];
+  for (const signal of queuedSignals) sendCaptureWindow('remote-capture-rtc-signal', signal);
+});
+
+ipcMain.on('remote-capture-rtc-signal', (event, signal = {}) => {
+  if (!captureWin || captureWin.isDestroyed() || event.sender !== captureWin.webContents) return;
+  emitScreenMessage({ type: 'screen_rtc_signal', role: 'host', signal });
+});
+
+ipcMain.on('remote-capture-rtc-state', (event, payload = {}) => {
+  if (!captureWin || captureWin.isDestroyed() || event.sender !== captureWin.webContents) return;
+  const state = String(payload.state || '');
+  rtcCaptureConnected = state === 'connected'
+    || (rtcCaptureConnected && !['failed', 'closed', 'disconnected'].includes(state));
+  if (state === 'connected') {
+    captureEngine = 'webrtc';
+    if (screenTimer) { clearTimeout(screenTimer); screenTimer = null; }
+    if (captureFallbackTimer) { clearTimeout(captureFallbackTimer); captureFallbackTimer = null; }
+  }
+  writeLog(state === 'failed' ? 'error' : 'info', 'remote.capture.rtc-state', payload);
+  emitScreenMessage({ type: 'screen_rtc_state', role: 'host', ...payload });
+  sendScreenHealth({ rtcState: state, audio: !!payload.audio });
+});
+
+ipcMain.on('remote-capture-input', (event, payload = {}) => {
+  if (!captureWin || captureWin.isDestroyed() || event.sender !== captureWin.webContents) return;
+  screenInput(payload, (ack) => sendCaptureWindow('remote-capture-input-ack', ack));
 });
 
 ipcMain.on('remote-capture-frame', (event, payload = {}) => {

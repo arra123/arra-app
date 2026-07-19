@@ -101,9 +101,11 @@ const remoteDesktop = {
   moveAt: 0, uiAt: 0, error: '', inputError: '', inputSeq: 0, inputAckAt: 0,
   moveInFlight: null, queuedMove: null, moveReleaseTimer: null, inputSentAt: new Map(), inputRtt: 0,
   engine: '', frames: 0, failures: 0, blackFrames: 0, receiveFps: 0, frameLatency: 0,
+  peer: null, inputChannel: null, rtcStream: null, rtcCandidates: [], rtcState: '',
+  rtcVideoGeneration: 0, audioAvailable: false, muted: false,
 };
 
-const REMOTE_STREAM_CONFIG = Object.freeze({ fps: 12, quality: 72, width: 1920 });
+const REMOTE_STREAM_CONFIG = Object.freeze({ fps: 30, quality: 76, width: 2560, rtc: true });
 
 function deviceRole(device, currentId, currentRole, deviceCount) {
   if (device.id === currentId) return currentRole || 'pc';
@@ -441,16 +443,33 @@ function setUpdateButton(updateState, label) {
   updateUiState = updateState || '';
   updateUiLabel = label || 'Проверить обновление';
   const btn = document.getElementById('side-update');
-  if (!btn) return;
-  btn.classList.remove('checking', 'downloading', 'ready');
-  if (updateUiState) btn.classList.add(updateUiState);
-  btn.disabled = updateUiState === 'checking' || updateUiState === 'downloading';
-  const text = btn.querySelector('b'); if (text) text.textContent = updateUiLabel;
+  if (btn) {
+    btn.classList.remove('checking', 'downloading', 'ready', 'installing');
+    if (updateUiState) btn.classList.add(updateUiState);
+    btn.disabled = updateUiState === 'checking' || updateUiState === 'downloading' || updateUiState === 'installing';
+    const text = btn.querySelector('b'); if (text) text.textContent = updateUiLabel;
+  }
+  const settingsButton = document.getElementById('workspace-update-check');
+  if (settingsButton) {
+    settingsButton.textContent = updateUiLabel;
+    settingsButton.disabled = updateUiState === 'checking' || updateUiState === 'downloading' || updateUiState === 'installing';
+    settingsButton.classList.toggle('checking', updateUiState === 'checking');
+    settingsButton.classList.toggle('downloading', updateUiState === 'downloading');
+    settingsButton.classList.toggle('ready', updateUiState === 'ready');
+  }
 }
 async function triggerUpdateCheck() {
   setUpdateButton('checking', 'Проверяю…');
-  try { await window.arra.updateCheck(); }
-  catch { setUpdateButton('', 'Проверить обновление'); }
+  try {
+    const result = await window.arra.updateCheck();
+    if (!result?.ok) {
+      setUpdateButton('', 'Повторить проверку');
+      toast('Обновление', result?.error || 'Механизм обновления недоступен', 'warn', 8000);
+    }
+  } catch (error) {
+    setUpdateButton('', 'Повторить проверку');
+    toast('Обновление', error?.message || 'Не удалось проверить обновление', 'warn', 8000);
+  }
 }
 // ---- единая тёмная палитра ----
 const XTERM_THEMES = {
@@ -597,21 +616,216 @@ async function sendRemoteDesktop(message) {
   return result;
 }
 
+const REMOTE_RTC_FALLBACK_CONFIG = Object.freeze({
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+  ],
+  bundlePolicy: 'max-bundle',
+});
+let remoteRtcConfig = REMOTE_RTC_FALLBACK_CONFIG;
+let remoteRtcConfigLoadedAt = 0;
+
+async function loadRemoteRtcConfig(force = false) {
+  if (!force && Date.now() - remoteRtcConfigLoadedAt < 45 * 60_000) return remoteRtcConfig;
+  try {
+    const result = await api('GET', '/pc/rtc-config');
+    if (Array.isArray(result?.iceServers) && result.iceServers.length) {
+      remoteRtcConfig = { iceServers: result.iceServers, bundlePolicy: 'max-bundle' };
+      remoteRtcConfigLoadedAt = Date.now();
+    }
+  } catch (error) {
+    reportError('remote.rtc-config', error);
+    remoteRtcConfig = REMOTE_RTC_FALLBACK_CONFIG;
+  }
+  return remoteRtcConfig;
+}
+
+function closeRemotePeer() {
+  remoteDesktop.rtcVideoGeneration += 1;
+  if (remoteDesktop.inputChannel) {
+    try { remoteDesktop.inputChannel.close(); } catch {}
+  }
+  remoteDesktop.inputChannel = null;
+  if (remoteDesktop.peer) {
+    try {
+      remoteDesktop.peer.onicecandidate = null;
+      remoteDesktop.peer.ontrack = null;
+      remoteDesktop.peer.onconnectionstatechange = null;
+      remoteDesktop.peer.close();
+    } catch {}
+  }
+  remoteDesktop.peer = null;
+  remoteDesktop.rtcStream = null;
+  remoteDesktop.rtcCandidates = [];
+  remoteDesktop.rtcState = '';
+  remoteDesktop.audioAvailable = false;
+  const video = document.getElementById('remote-video');
+  if (video) { try { video.pause(); } catch {} video.srcObject = null; }
+}
+
+async function sendRemoteRtcSignal(signal) {
+  if (!remoteDesktop.running) return;
+  const payload = signal?.description?.type === 'offer'
+    ? { ...signal, iceServers: remoteRtcConfig.iceServers }
+    : signal;
+  const result = await sendRemoteDesktop({ type: 'screen_rtc_signal', role: 'viewer', signal: payload });
+  if (!result?.ok) reportError('remote.rtc-signal', new Error(result?.error || 'Сигнал прямого соединения не отправлен'));
+}
+
+function handleRemoteDataMessage(event) {
+  try {
+    const message = JSON.parse(String(event.data || ''));
+    if (message?.type === 'screen_input_ack') handleRemoteDesktopEvent(message);
+  } catch (error) {
+    reportError('remote.rtc-data', error);
+  }
+}
+
+function attachRemoteInputChannel(channel) {
+  remoteDesktop.inputChannel = channel;
+  channel.onopen = () => {
+    remoteDesktop.rtcState = remoteDesktop.peer?.connectionState || 'connected';
+    updateRemoteDeviceUi();
+  };
+  channel.onclose = () => { if (remoteDesktop.inputChannel === channel) remoteDesktop.inputChannel = null; };
+  channel.onerror = (event) => reportError('remote.rtc-input', new Error(event?.error?.message || 'Канал управления закрыт'));
+  channel.onmessage = handleRemoteDataMessage;
+}
+
+function attachRemoteStreamToVideo() {
+  const video = document.getElementById('remote-video');
+  if (!video || !remoteDesktop.rtcStream) return;
+  if (video.srcObject !== remoteDesktop.rtcStream) video.srcObject = remoteDesktop.rtcStream;
+  video.muted = remoteDesktop.muted;
+  const generation = ++remoteDesktop.rtcVideoGeneration;
+  const frame = (_now, metadata = {}) => {
+    if (generation !== remoteDesktop.rtcVideoGeneration || !remoteDesktop.running) return;
+    const previous = remoteDesktop.lastFrameAt;
+    remoteDesktop.lastFrameAt = Date.now();
+    remoteDesktop.frameW = Number(video.videoWidth) || remoteDesktop.frameW;
+    remoteDesktop.frameH = Number(video.videoHeight) || remoteDesktop.frameH;
+    if (previous) {
+      const fps = 1000 / Math.max(1, remoteDesktop.lastFrameAt - previous);
+      remoteDesktop.receiveFps = remoteDesktop.receiveFps ? remoteDesktop.receiveFps * 0.8 + fps * 0.2 : fps;
+    }
+    if (metadata?.captureTime) {
+      const latency = Math.max(0, performance.timeOrigin + performance.now() - metadata.captureTime);
+      if (Number.isFinite(latency) && latency < 60_000) {
+        remoteDesktop.frameLatency = remoteDesktop.frameLatency ? remoteDesktop.frameLatency * 0.8 + latency * 0.2 : latency;
+      }
+    }
+    fitRemoteCanvas();
+    const hint = document.getElementById('remote-stage-hint'); if (hint) hint.hidden = true;
+    if (remoteDesktop.lastFrameAt - remoteDesktop.uiAt > 1000) {
+      remoteDesktop.uiAt = remoteDesktop.lastFrameAt;
+      updateRemoteDeviceUi();
+    }
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(frame);
+  };
+  video.onloadedmetadata = () => {
+    remoteDesktop.frameW = video.videoWidth || remoteDesktop.frameW;
+    remoteDesktop.frameH = video.videoHeight || remoteDesktop.frameH;
+    fitRemoteCanvas();
+  };
+  video.onplaying = () => {
+    remoteDesktop.engine = 'webrtc';
+    remoteDesktop.lastFrameAt = Date.now();
+    document.getElementById('remote-stage')?.classList.add('is-webrtc');
+    const hint = document.getElementById('remote-stage-hint'); if (hint) hint.hidden = true;
+    updateRemoteDeviceUi();
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(frame);
+  };
+  video.play().catch((error) => reportError('remote.rtc-play', error));
+}
+
+function ensureRemotePeer() {
+  if (remoteDesktop.peer && remoteDesktop.peer.connectionState !== 'closed') return remoteDesktop.peer;
+  const peer = new RTCPeerConnection(remoteRtcConfig);
+  remoteDesktop.peer = peer;
+  remoteDesktop.rtcCandidates = [];
+  peer.addTransceiver('video', { direction: 'recvonly' });
+  peer.addTransceiver('audio', { direction: 'recvonly' });
+  attachRemoteInputChannel(peer.createDataChannel('noda-input', { ordered: false, maxRetransmits: 0 }));
+  peer.onicecandidate = (event) => {
+    if (event.candidate) sendRemoteRtcSignal({ candidate: event.candidate.toJSON?.() || event.candidate });
+  };
+  peer.ontrack = (event) => {
+    const nextStream = event.streams?.[0] || remoteDesktop.rtcStream || new MediaStream();
+    if (!event.streams?.[0] && !nextStream.getTracks().some((track) => track.id === event.track.id)) nextStream.addTrack(event.track);
+    remoteDesktop.rtcStream = nextStream;
+    remoteDesktop.audioAvailable = nextStream.getAudioTracks().length > 0;
+    attachRemoteStreamToVideo();
+  };
+  peer.onconnectionstatechange = () => {
+    remoteDesktop.rtcState = peer.connectionState;
+    if (peer.connectionState === 'connected') {
+      remoteDesktop.engine = 'webrtc';
+      remoteDesktop.error = '';
+      remoteDesktop.lastFrameAt = Date.now();
+      attachRemoteStreamToVideo();
+    } else if (peer.connectionState === 'failed') {
+      remoteDesktop.error = 'Прямое соединение недоступно — включён резервный поток';
+      document.getElementById('remote-stage')?.classList.remove('is-webrtc');
+    }
+    updateRemoteDeviceUi();
+  };
+  return peer;
+}
+
+async function beginRemotePeer() {
+  try {
+    closeRemotePeer();
+    await loadRemoteRtcConfig();
+    const peer = ensureRemotePeer();
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    await sendRemoteRtcSignal({ description: peer.localDescription.toJSON?.() || peer.localDescription });
+  } catch (error) {
+    remoteDesktop.rtcState = 'failed';
+    reportError('remote.rtc-start', error);
+  }
+}
+
+async function handleRemoteRtcSignal(signal = {}) {
+  try {
+    const peer = ensureRemotePeer();
+    if (signal.description) {
+      await peer.setRemoteDescription(signal.description);
+      const queued = remoteDesktop.rtcCandidates;
+      remoteDesktop.rtcCandidates = [];
+      for (const candidate of queued) await peer.addIceCandidate(candidate);
+    } else if (signal.candidate) {
+      if (peer.remoteDescription) await peer.addIceCandidate(signal.candidate);
+      else remoteDesktop.rtcCandidates.push(signal.candidate);
+    }
+  } catch (error) {
+    remoteDesktop.rtcState = 'failed';
+    reportError('remote.rtc-answer', error);
+  }
+}
+
 function dispatchRemoteInput(message) {
   remoteDesktop.inputSeq += 1;
   const seq = String(remoteDesktop.inputSeq);
   remoteDesktop.inputSentAt.set(seq, Date.now());
   while (remoteDesktop.inputSentAt.size > 80) remoteDesktop.inputSentAt.delete(remoteDesktop.inputSentAt.keys().next().value);
+  const payload = { ...message, type: 'screen_input', seq };
+  const directChannel = remoteDesktop.inputChannel;
+  if (directChannel?.readyState === 'open') {
+    try {
+      directChannel.send(JSON.stringify(payload));
+      return Promise.resolve({ ok: true, direct: true });
+    } catch (error) {
+      reportError('remote.rtc-input-send', error);
+    }
+  }
   if (message.action === 'move') {
     remoteDesktop.moveInFlight = seq;
     clearTimeout(remoteDesktop.moveReleaseTimer);
     remoteDesktop.moveReleaseTimer = setTimeout(() => releaseRemoteMove(seq), 180);
   }
-  return sendRemoteDesktop({
-    ...message,
-    type: 'screen_input',
-    seq,
-  });
+  return sendRemoteDesktop(payload);
 }
 
 function releaseRemoteMove(seq) {
@@ -625,6 +839,7 @@ function releaseRemoteMove(seq) {
 }
 
 function sendRemoteInput(message) {
+  if (remoteDesktop.inputChannel?.readyState === 'open') return dispatchRemoteInput(message);
   if (message.action === 'move') {
     if (remoteDesktop.moveInFlight) {
       // Pointer events arrive faster than a network round-trip. Retaining every
@@ -667,10 +882,12 @@ async function startRemoteDesktop() {
   await sendRemoteDesktop({ type: 'screen_stop' });
   await sendRemoteDesktop({ type: 'screen_start', displayId: remoteDesktop.activeScreen || undefined, ...REMOTE_STREAM_CONFIG });
   await sendRemoteDesktop({ type: 'screen_list' });
+  await beginRemotePeer();
 }
 
 async function stopRemoteDesktop() {
   if (remoteDesktop.deviceId) await window.arra.remoteScreenSend(remoteDesktop.deviceId, { type: 'screen_stop' });
+  closeRemotePeer();
   remoteDesktop.running = false;
   remoteDesktop.frame = null;
   remoteDesktop.frameBytes = 0;
@@ -732,6 +949,7 @@ async function maintainRemoteDesktop() {
     await sendRemoteDesktop({ type: 'screen_stop' });
     await sendRemoteDesktop({ type: 'screen_start', displayId: remoteDesktop.activeScreen || undefined, ...REMOTE_STREAM_CONFIG });
     await sendRemoteDesktop({ type: 'screen_list' });
+    await beginRemotePeer();
   } catch (error) {
     reportError('remote.screen-restart', error, { deviceId: remoteDesktop.deviceId, attempt: remoteDesktop.restartCount });
   } finally {
@@ -743,6 +961,7 @@ async function maintainRemoteDesktop() {
 function fitRemoteCanvas() {
   const stage = document.getElementById('remote-stage');
   const canvas = document.getElementById('remote-canvas');
+  const video = document.getElementById('remote-video');
   if (!stage || !canvas) return;
   const maxW = Math.max(1, stage.clientWidth - 24);
   const maxH = Math.max(1, stage.clientHeight - 24);
@@ -752,6 +971,10 @@ function fitRemoteCanvas() {
   if (height > maxH) { height = maxH; width = height * ratio; }
   canvas.style.width = `${Math.round(width)}px`;
   canvas.style.height = `${Math.round(height)}px`;
+  if (video) {
+    video.style.width = `${Math.round(width)}px`;
+    video.style.height = `${Math.round(height)}px`;
+  }
 }
 
 function drawRemoteFrame() {
@@ -862,6 +1085,13 @@ function handleRemoteDesktopEvent(message) {
     if (message.action === 'move') releaseRemoteMove(message.seq);
     remoteDesktop.inputError = message.ok ? '' : (message.error || 'Удалённый компьютер не принял управление');
     updateRemoteDeviceUi();
+  } else if (message.type === 'screen_rtc_signal' && message.role === 'host') {
+    handleRemoteRtcSignal(message.signal || {});
+  } else if (message.type === 'screen_rtc_state') {
+    remoteDesktop.rtcState = String(message.state || remoteDesktop.rtcState);
+    remoteDesktop.audioAvailable = message.audio !== false && (remoteDesktop.audioAvailable || !!message.audio);
+    if (message.state === 'failed' && message.error) remoteDesktop.error = message.error;
+    updateRemoteDeviceUi();
   } else if (message.type === 'pc_offline') {
     remoteDesktop.running = false;
     remoteDesktop.error = 'Компьютер отключился';
@@ -872,9 +1102,11 @@ function handleRemoteDesktopEvent(message) {
 window.arra.onRemoteScreenEvent?.(handleRemoteDesktopEvent);
 
 function remotePoint(event) {
-  const canvas = document.getElementById('remote-canvas');
-  if (!canvas) return null;
-  const rect = canvas.getBoundingClientRect();
+  const surface = event?.currentTarget?.id === 'remote-video' || event?.currentTarget?.id === 'remote-canvas'
+    ? event.currentTarget
+    : (remoteDesktop.engine === 'webrtc' ? document.getElementById('remote-video') : document.getElementById('remote-canvas'));
+  if (!surface) return null;
+  const rect = surface.getBoundingClientRect();
   return {
     nx: Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width))),
     ny: Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height))),
@@ -884,12 +1116,14 @@ function remotePoint(event) {
 function moveRemoteCursor(event, visible = true) {
   const stage = document.getElementById('remote-stage');
   const cursor = document.getElementById('remote-cursor');
-  const canvas = document.getElementById('remote-canvas');
-  if (!stage || !cursor || !canvas || !remoteDesktop.running) return;
+  const surface = event?.currentTarget?.id === 'remote-video' || event?.currentTarget?.id === 'remote-canvas'
+    ? event.currentTarget
+    : document.getElementById('remote-canvas');
+  if (!stage || !cursor || !surface || !remoteDesktop.running) return;
   const stageRect = stage.getBoundingClientRect();
-  const canvasRect = canvas.getBoundingClientRect();
-  const inside = event.clientX >= canvasRect.left && event.clientX <= canvasRect.right
-    && event.clientY >= canvasRect.top && event.clientY <= canvasRect.bottom;
+  const surfaceRect = surface.getBoundingClientRect();
+  const inside = event.clientX >= surfaceRect.left && event.clientX <= surfaceRect.right
+    && event.clientY >= surfaceRect.top && event.clientY <= surfaceRect.bottom;
   cursor.hidden = !visible || !inside;
   if (!inside) return;
   cursor.style.transform = `translate3d(${Math.round(event.clientX - stageRect.left)}px,${Math.round(event.clientY - stageRect.top)}px,0)`;
@@ -897,40 +1131,42 @@ function moveRemoteCursor(event, visible = true) {
 
 function wireRemoteCanvas() {
   const canvas = document.getElementById('remote-canvas');
-  if (!canvas) return;
-  canvas.onpointerdown = (event) => {
-    canvas.focus();
+  const video = document.getElementById('remote-video');
+  if (!canvas || !video) return;
+  const wireSurface = (surface) => {
+  surface.onpointerdown = (event) => {
+    surface.focus();
     moveRemoteCursor(event);
     if (event.button !== 0) return;
     event.preventDefault();
-    canvas.setPointerCapture?.(event.pointerId);
+    surface.setPointerCapture?.(event.pointerId);
     const point = remotePoint(event); if (point) sendRemoteInput({ action: 'down', ...point });
   };
-  canvas.onpointermove = (event) => {
+  surface.onpointermove = (event) => {
     moveRemoteCursor(event);
-    const now = Date.now(); if (now - remoteDesktop.moveAt < 28) return;
+    const now = Date.now(); if (now - remoteDesktop.moveAt < (remoteDesktop.inputChannel?.readyState === 'open' ? 16 : 28)) return;
     remoteDesktop.moveAt = now;
     const point = remotePoint(event); if (point) sendRemoteInput({ action: 'move', ...point });
   };
-  canvas.onpointerup = (event) => {
+  surface.onpointerup = (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
     const point = remotePoint(event); if (point) sendRemoteInput({ action: 'up', ...point });
   };
-  canvas.onpointercancel = (event) => {
+  surface.onpointercancel = (event) => {
     const point = remotePoint(event); if (point) sendRemoteInput({ action: 'up', ...point });
   };
-  canvas.onpointerenter = (event) => moveRemoteCursor(event);
-  canvas.onpointerleave = (event) => moveRemoteCursor(event, false);
-  canvas.oncontextmenu = (event) => {
+  surface.onpointerenter = (event) => moveRemoteCursor(event);
+  surface.onpointerleave = (event) => moveRemoteCursor(event, false);
+  surface.oncontextmenu = (event) => {
     event.preventDefault();
     const point = remotePoint(event); if (point) sendRemoteInput({ action: 'click', button: 'right', ...point });
   };
-  canvas.onwheel = (event) => {
+  surface.onwheel = (event) => {
     event.preventDefault();
     const point = remotePoint(event); if (point) sendRemoteInput({ action: 'scroll', dy: event.deltaY > 0 ? -120 : 120, ...point });
   };
-  canvas.onkeydown = (event) => {
+  surface.onkeydown = (event) => {
     const map = { Enter: 'enter', Backspace: 'backspace', Escape: 'esc', Tab: 'tab', ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Delete: 'delete', Home: 'home', End: 'end', ' ': 'space' };
     const key = map[event.key];
     const modifiers = { ctrl: event.ctrlKey || event.metaKey, alt: event.altKey, shift: event.shiftKey };
@@ -946,6 +1182,9 @@ function wireRemoteCanvas() {
       }
     }
   };
+  };
+  wireSurface(canvas);
+  wireSurface(video);
   new ResizeObserver(fitRemoteCanvas).observe(document.getElementById('remote-stage'));
 }
 
@@ -969,10 +1208,12 @@ function updateRemoteDeviceUi() {
   const current = selectedRemoteDevice();
   const status = document.getElementById('remote-status');
   const action = document.getElementById('remote-connect');
+  const audio = document.getElementById('remote-audio');
   const stage = document.getElementById('remote-stage');
   const cursor = document.getElementById('remote-cursor');
   const displayError = remoteDesktop.error || remoteDesktop.inputError;
   stage?.classList.toggle('is-live', remoteDesktop.running);
+  stage?.classList.toggle('is-webrtc', remoteDesktop.engine === 'webrtc' && remoteDesktop.rtcState === 'connected');
   if (cursor && !remoteDesktop.running) cursor.hidden = true;
   if (status) {
     const frameAge = remoteDesktop.lastFrameAt ? Math.max(0, Math.round((Date.now() - remoteDesktop.lastFrameAt) / 1000)) : null;
@@ -987,13 +1228,21 @@ function updateRemoteDeviceUi() {
         ? `Восстанавливаю экран${remoteDesktop.restartCount ? ` · попытка ${remoteDesktop.restartCount}` : ''}`
         : (!remoteDesktop.lastFrameAt
           ? 'Подключаю экран…'
-          : `Экран в сети${frameInfo}${liveInfo}${remoteDesktop.engine ? ` · ${remoteDesktop.engine === 'stream' ? 'быстрый поток' : (remoteDesktop.engine === 'windows' ? 'Windows' : 'резервный режим')}` : ''}`))
+          : `Экран в сети${frameInfo}${liveInfo}${remoteDesktop.engine ? ` · ${remoteDesktop.engine === 'webrtc' ? 'прямое соединение' : (remoteDesktop.engine === 'stream' ? 'резервный поток' : (remoteDesktop.engine === 'windows' ? 'Windows' : 'резервный режим'))}` : ''}`))
       : (current?.online ? 'Готов к подключению' : 'Устройство не в сети'));
     status.className = displayError ? 'remote-status bad' : 'remote-status';
   }
   if (action) {
     action.textContent = remoteDesktop.running ? 'Отключиться' : 'Подключиться';
     action.disabled = !remoteDesktop.running && !current?.online;
+  }
+  if (audio) {
+    audio.hidden = !remoteDesktop.running;
+    audio.disabled = !remoteDesktop.audioAvailable;
+    audio.classList.toggle('is-muted', remoteDesktop.muted);
+    audio.title = remoteDesktop.audioAvailable
+      ? (remoteDesktop.muted ? 'Включить звук компьютера' : 'Выключить звук компьютера')
+      : 'Системный звук недоступен в резервном режиме';
   }
 }
 
@@ -1003,8 +1252,8 @@ function renderRemoteDesktop() {
   app.innerHTML = `<div class="remote-page">
     <header class="remote-head"><div><h1>Удалённый ПК</h1></div>
       <div class="remote-device-controls"><select id="remote-device" aria-label="Компьютер"></select><button class="btn" id="remote-connect">Подключиться</button></div></header>
-    <div class="remote-meta"><span id="remote-status">Готов к подключению</span><div id="remote-monitors" class="remote-monitors"></div></div>
-    <div class="remote-stage" id="remote-stage"><canvas id="remote-canvas" tabindex="0"></canvas><div id="remote-cursor" class="remote-cursor" hidden><svg viewBox="0 0 24 30" aria-hidden="true"><path d="M2 2v22l6.1-5.2 4.2 9.2 4.1-1.9-4.2-9.1H21L2 2Z"/></svg></div><div id="remote-stage-hint" class="remote-stage-hint"><b>${device ? 'Экран появится здесь' : 'Другой компьютер пока не найден'}</b><span>${device ? 'Noda на втором устройстве должна быть открыта и находиться в сети.' : 'Установи Noda на ПК и войди под тем же аккаунтом.'}</span></div></div>
+    <div class="remote-meta"><span id="remote-status">Готов к подключению</span><div class="remote-monitors" id="remote-monitors"></div><button class="remote-audio" id="remote-audio" aria-label="Системный звук" title="Системный звук" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5l4.5 4V5Z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/></svg></button></div>
+    <div class="remote-stage" id="remote-stage"><video id="remote-video" tabindex="0" autoplay playsinline></video><canvas id="remote-canvas" tabindex="0"></canvas><div id="remote-cursor" class="remote-cursor" hidden><svg viewBox="0 0 24 30" aria-hidden="true"><path d="M2 2v22l6.1-5.2 4.2 9.2 4.1-1.9-4.2-9.1H21L2 2Z"/></svg></div><div id="remote-stage-hint" class="remote-stage-hint"><b>${device ? 'Экран появится здесь' : 'Другой компьютер пока не найден'}</b><span>${device ? 'Noda на втором устройстве должна быть открыта и находиться в сети.' : 'Установи Noda на ПК и войди под тем же аккаунтом.'}</span></div></div>
   </div>`;
   const select = document.getElementById('remote-device');
   select.onchange = async () => {
@@ -1016,9 +1265,15 @@ function renderRemoteDesktop() {
     updateRemoteDeviceUi(); renderRemoteScreenButtons();
   };
   document.getElementById('remote-connect').onclick = () => remoteDesktop.running ? stopRemoteDesktop() : startRemoteDesktop();
+  document.getElementById('remote-audio').onclick = () => {
+    remoteDesktop.muted = !remoteDesktop.muted;
+    const video = document.getElementById('remote-video'); if (video) video.muted = remoteDesktop.muted;
+    updateRemoteDeviceUi();
+  };
   wireRemoteCanvas();
   renderRemoteScreenButtons();
   updateRemoteDeviceUi();
+  if (remoteDesktop.rtcStream) attachRemoteStreamToVideo();
   if (remoteDesktop.frame) drawRemoteFrame();
 }
 
@@ -2781,7 +3036,14 @@ function openEditorModal() {
 // ================= file receive events =================
 window.arra.onFile((f) => {
   state.files.unshift(f);
-  if (state.section === 'files') renderFeed();
+  if (state.section === 'files') {
+    const liquidHost = document.getElementById('liquid-files-content');
+    if (liquidHost && typeof liquidFilesHtml === 'function') {
+      liquidHost.innerHTML = liquidFilesHtml();
+      if (typeof bindLiquidFiles === 'function') bindLiquidFiles();
+    }
+    else renderFeed();
+  }
   toast('Файл получен', `${f.name} — скопирован (${f.copied || 'путь'})`, 'ok');
 });
 window.arra.onStatus((s) => {
@@ -2807,6 +3069,9 @@ window.arra.onUpdate((o) => {
   } else if (o.state === 'ready') {
     setUpdateButton('ready', `Готово ${o.version || ''}`);
     toast('Обновление готово', 'Версия ' + (o.version || '') + ' скачана', 'ok', 8000);
+  } else if (o.state === 'installing') {
+    setUpdateButton('installing', 'Перезапускаю…');
+    toast('Устанавливаю обновление', 'Noda сейчас перезапустится', 'ok', 5000);
   } else if (o.state === 'error') {
     setUpdateButton('', 'Проверить обновление');
     toast('Обновление', 'Не удалось проверить: ' + (o.message || ''), 'warn', 6000);
@@ -2827,5 +3092,17 @@ async function boot() {
   route();
 }
 boot();
+function sendRendererHeartbeat() {
+  const root = document.getElementById('app');
+  const rect = root?.getBoundingClientRect();
+  window.arra.heartbeat?.({
+    healthy: !!root && Number(rect?.width || 0) > 0 && Number(rect?.height || 0) > 0,
+    section: state.section || '',
+    syncBusy: !!sync.busy,
+    childCount: root?.childElementCount || 0,
+  });
+}
+sendRendererHeartbeat();
+setInterval(sendRendererHeartbeat, 5000);
 setInterval(() => refreshPresence(true), 5000);
 setInterval(() => maintainRemoteDesktop(), 1000);

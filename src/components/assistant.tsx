@@ -33,12 +33,6 @@ const hhmm = (iso?: string) => iso
   ? new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
   : '';
 
-const STARTERS = [
-  'Разбери задачу и предложи план',
-  'Помоги продолжить работу над проектом',
-  'Объясни этот код простыми словами',
-];
-
 export function Assistant() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -198,18 +192,10 @@ export function Assistant() {
 
   const empty = (
     <View style={styles.empty}>
-      <View style={styles.orb}><SymbolView name="sparkles" tintColor={theme.text} size={23} /></View>
-      <ThemedText style={styles.emptyTitle}>{workspace.activeProject?.label || workspace.activeProject?.name || 'С чего начнём?'}</ThemedText>
+      <ThemedText style={styles.emptyTitle}>{workspace.activeProject ? `Что делаем в ${workspace.activeProject.label || workspace.activeProject.name}?` : 'С чего начнём?'}</ThemedText>
       <ThemedText style={styles.emptyCopy}>
-        {workspace.activeProject ? 'Контекст проекта выбран' : 'Выбери проект в меню или начни общую задачу'}
+        {workspace.activeProject ? 'Задача сохранится внутри проекта' : 'Выбери проект в меню или начни общую задачу'}
       </ThemedText>
-      <View style={styles.starters}>
-        {STARTERS.map((starter) => (
-          <Pressable key={starter} onPress={() => setInput(starter)} style={({ pressed }) => [styles.starter, pressed && styles.pressed]}>
-            <ThemedText type="small">{starter}</ThemedText>
-          </Pressable>
-        ))}
-      </View>
     </View>
   );
 
@@ -312,12 +298,9 @@ const styles = StyleSheet.create({
   feed: { flex: 1 },
   feedContent: { paddingHorizontal: Spacing.three, paddingTop: 18, paddingBottom: 18, gap: 22 },
   feedEmpty: { flexGrow: 1 },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 38 },
-  orb: { width: 46, height: 46, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.13)', backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
-  emptyTitle: { fontSize: 25, lineHeight: 30, fontWeight: '600', letterSpacing: -0.7, textAlign: 'center' },
-  emptyCopy: { marginTop: 7, color: '#8E8E8E', fontSize: 13, textAlign: 'center' },
-  starters: { width: '100%', gap: 7, marginTop: 25 },
-  starter: { minHeight: 43, paddingHorizontal: 13, borderRadius: 11, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.10)', backgroundColor: '#292929', justifyContent: 'center' },
+  empty: { flex: 1, alignItems: 'flex-start', justifyContent: 'center', paddingHorizontal: 7, paddingVertical: 92 },
+  emptyTitle: { fontSize: 23, lineHeight: 29, fontWeight: '600', letterSpacing: -0.7 },
+  emptyCopy: { marginTop: 7, color: '#818181', fontSize: 13 },
   pressed: { opacity: 0.68 },
   userRow: { alignItems: 'flex-end', paddingLeft: 44 },
   aiRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingRight: 12 },
@@ -330,9 +313,9 @@ const styles = StyleSheet.create({
   thinkingText: { color: '#898989', fontSize: 12 },
   error: { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(239,100,100,0.4)', borderRadius: 11, padding: 11, flexDirection: 'row', gap: 8, alignItems: 'center' },
   errorText: { flex: 1, fontSize: 12 },
-  dock: { paddingHorizontal: Spacing.three, paddingTop: 7, gap: 7, backgroundColor: '#212121' },
+  dock: { paddingHorizontal: Spacing.three, paddingTop: 7, gap: 7, backgroundColor: '#101010' },
   attachment: { minHeight: 55, borderRadius: 12, padding: 7, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#2B2B2B' },
-  composer: { maxHeight: 150, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.13)', backgroundColor: '#303030', overflow: 'hidden' },
+  composer: { maxHeight: 150, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.14)', backgroundColor: '#262626', overflow: 'hidden' },
   input: { minHeight: 49, maxHeight: 105, paddingHorizontal: 15, paddingTop: 14, paddingBottom: 6, fontSize: 16, lineHeight: 21, textAlignVertical: 'top' },
   composerActions: { minHeight: 43, paddingHorizontal: 6, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 4 },
   iconButton: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },

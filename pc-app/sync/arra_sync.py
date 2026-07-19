@@ -195,7 +195,13 @@ def safe_remote_remove(sftp, path):
 
 
 def is_append_only_session(scope, rel):
-    return scope.get("id") in {"codex-sessions", "codex-archive"} and rel.lower().endswith(".jsonl")
+    if not rel.lower().endswith(".jsonl"):
+        return False
+    if scope.get("id") in {"codex-sessions", "codex-archive"}:
+        return True
+    return scope.get("id") == "codex-config" and Path(rel).name.lower() in {
+        "history.jsonl", "session_index.jsonl", "external_agent_session_imports.jsonl",
+    }
 
 
 def remote_matches_local_prefix(sftp, local_path, remote_path, remote_size, window=65536):
@@ -233,6 +239,26 @@ def upload_fixed_prefix(sftp, local_path, remote_stream, start, end, progress_ca
             remaining -= len(chunk)
             progress_callback(sent - origin, int(end) - origin)
     remote_stream.flush()
+
+
+def download_fixed_suffix(sftp, remote_path, local_path, start, end, progress_callback):
+    """Append only the stable missing suffix of a remote JSONL session."""
+    received = int(start)
+    origin = received
+    remaining = max(0, int(end) - received)
+    with sftp.open(remote_path, "rb") as remote_stream, open(local_path, "ab") as local_stream:
+        remote_stream.seek(received)
+        while remaining:
+            wait_for_control()
+            chunk = remote_stream.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise RuntimeError("серверный файл стал короче во время получения")
+            local_stream.write(chunk)
+            received += len(chunk)
+            remaining -= len(chunk)
+            progress_callback(received - origin, int(end) - origin)
+        local_stream.flush()
+        os.fsync(local_stream.fileno())
 
 
 def read_server_state(sftp):
@@ -653,7 +679,24 @@ def transfer(mode, only, dry_run=False):
                             size -= int(remote[0])
                     operations.append(("push", scope, rel, size))
             if mode in ("pull", "sync"):
-                operations.extend(("pull", scope, rel, scope["remoteMap"][rel][0]) for rel in downloads)
+                for rel in downloads:
+                    remote_size = int(scope["remoteMap"][rel][0])
+                    local_path = scope["local"] / Path(rel.replace("/", os.sep))
+                    if is_append_only_session(scope, rel) and local_path.exists():
+                        local_size = int(local_path.stat().st_size)
+                        remote_path = f"{scope['remote']}/{rel}"
+                        if 0 <= local_size < remote_size and remote_matches_local_prefix(
+                            sftp, local_path, remote_path, local_size
+                        ):
+                            scope.setdefault("pullAppendOffsets", {})[rel] = local_size
+                            operations.append(("pull", scope, rel, remote_size - local_size))
+                            continue
+                        # Never replace an active Codex JSONL with a divergent
+                        # copy. Both histories remain intact and the UI shows a
+                        # conflict instead of an endless Windows lock error.
+                        scope_conflicts.append(rel)
+                        continue
+                    operations.append(("pull", scope, rel, remote_size))
             conflicts.extend((scope, rel) for rel in scope_conflicts)
 
         operations.sort(key=lambda op: (project_label(project_key(op[1]["id"], op[2])).casefold(), op[2].casefold()))
@@ -774,7 +817,8 @@ def transfer(mode, only, dry_run=False):
             local_path = scope["local"] / Path(rel.replace("/", os.sep))
             issue = ""
             if direction == "push" or local_path.exists():
-                issue = local_file_issue(local_path, require_replace=(direction == "pull"))
+                append_pull = direction == "pull" and rel in scope.get("pullAppendOffsets", {})
+                issue = local_file_issue(local_path, require_replace=(direction == "pull" and not append_pull))
             if issue:
                 blocked.append({
                     "project": project_label(project_key(scope["id"], rel)),
@@ -885,32 +929,39 @@ def transfer(mode, only, dry_run=False):
                         if int(sftp.stat(remote_path).st_size) != expected_size:
                             raise RuntimeError("проверка размера на сервере не пройдена")
                     else:
+                        append_offset = scope.get("pullAppendOffsets", {}).get(rel)
                         if local_path.exists():
-                            issue = local_file_issue(local_path, require_replace=True)
+                            issue = local_file_issue(local_path, require_replace=append_offset is None)
                             if issue:
                                 raise RuntimeError(issue)
                         remote_before = sftp.stat(remote_path)
                         expected_mtime = int(remote_before.st_mtime)
                         success_size = int(remote_before.st_size)
-                        if local_path.exists():
+                        if local_path.exists() and append_offset is None:
                             backup_local_file(local_path, scope["id"], rel, stamp)
                         local_path.parent.mkdir(parents=True, exist_ok=True)
-                        tmp = str(local_path) + ".noda-part"
-                        try:
-                            os.remove(tmp)
-                        except OSError:
-                            pass
-                        sftp.get(remote_path, tmp, callback=progress_callback)
+                        if append_offset is not None:
+                            if int(local_path.stat().st_size) != int(append_offset):
+                                raise RuntimeError("активная сессия изменилась до получения продолжения")
+                            download_fixed_suffix(
+                                sftp, remote_path, local_path, int(append_offset),
+                                int(remote_before.st_size), progress_callback,
+                            )
+                        else:
+                            tmp = str(local_path) + ".noda-part"
+                            try:
+                                os.remove(tmp)
+                            except OSError:
+                                pass
+                            sftp.get(remote_path, tmp, callback=progress_callback)
+                            if os.path.getsize(tmp) != int(remote_before.st_size):
+                                try: os.remove(tmp)
+                                except OSError: pass
+                                raise RuntimeError("получен неполный размер файла")
+                            os.replace(tmp, str(local_path))
                         remote_after = sftp.stat(remote_path)
                         if (int(remote_before.st_size), int(remote_before.st_mtime)) != (int(remote_after.st_size), int(remote_after.st_mtime)):
-                            try: os.remove(tmp)
-                            except OSError: pass
                             raise RuntimeError("серверный файл изменился во время получения")
-                        if os.path.getsize(tmp) != int(remote_before.st_size):
-                            try: os.remove(tmp)
-                            except OSError: pass
-                            raise RuntimeError("получен неполный размер файла")
-                        os.replace(tmp, str(local_path))
                         try:
                             os.utime(str(local_path), (expected_mtime, expected_mtime))
                         except Exception:
