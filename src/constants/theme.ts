@@ -97,4 +97,4 @@ export const BottomTabInset = 0;
 export const MaxContentWidth = 800;
 
 /** Пользовательская версия Noda. Меняется только вместе с нативной TestFlight-сборкой. */
-export const APP_BUILD = 78;
+export const APP_BUILD = 79;

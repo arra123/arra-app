@@ -33,7 +33,7 @@ const hhmm = (iso?: string) => iso
   ? new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
   : '';
 
-export function Assistant() {
+export function Assistant({ embedded = false }: { embedded?: boolean }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const workspace = useWorkspace();
@@ -193,9 +193,7 @@ export function Assistant() {
   const empty = (
     <View style={styles.empty}>
       <ThemedText style={styles.emptyTitle}>{workspace.activeProject ? `Что делаем в ${workspace.activeProject.label || workspace.activeProject.name}?` : 'С чего начнём?'}</ThemedText>
-      <ThemedText style={styles.emptyCopy}>
-        {workspace.activeProject ? 'Задача сохранится внутри проекта' : 'Выбери проект в меню или начни общую задачу'}
-      </ThemedText>
+      {workspace.activeProject && <ThemedText style={styles.emptyCopy}>Задача сохранится внутри проекта</ThemedText>}
     </View>
   );
 
@@ -245,7 +243,7 @@ export function Assistant() {
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
         />
 
-        <View style={[styles.dock, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+        <View style={[styles.dock, { paddingBottom: Math.max(embedded ? 8 : insets.bottom, 8) }]}>
           {!!attachment && (
             <View style={styles.attachment}>
               <Image source={{ uri: attachment.uri }} style={{ width: 41, height: 41, borderRadius: 9 }} />
@@ -268,7 +266,7 @@ export function Assistant() {
               <TouchableOpacity accessibilityLabel="Добавить" onPress={pickImage} style={styles.iconButton}>
                 <SymbolView name="plus" tintColor={theme.textSecondary} size={20} />
               </TouchableOpacity>
-              <ThemedText style={styles.composerContext} numberOfLines={1}>{workspace.activeProject?.label || 'Без проекта'}</ThemedText>
+              <ThemedText style={styles.composerContext} numberOfLines={1}>{workspace.activeProject?.label || 'Общий чат'}</ThemedText>
               {(input.trim() || attachment) ? (
                 <TouchableOpacity accessibilityLabel="Отправить" disabled={sending} onPress={() => send(input)} style={styles.sendButton}>
                   <SymbolView name="arrow.up" tintColor="#171717" size={19} />
@@ -285,7 +283,7 @@ export function Assistant() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, minHeight: 0, overflow: 'hidden' },
   contextBar: { minHeight: 45, paddingHorizontal: 13, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.07)', flexDirection: 'row', alignItems: 'center', gap: 7 },
   projectContext: { minWidth: 0, flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   contextDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#666' },
@@ -295,7 +293,7 @@ const styles = StyleSheet.create({
   modelDotLocal: { backgroundColor: '#2FBF71' },
   modelLabel: { minWidth: 0, flexShrink: 1, color: '#BDBDBD', fontSize: 10 },
   clearButton: { width: 31, height: 31, alignItems: 'center', justifyContent: 'center' },
-  feed: { flex: 1 },
+  feed: { flex: 1, minHeight: 0 },
   feedContent: { paddingHorizontal: Spacing.three, paddingTop: 18, paddingBottom: 18, gap: 22 },
   feedEmpty: { flexGrow: 1 },
   empty: { flex: 1, alignItems: 'flex-start', justifyContent: 'center', paddingHorizontal: 7, paddingVertical: 92 },

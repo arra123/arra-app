@@ -3,7 +3,7 @@
     "name": "Noda",
     "slug": "aura",
     "owner": "arratima",
-    "version": "1.5.2",
+    "version": "1.5.3",
     "orientation": "default",
     "icon": "./assets/images/noda-app-icon.png",
     "scheme": "aura",

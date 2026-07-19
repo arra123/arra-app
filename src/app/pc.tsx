@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
 import { RemoteScreen, type RemoteScreenHandle } from '@/components/remote-screen';
+import { NodexPanel } from '@/components/nodex-panel';
 import { SlidingSegment } from '@/components/sliding-segment';
 import { SyncPanel } from '@/components/sync-panel';
 import { ThemedText } from '@/components/themed-text';
@@ -127,6 +128,7 @@ export default function PcScreen() {
   const [devOpen, setDevOpen] = useState(false); // открыт ли список выбора ПК
   const [termEpoch, setTermEpoch] = useState(0); // ремоунт терминалов только при ручной смене ПК
   const [sub, setSub] = useState<'term' | 'explorer' | 'screen' | 'transfer'>('term');
+  const [termMode, setTermMode] = useState<'terminal' | 'nodex'>('terminal');
 
   // удалённый экран
   const screenRef = useRef<RemoteScreenHandle>(null);
@@ -574,7 +576,7 @@ export default function PcScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <View style={[styles.header, { paddingTop: Spacing.two }]}>
+      {!(sub === 'term' && termMode === 'nodex') && <View style={[styles.header, { paddingTop: Spacing.two }]}>
         <View style={styles.headerRight}>
           <View style={styles.agentShortcuts}>
             <TouchableOpacity onPress={() => sendKey('codex --yolo\r')} style={[styles.agentShortcut, { borderColor: c.separator }]}>
@@ -595,10 +597,10 @@ export default function PcScreen() {
             {devices.length > 1 && <SymbolView name={devOpen ? 'chevron.up' : 'chevron.down'} tintColor={c.textSecondary} size={12} />}
           </TouchableOpacity>
         </View>
-      </View>
+      </View>}
 
       {/* Выбор ПК: ноут / стационарный и т.д. (когда устройств больше одного) */}
-      {devOpen && devices.length > 1 && (
+      {!(sub === 'term' && termMode === 'nodex') && devOpen && devices.length > 1 && (
         <View style={styles.devList}>
           {devices.map((d) => (
             <TouchableOpacity key={d.id} style={styles.devRow} onPress={() => pickDevice(d.id)}>
@@ -623,9 +625,24 @@ export default function PcScreen() {
         ]}
       />
 
+      {sub === 'term' && (
+        <SlidingSegment
+          compact
+          value={termMode}
+          onChange={setTermMode}
+          style={styles.termMode}
+          options={[
+            { value: 'terminal', label: 'Терминал' },
+            { value: 'nodex', label: 'Nodex' },
+          ]}
+        />
+      )}
+
       {!!busyMsg && <ThemedText type="small" style={styles.toast}>{busyMsg}</ThemedText>}
 
-      {sub === 'term' ? (
+      {sub === 'term' && termMode === 'nodex' ? (
+        <NodexPanel />
+      ) : sub === 'term' ? (
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
           <View style={styles.termTabs}>
             {terms.map((t, i) => (
@@ -907,6 +924,7 @@ const styles = StyleSheet.create({
   devRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two, paddingHorizontal: Spacing.three, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.separator },
   dot: { width: 9, height: 9, borderRadius: 5 },
   seg: { marginHorizontal: Spacing.three, marginBottom: Spacing.two },
+  termMode: { marginHorizontal: Spacing.three, marginBottom: Spacing.two, alignSelf: 'flex-start', minWidth: 210 },
   toast: { textAlign: 'center', color: c.text, paddingVertical: 4 },
   termTabs: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: Spacing.three, marginBottom: Spacing.two },
   presetDot: { width: 7, height: 7, borderRadius: 2 },

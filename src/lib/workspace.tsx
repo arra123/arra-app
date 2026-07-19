@@ -59,6 +59,7 @@ type WorkspaceContextValue = {
   setSelectedModel: (model: string) => void;
   threadKey: string;
   newTask: () => void;
+  newProjectTask: (project?: WorkspaceProject) => void;
   refresh: () => void;
   refreshThreads: () => void;
   localChat: (messages: ChatMessage[]) => Promise<{ role: 'assistant'; content: string }>;
@@ -70,7 +71,13 @@ const requestId = () => `workspace-${Date.now()}-${Math.random().toString(36).sl
 const DEVICE_KEY = 'noda-workspace-device';
 const MODEL_KEY = 'noda-workspace-model';
 const PROJECT_KEY = 'noda-workspace-project';
-const projectThreadKey = (projectName: string) => `project:${projectName.trim()}`.slice(0, 180);
+const projectThreadPrefix = (projectName: string) => `project:${encodeURIComponent(projectName.trim())}`;
+const newProjectThreadKey = (projectName: string) => `${projectThreadPrefix(projectName)}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`.slice(0, 180);
+const projectFromThreadKey = (threadKey: string) => {
+  const match = threadKey.match(/^project:([^:]+)/);
+  if (!match) return '';
+  try { return decodeURIComponent(match[1]); } catch { return match[1]; }
+};
 
 const workspaceStorage = {
   async get(key: string) {
@@ -160,7 +167,7 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
           const restored = rows.find((project: WorkspaceProject) => project.name === preferred);
           if (restored) {
             setActiveProjectState(restored);
-            setThreadKey(projectThreadKey(restored.name));
+            setThreadKey((current) => projectFromThreadKey(current) === restored.name ? current : newProjectThreadKey(restored.name));
           }
         }
       }),
@@ -255,16 +262,17 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
     setActiveProjectState(project);
     preferredProjectRef.current = project?.name || null;
     if (project) {
-      setThreadKey(projectThreadKey(project.name));
+      const recent = threads.find((thread) => thread.project_name === project.name || thread.project_name === project.label || projectFromThreadKey(thread.thread_key) === project.name);
+      setThreadKey(recent?.thread_key || newProjectThreadKey(project.name));
       workspaceStorage.set(PROJECT_KEY, project.name).catch(() => {});
     } else {
       workspaceStorage.remove(PROJECT_KEY).catch(() => {});
     }
-  }, []);
+  }, [threads]);
 
   const openThread = useCallback((thread: WorkspaceThread) => {
-    const projectName = thread.thread_key.startsWith('project:') ? thread.thread_key.slice('project:'.length) : '';
-    const project = projects.find((item) => item.name === projectName || item.label === thread.project_name) || null;
+    const projectName = projectFromThreadKey(thread.thread_key);
+    const project = projects.find((item) => item.name === projectName || item.name === thread.project_name || item.label === thread.project_name) || null;
     setThreadKey(thread.thread_key || 'general');
     setActiveProjectState(project);
     preferredProjectRef.current = project?.name || null;
@@ -278,6 +286,15 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
     workspaceStorage.remove(PROJECT_KEY).catch(() => {});
     setThreadKey(`task:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`);
   }, []);
+
+  const newProjectTask = useCallback((requestedProject?: WorkspaceProject) => {
+    const project = requestedProject || activeProject;
+    if (!project) return;
+    setActiveProjectState(project);
+    preferredProjectRef.current = project.name;
+    workspaceStorage.set(PROJECT_KEY, project.name).catch(() => {});
+    setThreadKey(newProjectThreadKey(project.name));
+  }, [activeProject]);
 
   const localChat = useCallback(async (messages: ChatMessage[]) => {
     if (!selectedModel.startsWith('local:')) throw new Error('Локальная модель не выбрана');
@@ -306,10 +323,11 @@ export function WorkspaceProvider({ children }: PropsWithChildren) {
     setSelectedModel,
     threadKey,
     newTask,
+    newProjectTask,
     refresh,
     refreshThreads: loadThreads,
     localChat,
-  }), [connected, loading, devices, activeDeviceId, setActiveDeviceId, projects, threads, openThread, activeProject, setActiveProject, models, selectedModel, setSelectedModel, threadKey, newTask, refresh, loadThreads, localChat]);
+  }), [connected, loading, devices, activeDeviceId, setActiveDeviceId, projects, threads, openThread, activeProject, setActiveProject, models, selectedModel, setSelectedModel, threadKey, newTask, newProjectTask, refresh, loadThreads, localChat]);
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }

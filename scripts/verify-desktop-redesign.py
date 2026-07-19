@@ -15,7 +15,7 @@ AUTH_OUTPUT = Path(os.environ.get("NODA_AUTH_SCREENSHOT", Path(os.environ.get("T
 SETTINGS_OUTPUT = Path(os.environ.get("NODA_SETTINGS_SCREENSHOT", Path(os.environ.get("TEMP", ROOT)) / "noda-settings.png"))
 SECTION_OUTPUTS = {
     name: Path(os.environ.get("TEMP", ROOT)) / f"noda-desktop-{name}.png"
-    for name in ("returns", "notes", "files", "terminal", "sync", "remote")
+    for name in ("returns", "assistant", "notes", "files", "terminal", "sync", "remote")
 }
 
 PROJECTS = [
@@ -112,12 +112,19 @@ def main() -> int:
         page.on("pageerror", lambda error: errors.append(f"pageerror: {error}"))
         page.on("console", lambda message: errors.append(f"console: {message.text}") if message.type == "error" else None)
         page.goto(ENTRY.as_uri(), wait_until="domcontentloaded")
-        page.wait_for_selector(".workspace-chat", timeout=15_000)
-        page.wait_for_selector(".workspace-project", timeout=15_000)
+        page.wait_for_selector(".noda-terminal-modebar", timeout=15_000)
+        assert page.locator('.workspace-nav-list [data-s]').count() == 7
+        assert page.locator('.workspace-nav-list [data-s="term"]').is_visible()
+        assert page.locator('.workspace-nav-list [data-s="chat"]').is_visible()
+        assert page.locator('.sidebar >> text=Проекты').count() == 0
+        assert page.locator('[data-terminal-mode="terminal"]').get_attribute("aria-selected") == "true"
+        assert page.locator(".workspace-project").count() == 0
 
+        page.locator('[data-terminal-mode="nodex"]').click()
+        page.wait_for_selector(".nodex-shell", timeout=15_000)
+        page.wait_for_selector(".workspace-project", timeout=15_000)
         assert page.locator(".workspace-project").count() == len(PROJECTS)
-        assert page.locator(".workspace-recent").count() == 1
-        assert page.locator(".workspace-new-task").is_visible()
+        assert page.locator(".nodex-new-task").is_visible()
         assert page.locator(".workspace-composer").is_visible()
 
         page.locator(".workspace-project", has_text="Noda").click()
@@ -126,13 +133,22 @@ def main() -> int:
         page.wait_for_selector(".workspace-environment-row")
         assert "codex/chatgpt-redesign" in page.locator(".workspace-environment").inner_text()
         page.screenshot(path=str(OUTPUT), full_page=True)
+        first_thread = page.evaluate("nodaWorkspace.threadKey")
+        page.locator("#nodex-new-task").click()
+        second_thread = page.evaluate("nodaWorkspace.threadKey")
+        page.locator("#nodex-new-task").click()
+        third_thread = page.evaluate("nodaWorkspace.threadKey")
+        assert first_thread != second_thread != third_thread
+        assert second_thread.startswith("project:01_noda:") and third_thread.startswith("project:01_noda:")
 
         metrics = page.evaluate("""() => ({
           sidebar: document.querySelector('.sidebar')?.getBoundingClientRect().width,
+          nodex: document.querySelector('.nodex-sidebar')?.getBoundingClientRect().width,
           composer: document.querySelector('.workspace-composer')?.getBoundingClientRect().width || 0,
           bodyOverflow: getComputedStyle(document.body).overflow,
         })""")
-        assert 280 <= metrics["sidebar"] <= 360, metrics
+        assert 240 <= metrics["sidebar"] <= 320, metrics
+        assert 220 <= metrics["nodex"] <= 290, metrics
         assert metrics["composer"] > 0, metrics
         assert metrics["bodyOverflow"] == "hidden", metrics
 
@@ -141,10 +157,17 @@ def main() -> int:
         assert page.locator(".workspace-settings-nav").is_visible()
         page.locator('[data-settings-anchor="models"]').click()
         assert "qwen3:8b" in page.locator(".workspace-settings").inner_text()
+        settings_metrics = page.evaluate("""() => {
+          const main = document.querySelector('.workspace-settings-main').getBoundingClientRect();
+          const content = document.querySelector('.workspace-settings-content').getBoundingClientRect();
+          return { leftGap: content.left - main.left, rightGap: main.right - content.right };
+        }""")
+        assert abs(settings_metrics["leftGap"] - settings_metrics["rightGap"]) < 2, settings_metrics
         page.screenshot(path=str(SETTINGS_OUTPUT), full_page=True)
 
         for section, output_name in (
             ("fin", "returns"),
+            ("chat", "assistant"),
             ("notes", "notes"),
             ("files", "files"),
             ("term", "terminal"),
@@ -163,6 +186,9 @@ def main() -> int:
                 page.locator('[data-id="r1"]').click()
                 page.wait_for_selector(".finance-editor")
                 page.locator("[data-fin-edit-close]").first.click()
+            elif section == "chat":
+                assert page.locator(".assistant-liquid").is_visible()
+                assert page.locator(".nodex-sidebar").count() == 0
             elif section == "notes":
                 assert page.locator(".liquid-note-row").count() == 2
                 assert page.locator("#note-body").input_value().startswith("Довести")
@@ -170,6 +196,8 @@ def main() -> int:
                 assert page.locator(".files-liquid").is_visible()
                 assert page.locator(".liquid-file-mode").is_visible()
             elif section == "term":
+                page.locator('[data-terminal-mode="terminal"]').click()
+                page.wait_for_timeout(150)
                 active_tab = page.locator(".ttab.on")
                 assert active_tab.is_visible()
                 assert active_tab.locator(".tname").inner_text().strip()
