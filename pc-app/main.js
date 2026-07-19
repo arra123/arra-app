@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const http = require('http');
 const https = require('https');
 const { execFile, spawn, spawnSync } = require('child_process');
 const WebSocket = require('ws');
@@ -132,6 +133,19 @@ function localSyncInventory() {
     try { return fs.readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile()).length; }
     catch { return 0; }
   };
+  const projectMeta = (dir) => {
+    const has = (name) => { try { return fs.existsSync(path.join(dir, name)); } catch { return false; } };
+    const hasFileWith = (suffix) => { try { return fs.readdirSync(dir).some((name) => name.toLowerCase().endsWith(suffix)); } catch { return false; } };
+    let kind = 'folder';
+    if (has('package.json')) kind = 'javascript';
+    else if (has('pyproject.toml') || has('requirements.txt')) kind = 'python';
+    else if (has('Cargo.toml')) kind = 'rust';
+    else if (has('go.mod')) kind = 'go';
+    else if (hasFileWith('.sln') || hasFileWith('.csproj')) kind = 'dotnet';
+    let updatedAt = 0;
+    try { updatedAt = fs.statSync(dir).mtimeMs || 0; } catch {}
+    return { kind, updatedAt, git: has('.git') };
+  };
   const candidates = [];
   for (const entry of readDirs(root)) {
     const full = path.join(root, entry.name);
@@ -148,7 +162,7 @@ function localSyncInventory() {
     });
     return {
       name: project.key, label: project.label, group: project.group, scope: 'projects', scopeId: 'projects',
-      inventoryFiles: directFiles(project.full), files: 0, folders,
+      path: project.full, ...projectMeta(project.full), inventoryFiles: directFiles(project.full), files: 0, folders,
     };
   });
   return {
@@ -1276,6 +1290,27 @@ function handleRelay(msg, send) {
     case 'phone_presence':
       markPhonePresence();
       break;
+    case 'workspace_projects':
+      Promise.resolve(localSyncInventory()).then((inventory) => send({
+        type: 'workspace_projects',
+        reqId: msg.reqId,
+        deviceId: agentDeviceId || settings.deviceId || null,
+        deviceName: settings.deviceName || os.hostname(),
+        inventory,
+      })).catch((error) => send({
+        type: 'workspace_projects', reqId: msg.reqId, error: error.message || 'Не удалось прочитать проекты',
+      }));
+      break;
+    case 'workspace_models':
+      localModelsSnapshot().then((result) => send({
+        type: 'workspace_models', reqId: msg.reqId, deviceId: agentDeviceId || settings.deviceId || null, ...result,
+      }));
+      break;
+    case 'workspace_chat':
+      localChatCompletion({ model: msg.model, messages: msg.messages, project: msg.project }).then((result) => send({
+        type: 'workspace_chat', reqId: msg.reqId, deviceId: agentDeviceId || settings.deviceId || null, ...result,
+      }));
+      break;
     case 'sync_remote_push':
       startRemoteSync('push', msg, send, 'Отправка запущена').catch((error) => {
         writeLog('error', 'sync.remote-push', { reqId: msg.reqId, error });
@@ -1452,6 +1487,51 @@ function httpJson(method, urlPath, body, token) {
   });
 }
 
+function localAiBase() {
+  const raw = String(settings.localAiUrl || 'http://127.0.0.1:11434').trim().replace(/\/$/, '');
+  try {
+    const parsed = new URL(raw);
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('protocol');
+    return parsed.toString().replace(/\/$/, '');
+  } catch { return 'http://127.0.0.1:11434'; }
+}
+
+function localAiJson(method, urlPath, body, timeout = 5000) {
+  return new Promise((resolve, reject) => {
+    const data = body ? Buffer.from(JSON.stringify(body)) : null;
+    const url = new URL(localAiBase() + urlPath);
+    const transport = url.protocol === 'https:' ? https : http;
+    const req = transport.request(url, {
+      method,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(data ? { 'Content-Length': data.length } : {}),
+      },
+      timeout,
+    }, (res) => {
+      let buf = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { buf += chunk; if (buf.length > 8 * 1024 * 1024) req.destroy(new Error('Ответ локальной модели слишком большой')); });
+      res.on('end', () => {
+        try {
+          const parsed = buf ? JSON.parse(buf) : {};
+          if ((res.statusCode || 500) >= 400) {
+            const error = new Error(parsed.error || parsed.message || `Локальный AI HTTP ${res.statusCode}`);
+            error.statusCode = res.statusCode;
+            reject(error);
+          }
+          else resolve(parsed);
+        } catch (error) { reject(error); }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('Локальная модель не ответила')));
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
 function downloadFile(fileId, dest, pcToken) {
   return new Promise((resolve, reject) => {
     const u = new URL(`${BASE}/files/${fileId}/download?token=${pcToken}`);
@@ -1617,7 +1697,7 @@ function createWindow() {
     minWidth: 720,
     minHeight: 560,
     frame: false,
-    backgroundColor: '#111520',
+    backgroundColor: '#171717',
     title: 'Noda',
     icon: path.join(__dirname, 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
@@ -2167,6 +2247,138 @@ function runSyncProc(mode, only, role, remoteEmit = null, retryAttempt = 0) {
 }
 ipcMain.handle('sync-run', (_e, { mode, only, role } = {}) => runManagedSync(mode || 'status', only || null, role || null));
 ipcMain.handle('sync-local-inventory', () => localSyncInventory());
+ipcMain.handle('workspace-settings', () => ({
+  codeRoot: codeRoot(),
+  downloadFolder: currentFolder(),
+  localAiUrl: localAiBase(),
+  deviceName: settings.deviceName || os.hostname(),
+  deviceRole: settings.deviceProfile?.role || '',
+}));
+ipcMain.handle('set-local-ai-url', (_event, value) => {
+  try {
+    const parsed = new URL(String(value || '').trim());
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Нужен адрес http:// или https://');
+    settings.localAiUrl = parsed.toString().replace(/\/$/, '');
+    saveSettings();
+    return { ok: true, url: settings.localAiUrl };
+  } catch (error) { return { ok: false, error: error.message || 'Неверный адрес' }; }
+});
+async function localModelsSnapshot() {
+  try {
+    const response = await localAiJson('GET', '/api/tags', null, 3500);
+    const models = (response.models || []).map((model) => ({
+      name: String(model.name || model.model || ''),
+      size: Number(model.size) || 0,
+      modifiedAt: model.modified_at || null,
+      family: model.details?.family || '',
+      parameterSize: model.details?.parameter_size || '',
+    })).filter((model) => model.name);
+    return { ok: true, provider: 'ollama', url: localAiBase(), models };
+  } catch (ollamaError) {
+    try {
+      const response = await localAiJson('GET', '/v1/models', null, 3500);
+      const models = (response.data || []).map((model) => ({
+        name: String(model.id || ''),
+        size: 0,
+        modifiedAt: null,
+        family: String(model.owned_by || 'OpenAI-compatible'),
+        parameterSize: '',
+      })).filter((model) => model.name);
+      return { ok: true, provider: 'openai', url: localAiBase(), models };
+    } catch (openAiError) {
+      writeLog('warn', 'local-ai.models', { url: localAiBase(), ollamaError, openAiError });
+      return { ok: false, url: localAiBase(), models: [], error: openAiError.message || ollamaError.message || 'Локальный AI не запущен' };
+    }
+  }
+}
+
+function localProjectSnapshot(project) {
+  const requested = path.resolve(String(project?.path || ''));
+  if (!project?.path || !fs.existsSync(requested)) return '';
+  const root = path.resolve(codeRoot());
+  const relative = path.relative(root, requested);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return '';
+  try {
+    if (!fs.statSync(requested).isDirectory()) return '';
+    const ignored = new Set(['node_modules', '.git', 'dist', 'build', '.expo', '.next', '__pycache__']);
+    const tree = [];
+    for (const entry of fs.readdirSync(requested, { withFileTypes: true }).filter((item) => !ignored.has(item.name)).slice(0, 80)) {
+      tree.push(entry.isDirectory() ? `${entry.name}/` : entry.name);
+      if (entry.isDirectory()) {
+        try {
+          for (const child of fs.readdirSync(path.join(requested, entry.name), { withFileTypes: true }).filter((item) => !ignored.has(item.name)).slice(0, 18)) {
+            tree.push(`  ${entry.name}/${child.name}${child.isDirectory() ? '/' : ''}`);
+          }
+        } catch {}
+      }
+    }
+    const documents = [];
+    for (const name of ['README.md', 'README.MD', 'package.json', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'AGENTS.md']) {
+      const file = path.join(requested, name);
+      try {
+        if (fs.existsSync(file) && fs.statSync(file).size <= 120000) {
+          documents.push(`--- ${name} ---\n${fs.readFileSync(file, 'utf8').slice(0, name.toLowerCase().startsWith('readme') ? 18000 : 9000)}`);
+        }
+      } catch {}
+    }
+    let git = '';
+    try {
+      const result = spawnSync('git', ['status', '--short', '--branch'], { cwd: requested, encoding: 'utf8', windowsHide: true, timeout: 5000 });
+      git = String(result.stdout || '').trim().slice(0, 8000);
+    } catch {}
+    return [
+      `Локальный снимок проекта «${String(project?.name || path.basename(requested)).slice(0, 100)}» на этом компьютере.`,
+      `Путь: ${requested}`,
+      tree.length ? `Структура (до двух уровней):\n${tree.join('\n')}` : '',
+      git ? `Git status:\n${git}` : '',
+      ...documents,
+      'Снимок только для понимания контекста. Если для ответа нужен другой файл, попроси пользователя открыть его или перейти в терминал проекта.',
+    ].filter(Boolean).join('\n\n').slice(0, 48000);
+  } catch (error) {
+    writeLog('warn', 'local-ai.project-context', { path: requested, error });
+    return '';
+  }
+}
+
+async function localChatCompletion({ model, messages, project } = {}) {
+  try {
+    const modelName = String(model || '').trim();
+    if (!modelName) throw new Error('Выбери локальную модель');
+    const safeMessages = (Array.isArray(messages) ? messages : []).slice(-40).map((message) => ({
+      role: ['system', 'assistant'].includes(message?.role) ? message.role : 'user',
+      content: String(message?.content || '').slice(0, 50000),
+    })).filter((message) => message.content.trim());
+    if (!safeMessages.length) throw new Error('Сообщение пустое');
+    const projectContext = localProjectSnapshot(project);
+    if (projectContext) safeMessages.unshift({ role: 'system', content: projectContext });
+    let response;
+    try {
+      response = await localAiJson('POST', '/api/chat', {
+        model: modelName,
+        messages: safeMessages,
+        stream: false,
+        options: { temperature: 0.25 },
+      }, 180000);
+    } catch (ollamaError) {
+      if (![404, 405].includes(Number(ollamaError.statusCode))) throw ollamaError;
+      response = await localAiJson('POST', '/v1/chat/completions', {
+        model: modelName,
+        messages: safeMessages,
+        stream: false,
+        temperature: 0.25,
+      }, 180000);
+    }
+    const content = String(response.message?.content || response.choices?.[0]?.message?.content || response.response || '').trim();
+    if (!content) throw new Error('Локальная модель вернула пустой ответ');
+    return { ok: true, message: { role: 'assistant', content }, model: modelName };
+  } catch (error) {
+    writeLog('error', 'local-ai.chat', { model, error });
+    return { ok: false, error: error.message || 'Локальная модель недоступна' };
+  }
+}
+
+ipcMain.handle('local-models', () => localModelsSnapshot());
+ipcMain.handle('local-chat', (_event, payload = {}) => localChatCompletion(payload));
 ipcMain.handle('sync-pause', () => {
   if (!syncProc?.stdin?.writable) return { ok: false, error: 'Передача сейчас не выполняется' };
   writeLog('info', 'sync.pause', { childPid: syncProc.pid });

@@ -1,7 +1,12 @@
 import { one, query } from '../db.js';
 
 const DEBT_COLS = 'id, counterparty, amount, currency, direction, recipient, note, settled, settled_at, due_date, occurred_at, created_at';
-const recipient = (value) => /^дани(?:ил)?$/i.test(String(value || '').trim()) ? 'Дани' : 'Тима';
+const recipient = (value) => {
+  const name = String(value || '').trim();
+  if (/^дан(?:я|и|иил|ил)?$/i.test(name)) return 'Дани';
+  if (/^(женя|евгений)$/i.test(name)) return 'Женя';
+  return 'Тима';
+};
 
 export default async function debtRoutes(app) {
   // Список долгов. По умолчанию активные (обратная совместимость со старым приложением).

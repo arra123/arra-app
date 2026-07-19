@@ -5,7 +5,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Animated,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -21,9 +20,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import ProfileScreen from '@/app/profile';
 import { DebtsModal, type Debt } from '@/components/debts-modal';
 import { MerchantLogo } from '@/components/merchant-logo';
+import { SlidingSegment } from '@/components/sliding-segment';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { VoiceRecorder } from '@/components/voice-recorder';
@@ -33,7 +32,7 @@ import { api } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
 
 type ReimbursementStatus = 'pending' | 'submitted' | 'reimbursed' | 'rejected';
-type Recipient = 'Тима' | 'Дани';
+type Recipient = 'Тима' | 'Дани' | 'Женя';
 type Reimbursement = {
   id: string;
   amount: string;
@@ -91,7 +90,6 @@ export default function MoneyScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showDebts, setShowDebts] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [editing, setEditing] = useState<Reimbursement | null>(null);
   const [draftReady, setDraftReady] = useState(false);
   const [lastSaved, setLastSaved] = useState<SavedEntry | null>(null);
@@ -140,7 +138,7 @@ export default function MoneyScreen() {
 
   useEffect(() => {
     SecureStore.getItemAsync(RECIPIENT_KEY).then((value) => {
-      if (value === 'Тима' || value === 'Дани') setRecipient(value);
+      if (value === 'Тима' || value === 'Дани' || value === 'Женя') setRecipient(value);
     }).catch(() => {});
   }, []);
 
@@ -177,11 +175,14 @@ export default function MoneyScreen() {
   }
 
   const activeItems = items.filter((item) => !['reimbursed', 'rejected'].includes(item.status));
-  const visibleItems = items.filter((item) => showClosed === ['reimbursed', 'rejected'].includes(item.status));
+  const visibleItems = items
+    .filter((item) => showClosed === ['reimbursed', 'rejected'].includes(item.status))
+    .sort((a, b) => new Date(b.occurred_at || b.updated_at).getTime() - new Date(a.occurred_at || a.updated_at).getTime());
   const activeDebts = debts.filter((debt) => !debt.settled);
   const toReturn = activeItems.reduce((sum, item) => sum + Number(item.amount), 0);
   const timaReturn = activeItems.filter((item) => (item.recipient || 'Тима') === 'Тима').reduce((sum, item) => sum + Number(item.amount), 0);
   const daniReturn = activeItems.filter((item) => item.recipient === 'Дани').reduce((sum, item) => sum + Number(item.amount), 0);
+  const zhenyaReturn = activeItems.filter((item) => item.recipient === 'Женя').reduce((sum, item) => sum + Number(item.amount), 0);
   const owedToMe = activeDebts.filter((d) => d.direction === 'owes_me').reduce((sum, d) => sum + Number(d.amount), 0);
   const iOwe = activeDebts.filter((d) => d.direction === 'i_owe').reduce((sum, d) => sum + Number(d.amount), 0);
 
@@ -215,7 +216,7 @@ export default function MoneyScreen() {
     setMerchant(parsed.merchant || '');
     setLocation(parsed.location || '');
     setCompany(parsed.company || 'Компания');
-    if (parsed.recipient === 'Тима' || parsed.recipient === 'Дани') chooseRecipient(parsed.recipient);
+    if (parsed.recipient === 'Тима' || parsed.recipient === 'Дани' || parsed.recipient === 'Женя') chooseRecipient(parsed.recipient);
     setCounterparty(parsed.counterparty || '');
     if (parsed.occurred_at) setOccurred(dateInput(parsed.occurred_at));
     setDue(dateInput(parsed.due_date));
@@ -340,47 +341,15 @@ export default function MoneyScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <View style={[styles.topArea, { paddingTop: insets.top + 10, backgroundColor: theme.background }]}>
-        <View style={styles.header}>
-          <ThemedText style={styles.title}>Возвраты</ThemedText>
-          <View style={styles.headerActions}>
-            <TouchableOpacity onPress={() => setShowSettings(true)} style={[styles.roundButton, { backgroundColor: theme.backgroundElement }]}>
-              <SymbolView name="gearshape.fill" tintColor={theme.text} size={18} />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={[styles.sectionTabs, { backgroundColor: theme.backgroundSelected, borderColor: theme.separator }]}>
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected: section === 'add' }}
-            onPress={() => switchSection('add')}
-            style={({ pressed }) => [
-              styles.sectionTab,
-              section === 'add' && { backgroundColor: theme.tint },
-              pressed && { opacity: 0.78 },
-            ]}>
-            <SymbolView name="waveform" tintColor={section === 'add' ? '#FFFFFF' : theme.textSecondary} size={16} />
-            <ThemedText type="smallBold" style={{ color: section === 'add' ? '#FFFFFF' : theme.textSecondary }}>Записать</ThemedText>
-          </Pressable>
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected: section === 'overview' }}
-            onPress={() => switchSection('overview')}
-            style={({ pressed }) => [
-              styles.sectionTab,
-              section === 'overview' && { backgroundColor: theme.tint },
-              pressed && { opacity: 0.78 },
-            ]}>
-            <SymbolView name="list.bullet" tintColor={section === 'overview' ? '#FFFFFF' : theme.textSecondary} size={16} />
-            <ThemedText type="smallBold" style={{ color: section === 'overview' ? '#FFFFFF' : theme.textSecondary }}>Список</ThemedText>
-            {!!activeItems.length && (
-              <View style={[styles.sectionCount, { backgroundColor: section === 'overview' ? 'rgba(255,255,255,0.18)' : theme.backgroundElement }]}>
-                <ThemedText type="smallBold" style={{ color: section === 'overview' ? '#FFFFFF' : theme.textSecondary }}>{activeItems.length}</ThemedText>
-              </View>
-            )}
-          </Pressable>
-        </View>
+      <View style={[styles.topArea, { paddingTop: 10, backgroundColor: theme.background }]}>
+        <SlidingSegment
+          value={section}
+          onChange={switchSection}
+          options={[
+            { value: 'add', label: 'Записать' },
+            { value: 'overview', label: 'Список', count: activeItems.length },
+          ]}
+        />
       </View>
 
       {section === 'overview' ? (
@@ -392,13 +361,14 @@ export default function MoneyScreen() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.tint} />}>
             <View style={[styles.hero, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
               <View style={styles.heroTop}>
-                <View style={styles.heroIcon}><Image source={COMPANY_ICON} style={styles.companyIcon} resizeMode="contain" /></View>
-                <ThemedText type="smallBold" style={{ color: theme.tint }}>{activeItems.length} активных</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">К возврату</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">{activeItems.length}</ThemedText>
               </View>
               <ThemedText style={[styles.heroValue, { color: theme.text }]}>{fmt(toReturn)} ₽</ThemedText>
               <View style={styles.heroRecipients}>
                 <View style={[styles.recipientTotal, { backgroundColor: theme.backgroundSelected }]}><ThemedText type="small" themeColor="textSecondary">Тима</ThemedText><ThemedText type="smallBold">{fmt(timaReturn)} ₽</ThemedText></View>
                 <View style={[styles.recipientTotal, { backgroundColor: theme.backgroundSelected }]}><ThemedText type="small" themeColor="textSecondary">Дани</ThemedText><ThemedText type="smallBold">{fmt(daniReturn)} ₽</ThemedText></View>
+                <View style={[styles.recipientTotal, { backgroundColor: theme.backgroundSelected }]}><ThemedText type="small" themeColor="textSecondary">Женя</ThemedText><ThemedText type="smallBold">{fmt(zhenyaReturn)} ₽</ThemedText></View>
               </View>
             </View>
 
@@ -413,14 +383,16 @@ export default function MoneyScreen() {
 
             <View style={styles.listHeader}>
               <ThemedText type="smallBold">Компенсации</ThemedText>
-              <View style={[styles.smallSegment, { backgroundColor: theme.backgroundSelected, borderColor: theme.separator }]}>
-                <Pressable onPress={() => setShowClosed(false)} style={[styles.smallSegmentButton, !showClosed && { backgroundColor: theme.tint }]}>
-                  <ThemedText type="smallBold" style={{ color: !showClosed ? '#FFFFFF' : theme.textSecondary }}>Активные</ThemedText>
-                </Pressable>
-                <Pressable onPress={() => setShowClosed(true)} style={[styles.smallSegmentButton, showClosed && { backgroundColor: theme.tint }]}>
-                  <ThemedText type="smallBold" style={{ color: showClosed ? '#FFFFFF' : theme.textSecondary }}>Закрытые</ThemedText>
-                </Pressable>
-              </View>
+              <SlidingSegment
+                compact
+                value={showClosed ? 'closed' : 'active'}
+                onChange={(value) => setShowClosed(value === 'closed')}
+                style={styles.statusSegment}
+                options={[
+                  { value: 'active', label: 'Активные' },
+                  { value: 'closed', label: 'Закрытые' },
+                ]}
+              />
             </View>
 
             {loading ? (
@@ -432,8 +404,12 @@ export default function MoneyScreen() {
               </View>
             ) : (
               <View style={styles.list}>
-                {visibleItems.map((item) => (
-                  <TouchableOpacity key={item.id} activeOpacity={0.8} onPress={() => setEditing(item)} style={[styles.item, { backgroundColor: theme.backgroundElement }]}>
+                {visibleItems.map((item, index) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    activeOpacity={0.72}
+                    onPress={() => setEditing(item)}
+                    style={[styles.item, { backgroundColor: theme.backgroundElement }, index < visibleItems.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.separator }]}>
                     {item.merchant
                       ? <MerchantLogo merchant={item.merchant} size={40} />
                       : <View style={styles.itemIcon}><Image source={COMPANY_ICON} style={styles.companyIcon} resizeMode="contain" /></View>}
@@ -442,11 +418,7 @@ export default function MoneyScreen() {
                       <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
                         {[item.merchant, item.location, dateLabel(item.occurred_at)].filter(Boolean).join(' · ')}
                       </ThemedText>
-                      <View style={styles.statusRow}>
-                        <View style={[styles.statusDot, { backgroundColor: STATUS[item.status].color }]} />
-                        <ThemedText type="small" style={{ color: STATUS[item.status].color }}>{STATUS[item.status].label}</ThemedText>
-                        <ThemedText type="small" themeColor="textSecondary">· {item.recipient || 'Тима'} · {item.company}</ThemedText>
-                      </View>
+                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{item.recipient || 'Тима'} · {item.company}</ThemedText>
                     </View>
                     <ThemedText style={styles.itemAmount}>{fmt(Number(item.amount))} ₽</ThemedText>
                   </TouchableOpacity>
@@ -605,15 +577,6 @@ export default function MoneyScreen() {
 
       <DebtsModal visible={showDebts} onClose={() => setShowDebts(false)} onChanged={load} />
       {!!editing && <ReimbursementEditor key={editing.id} item={editing} onClose={() => setEditing(null)} onChanged={async () => { setEditing(null); await load(); }} />}
-      <Modal visible={showSettings} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowSettings(false)}>
-        <ThemedView style={{ flex: 1 }}>
-          <View style={styles.modalHeader}>
-            <ThemedText style={styles.modalTitle}>Настройки</ThemedText>
-            <TouchableOpacity onPress={() => setShowSettings(false)}><SymbolView name="xmark.circle.fill" tintColor={theme.textSecondary} size={28} /></TouchableOpacity>
-          </View>
-          <ProfileScreen embedded />
-        </ThemedView>
-      </Modal>
     </ThemedView>
   );
 }
@@ -633,25 +596,18 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function RecipientSwitch({ value, onChange, compact = false }: { value: Recipient; onChange: (value: Recipient) => void; compact?: boolean }) {
-  const theme = useTheme();
-  const progress = useRef(new Animated.Value(value === 'Дани' ? 1 : 0)).current;
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    Animated.spring(progress, { toValue: value === 'Дани' ? 1 : 0, damping: 20, stiffness: 260, mass: 0.7, useNativeDriver: true }).start();
-  }, [progress, value]);
-  const half = Math.max(0, (width - 6) / 2);
   return (
-    <View
-      accessibilityRole="tablist"
-      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
-      style={[styles.recipientSwitch, compact && styles.recipientSwitchCompact, { backgroundColor: theme.backgroundSelected, borderColor: theme.separator }]}>
-      {width > 0 && <Animated.View style={[styles.recipientIndicator, { width: half, backgroundColor: theme.tint, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [0, half] }) }] }]} />}
-      {(['Тима', 'Дани'] as Recipient[]).map((name) => (
-        <Pressable key={name} accessibilityRole="tab" accessibilityState={{ selected: value === name }} onPress={() => onChange(name)} style={({ pressed }) => [styles.recipientButton, pressed && { opacity: 0.72 }]}>
-          <ThemedText type="smallBold" style={{ color: value === name ? '#FFFFFF' : theme.textSecondary }}>{name}</ThemedText>
-        </Pressable>
-      ))}
-    </View>
+    <SlidingSegment
+      compact
+      value={value}
+      onChange={onChange}
+      style={compact ? styles.recipientSwitchCompact : undefined}
+      options={[
+        { value: 'Тима', label: 'Тима' },
+        { value: 'Дани', label: 'Даня' },
+        { value: 'Женя', label: 'Женя' },
+      ]}
+    />
   );
 }
 
@@ -735,27 +691,22 @@ const styles = StyleSheet.create({
   title: { fontSize: 34, lineHeight: 39, fontWeight: '800', letterSpacing: -1.1 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   roundButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  sectionTabs: { minHeight: 48, padding: 4, borderRadius: Radius.md, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', gap: 4 },
-  sectionTab: { flex: 1, minHeight: 40, paddingHorizontal: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
-  sectionCount: { minWidth: 23, height: 23, paddingHorizontal: 6, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
   body: { flex: 1 },
   overviewContent: { flexGrow: 1, paddingHorizontal: Spacing.three, paddingTop: Spacing.two, gap: Spacing.three },
-  hero: { borderRadius: Radius.xl, padding: Spacing.four, minHeight: 190, justifyContent: 'flex-end', borderWidth: StyleSheet.hairlineWidth },
-  heroTop: { position: 'absolute', left: Spacing.four, top: Spacing.three, right: Spacing.four, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  heroIcon: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  hero: { borderRadius: Radius.lg, padding: Spacing.three, minHeight: 142, justifyContent: 'flex-end', borderWidth: StyleSheet.hairlineWidth },
+  heroTop: { position: 'absolute', left: Spacing.three, top: Spacing.three, right: Spacing.three, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   companyIcon: { width: '100%', height: '100%' },
-  heroValue: { fontSize: 38, lineHeight: 43, fontWeight: '800', letterSpacing: -1.5, fontVariant: ['tabular-nums'] },
+  heroValue: { fontSize: 34, lineHeight: 40, fontWeight: '700', letterSpacing: -1.25, fontVariant: ['tabular-nums'] },
   heroRecipients: { flexDirection: 'row', gap: 8, marginTop: 12 },
   recipientTotal: { flex: 1, minHeight: 38, paddingHorizontal: 10, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   statsRow: { flexDirection: 'row', gap: Spacing.two },
   moneyStat: { flex: 1, borderRadius: Radius.md, padding: 12, gap: 2 },
   allDebts: { width: 64, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', gap: 3 },
   listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
-  smallSegment: { flexDirection: 'row', padding: 3, borderRadius: 11, borderWidth: StyleSheet.hairlineWidth },
-  smallSegmentButton: { minHeight: 30, paddingHorizontal: 11, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  statusSegment: { width: 190 },
   empty: { alignItems: 'center', gap: 8, paddingVertical: Spacing.five, paddingHorizontal: Spacing.four, borderWidth: StyleSheet.hairlineWidth, borderRadius: Radius.lg },
-  list: { gap: Spacing.two },
-  item: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: Radius.lg, padding: 13 },
+  list: { overflow: 'hidden', borderRadius: 14 },
+  item: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 13, paddingVertical: 12 },
   itemIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   itemAmount: { fontSize: 17, fontWeight: '800', fontVariant: ['tabular-nums'] },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
@@ -787,10 +738,7 @@ const styles = StyleSheet.create({
   noteInput: { minHeight: 80, textAlignVertical: 'top' },
   twoCols: { flexDirection: 'row', gap: Spacing.two },
   saveButton: { height: 54, borderRadius: Radius.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  recipientSwitch: { height: 44, padding: 3, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', overflow: 'hidden' },
-  recipientSwitchCompact: { width: 164, height: 36, alignSelf: 'flex-start', marginBottom: 8 },
-  recipientIndicator: { position: 'absolute', left: 3, top: 3, bottom: 3, borderRadius: 11 },
-  recipientButton: { flex: 1, zIndex: 1, alignItems: 'center', justifyContent: 'center' },
+  recipientSwitchCompact: { width: 220, alignSelf: 'flex-start', marginBottom: 8 },
   modalHeader: { minHeight: 58, paddingHorizontal: Spacing.three, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   modalTitle: { fontSize: 28, fontWeight: '800' },
   editorContent: { padding: Spacing.three, gap: Spacing.three, paddingBottom: Spacing.six },

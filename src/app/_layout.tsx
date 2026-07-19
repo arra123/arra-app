@@ -6,7 +6,7 @@ import {
   Inter_800ExtraBold,
   useFonts,
 } from '@expo-google-fonts/inter';
-import { DefaultTheme, ThemeProvider } from 'expo-router';
+import { DarkTheme, ThemeProvider } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
@@ -55,7 +55,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <ThemeProvider value={DefaultTheme}>
+        <ThemeProvider value={DarkTheme}>
           <AuthProvider>
             <AnimatedSplashOverlay />
             <Gate />

@@ -7,7 +7,7 @@
     "orientation": "default",
     "icon": "./assets/images/noda-app-icon.png",
     "scheme": "aura",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "dark",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -28,7 +28,7 @@
     "android": {
       "icon": "./assets/images/noda-app-icon.png",
       "adaptiveIcon": {
-        "backgroundColor": "#F4F7FB",
+        "backgroundColor": "#171717",
         "foregroundImage": "./assets/images/noda-mark.png",
         "monochromeImage": "./assets/images/noda-mark.png"
       },
@@ -49,12 +49,12 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#08090A",
+          "backgroundColor": "#171717",
           "image": "./assets/images/noda-mark.png",
           "imageWidth": 110,
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#08090A",
+            "backgroundColor": "#171717",
             "image": "./assets/images/noda-mark.png",
             "imageWidth": 110
           }

@@ -475,17 +475,24 @@ document.getElementById('navtoggle').onclick = () => {
 
 // ================= LOGIN =================
 function renderLogin() {
+  document.body.classList.add('workspace-login-mode');
   nav.classList.add('hidden');
   app.innerHTML = `
-    <div class="center">
-      <h1>Подключить компьютер</h1>
-      <div class="card gap">
-        <label class="field"><span>Логин</span><input id="login" type="text" autocomplete="username" /></label>
-        <label class="field"><span>Пароль</span><input id="password" type="password" autocomplete="current-password" /></label>
-        <label class="field"><span>Имя компьютера</span><input id="device" type="text" placeholder="Определится автоматически" /></label>
-        <button class="btn full" id="connect">Подключить</button>
-        <div class="err" id="err"></div>
-      </div>
+    <div class="workspace-login">
+      <section class="workspace-login-intro">
+        <div class="workspace-login-mark" aria-hidden="true"><span></span><span></span></div>
+        <div><strong>Noda</strong><small>Рабочая среда</small></div>
+      </section>
+      <section class="workspace-login-card">
+        <header><h1>Подключить компьютер</h1><p>Проекты, задачи и локальные модели будут доступны на ваших устройствах.</p></header>
+        <div class="workspace-login-fields">
+          <label class="field"><span>Логин</span><input id="login" type="text" autocomplete="username" placeholder="Ваш логин" /></label>
+          <label class="field"><span>Пароль</span><input id="password" type="password" autocomplete="current-password" placeholder="Пароль" /></label>
+          <label class="field"><span>Название устройства</span><input id="device" type="text" placeholder="Определится автоматически" /></label>
+        </div>
+        <button class="workspace-login-submit" id="connect">Продолжить</button>
+        <div class="err" id="err" role="alert"></div>
+      </section>
     </div>`;
   document.getElementById('connect').onclick = doLogin;
   app.querySelectorAll('input').forEach((i) => (i.onkeydown = (e) => { if (e.key === 'Enter') doLogin(); }));
@@ -2813,6 +2820,7 @@ window.addEventListener('drop', (e) => { e.preventDefault(); }, false);
 async function boot() {
   const st = await window.arra.getStatus();
   if (!st.paired || !st.hasAuth) { renderLogin(); return; }
+  document.body.classList.remove('workspace-login-mode');
   try { const hist = await window.arra.getHistory(); if (Array.isArray(hist)) state.files = hist; } catch {}
   await refreshPresence(false);
   renderNav();

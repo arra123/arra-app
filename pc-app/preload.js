@@ -38,6 +38,10 @@ contextBridge.exposeInMainWorld('arra', {
   // Перенос (синхронизация рабочих файлов с сервером)
   syncRun: (mode, only, role) => ipcRenderer.invoke('sync-run', { mode, only, role }),
   syncLocalInventory: () => ipcRenderer.invoke('sync-local-inventory'),
+  workspaceSettings: () => ipcRenderer.invoke('workspace-settings'),
+  setLocalAiUrl: (url) => ipcRenderer.invoke('set-local-ai-url', url),
+  localModels: () => ipcRenderer.invoke('local-models'),
+  localChat: (model, messages, project) => ipcRenderer.invoke('local-chat', { model, messages, project }),
   syncPause: () => ipcRenderer.invoke('sync-pause'),
   syncResume: () => ipcRenderer.invoke('sync-resume'),
   syncCancel: () => ipcRenderer.invoke('sync-cancel'),

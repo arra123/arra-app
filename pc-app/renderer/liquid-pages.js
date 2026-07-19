@@ -149,7 +149,7 @@ function bindLiquidRecorder(button, onText) {
 
 const liquidFinance = {
   tab: 'add', target: 'reimbursement', raw: '', userRaw: '', parsed: null, parsing: false, saved: null,
-  recipient: localStorage.getItem('noda-finance-recipient') === 'Дани' ? 'Дани' : 'Тима',
+  recipient: ['Тима', 'Дани', 'Женя'].includes(localStorage.getItem('noda-finance-recipient')) ? localStorage.getItem('noda-finance-recipient') : 'Тима',
   month: localStorage.getItem('noda-finance-month') || '',
   dateSort: localStorage.getItem('noda-finance-date-sort') === 'asc' ? 'asc' : 'desc',
   groupMode: localStorage.getItem('noda-finance-group-mode') === 'service' ? 'service' : 'week',
@@ -160,11 +160,12 @@ function financeRecipientButtons(selected = liquidFinance.recipient) {
   return `<div class="finance-recipient-switch" role="tablist" data-recipient="${esc(selected)}">
     <i aria-hidden="true"></i>
     <button type="button" data-fin-recipient="Тима" class="${selected === 'Тима' ? 'active' : ''}">Тима</button>
-    <button type="button" data-fin-recipient="Дани" class="${selected === 'Дани' ? 'active' : ''}">Дани</button>
+    <button type="button" data-fin-recipient="Дани" class="${selected === 'Дани' ? 'active' : ''}">Даня</button>
+    <button type="button" data-fin-recipient="Женя" class="${selected === 'Женя' ? 'active' : ''}">Женя</button>
   </div>`;
 }
 function selectFinanceRecipient(value) {
-  liquidFinance.recipient = value === 'Дани' ? 'Дани' : 'Тима';
+  liquidFinance.recipient = ['Дани', 'Женя'].includes(value) ? value : 'Тима';
   localStorage.setItem('noda-finance-recipient', liquidFinance.recipient);
   document.querySelectorAll('.finance-recipient-switch').forEach((switcher) => {
     switcher.dataset.recipient = liquidFinance.recipient;
@@ -328,7 +329,7 @@ function financeRecordRow(record) {
   return `<tr class="finance-record ${closed ? 'closed' : ''}" data-type="${type}" data-id="${esc(item.id)}" data-fin-edit-row="1" title="Нажмите, чтобы изменить">
     <td><div class="finance-source"><span class="finance-source-mark ${record.company ? 'company' : 'person'}" aria-hidden="true">${record.company ? '' : liquidIcon('people')}</span><b>${esc(record.source)}</b></div></td>
     <td><div class="finance-purpose">${financeServiceIcon(item)}<div><b>${esc(record.reason)}</b>${subtitle ? `<small>${esc(subtitle)}</small>` : ''}</div></div></td>
-    <td><span class="finance-recipient-badge ${record.recipient === 'Дани' ? 'dani' : 'tima'}">${esc(record.recipient)}</span></td>
+    <td><span class="finance-recipient-badge ${record.recipient === 'Дани' ? 'dani' : record.recipient === 'Женя' ? 'zhenya' : 'tima'}">${esc(record.recipient)}</span></td>
     <td><time datetime="${record.date.toISOString()}">${liquidDate(record.date)}</time></td>
     <td class="money"><strong>${fmt(record.amount)} ₽</strong></td>
     <td><div class="finance-row-actions"><button class="finance-row-edit" type="button" data-fin-edit="1" title="Изменить">${liquidIcon('edit')}</button><button class="liquid-row-check ${closed ? 'checked' : ''}" type="button" data-close="1" title="${closed ? 'Вернуть' : 'Отметить возвращённым'}">${liquidIcon('check')}</button></div></td>
@@ -361,10 +362,10 @@ function openFinanceEditor(type, id) {
       <div class="finance-edit-grid">
         ${reimbursement ? `<label class="wide"><span>За что</span><input name="purpose" value="${esc(item.purpose || '')}" required/></label>
           <label><span>Сервис или магазин</span><input name="merchant" value="${esc(item.merchant || '')}"/></label>
-          <label><span>Кому</span><select name="recipient"><option ${item.recipient !== 'Дани' ? 'selected' : ''}>Тима</option><option ${item.recipient === 'Дани' ? 'selected' : ''}>Дани</option></select></label>`
+          <label><span>Кому</span><select name="recipient"><option ${item.recipient === 'Тима' || !item.recipient ? 'selected' : ''}>Тима</option><option ${item.recipient === 'Дани' ? 'selected' : ''}>Дани</option><option ${item.recipient === 'Женя' ? 'selected' : ''}>Женя</option></select></label>`
           : `<label class="wide"><span>Кто или кому</span><input name="counterparty" value="${esc(item.counterparty || '')}" required/></label>
           <label><span>Направление</span><select name="direction"><option value="owes_me" ${item.direction !== 'i_owe' ? 'selected' : ''}>Мне должны</option><option value="i_owe" ${item.direction === 'i_owe' ? 'selected' : ''}>Я должен</option></select></label>
-          <label><span>Кому внутри команды</span><select name="recipient"><option ${item.recipient !== 'Дани' ? 'selected' : ''}>Тима</option><option ${item.recipient === 'Дани' ? 'selected' : ''}>Дани</option></select></label>`}
+          <label><span>Кому внутри команды</span><select name="recipient"><option ${item.recipient === 'Тима' || !item.recipient ? 'selected' : ''}>Тима</option><option ${item.recipient === 'Дани' ? 'selected' : ''}>Дани</option><option ${item.recipient === 'Женя' ? 'selected' : ''}>Женя</option></select></label>`}
         <label><span>Когда</span><input name="occurred_at" type="datetime-local" value="${financeLocalDateTime(item.occurred_at || item.created_at)}" required/></label>
         <label><span>Сумма</span><div class="finance-edit-money"><input name="amount" type="number" min="0.01" step="0.01" value="${esc(item.amount)}" required/><i>₽</i></div></label>
         <label class="wide"><span>Комментарий</span><input name="note" value="${esc(item.note || '')}"/></label>
@@ -464,11 +465,11 @@ function renderFinanceAnalytics() {
   const weeks = financeWeekGroups(records).sort((a, b) => a.start - b.start);
   const categoryMap = new Map(); records.forEach((record) => categoryMap.set(financeCategory(record), (categoryMap.get(financeCategory(record)) || 0) + record.amount));
   const categories = [...categoryMap.entries()].sort((a, b) => b[1] - a[1]);
-  const recipients = ['Тима', 'Дани'].map((name) => ({ name, total: records.filter((record) => record.recipient === name).reduce((sum, record) => sum + record.amount, 0) })).filter((item) => item.total);
+  const recipients = ['Тима', 'Дани', 'Женя'].map((name) => ({ name, total: records.filter((record) => record.recipient === name).reduce((sum, record) => sum + record.amount, 0) })).filter((item) => item.total);
   body.innerHTML = `${financePeriodHtml(records)}<div class="finance-analytics">
     <section class="finance-analytics-panel"><header><span>${liquidIcon('calendar')}</span><div><b>По неделям</b><small>Динамика расходов</small></div></header><div class="finance-week-bars">${weeks.length ? weeks.map((group) => `<div><label><span>${financeWeekLabel(group.start)}</span><strong>${fmt(group.total)} ₽</strong></label><i><b style="width:${Math.max(3, group.total / max * 100)}%"></b></i></div>`).join('') : '<p>Нет данных</p>'}</div></section>
     <section class="finance-analytics-panel"><header><span>${liquidIcon('chart')}</span><div><b>За что</b><small>Основные направления</small></div></header><div class="finance-category-list">${categories.length ? categories.map(([name, amount]) => `<div><span>${esc(name)}</span><b>${fmt(amount)} ₽</b><small>${total ? Math.round(amount / total * 100) : 0}%</small></div>`).join('') : '<p>Нет данных</p>'}</div></section>
-    <section class="finance-recipient-summary"><b>Кому</b>${recipients.length ? recipients.map((item) => `<span><i class="${item.name === 'Дани' ? 'dani' : 'tima'}"></i>${item.name}<strong>${fmt(item.total)} ₽</strong></span>`).join('') : '<small>Нет данных</small>'}</section>
+    <section class="finance-recipient-summary"><b>Кому</b>${recipients.length ? recipients.map((item) => `<span><i class="${item.name === 'Дани' ? 'dani' : item.name === 'Женя' ? 'zhenya' : 'tima'}"></i>${item.name}<strong>${fmt(item.total)} ₽</strong></span>`).join('') : '<small>Нет данных</small>'}</section>
   </div>`;
   bindFinancePeriod(renderFinanceAnalytics);
 }
@@ -718,5 +719,8 @@ renderNotes = function renderLiquidNotes() {
   });
 };
 
-// If one of these pages was active while the override loaded, repaint it immediately.
-if (state.section === 'fin') renderFin();
+// Repaint an already active page only for an authenticated workspace. During
+// first launch app.js owns the login screen and no feature page may cover it.
+window.arra.getStatus().then((status) => {
+  if (status?.paired && status?.hasAuth && state.section === 'fin') renderFin();
+}).catch((error) => reportError('liquid.boot', error));

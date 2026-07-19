@@ -134,7 +134,7 @@ const REIMBURSEMENT_PROMPT = `Ты разбираешь голосовые и т
 - merchant: магазин, сервис или заведение, если названо;
 - location: адрес, город или место, если названо отдельно;
 - company: кто должен компенсировать, по умолчанию "Компания";
-- recipient: кому компания должна вернуть деньги — только "Тима" или "Дани". Явно названное имя важнее выбранного по умолчанию;
+- recipient: кому компания должна вернуть деньги — только "Тима", "Дани" или "Женя". Явно названное имя важнее выбранного по умолчанию;
 - occurred_at: дата и время расхода ISO 8601, если можно определить;
 - due_date: срок возврата YYYY-MM-DD, если назван;
 - note: остальные важные подробности.
@@ -160,9 +160,13 @@ export async function parseReimbursementInput({ text, image, preferredKind = 're
   );
   const kind = parsed.kind === 'debt' ? 'debt' : 'reimbursement';
   const parsedRecipient = String(parsed.recipient || '').trim();
-  const recipient = /дани(?:ил)?/i.test(parsedRecipient)
+  const recipient = /дан(?:я|и|иил|ил)?/i.test(parsedRecipient)
     ? 'Дани'
-    : /тим/i.test(parsedRecipient) ? 'Тима' : (preferredRecipient === 'Дани' ? 'Дани' : 'Тима');
+    : /жен|евген/i.test(parsedRecipient)
+      ? 'Женя'
+      : /тим/i.test(parsedRecipient)
+        ? 'Тима'
+        : (['Дани', 'Женя'].includes(preferredRecipient) ? preferredRecipient : 'Тима');
   return {
     kind,
     amount: Math.abs(Number(parsed.amount) || 0) || null,

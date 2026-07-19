@@ -23,12 +23,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
 import { RemoteScreen, type RemoteScreenHandle } from '@/components/remote-screen';
+import { SlidingSegment } from '@/components/sliding-segment';
 import { SyncPanel } from '@/components/sync-panel';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Colors, Radius, Spacing } from '@/constants/theme';
 import { API_URL, getToken } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
+import { useWorkspace } from '@/lib/workspace';
 
 const c = Colors.dark;
 const WS_URL = API_URL.replace(/^http/, 'ws') + '/client';
@@ -117,6 +119,7 @@ const KEYS: { label: string; seq: string }[] = [
 
 export default function PcScreen() {
   const insets = useSafeAreaInsets();
+  const workspace = useWorkspace();
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]);
@@ -168,6 +171,25 @@ export default function PcScreen() {
   useEffect(() => { termsRef.current = terms; }, [terms]);
   useEffect(() => { activeTermRef.current = activeTerm; }, [activeTerm]);
   useEffect(() => { deviceIdRef.current = deviceId; }, [deviceId]);
+
+  // Переход из проекта в меню открывает терминал сразу в его локальной папке.
+  // Это связывает «выбрать проект» и «продолжить работу» в один понятный поток.
+  useEffect(() => {
+    const project = workspace.activeProject;
+    if (!project?.path) return;
+    if (workspace.activeDeviceId && workspace.activeDeviceId !== deviceIdRef.current) {
+      manualPick.current = true;
+      deviceIdRef.current = workspace.activeDeviceId;
+      setDeviceId(workspace.activeDeviceId);
+    }
+    const safeName = project.name.replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 48) || 'project';
+    const termId = `project-${safeName}`;
+    termCwds.current[termId] = project.path;
+    termAttach.current[termId] = false;
+    setTerms((previous) => previous.some((term) => term.id === termId) ? previous : [...previous, { id: termId, cwd: project.path! }]);
+    setActiveTerm(termId);
+    setSub('term');
+  }, [workspace.activeDeviceId, workspace.activeProject]);
 
   const send = useCallback((obj: any) => {
     const ws = wsRef.current;
@@ -552,8 +574,7 @@ export default function PcScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
-        <ThemedText type="title" style={styles.h1}>Компьютер</ThemedText>
+      <View style={[styles.header, { paddingTop: Spacing.two }]}>
         <View style={styles.headerRight}>
           <View style={styles.agentShortcuts}>
             <TouchableOpacity onPress={() => sendKey('codex --yolo\r')} style={[styles.agentShortcut, { borderColor: c.separator }]}>
@@ -589,12 +610,18 @@ export default function PcScreen() {
         </View>
       )}
 
-      <View style={styles.seg}>
-        <SegBtn label="Терминал" active={sub === 'term'} onPress={() => setSub('term')} />
-        <SegBtn label="Проводник" active={sub === 'explorer'} onPress={() => setSub('explorer')} />
-        <SegBtn label="Экран" active={sub === 'screen'} onPress={() => setSub('screen')} />
-        <SegBtn label="Передача" active={sub === 'transfer'} onPress={() => setSub('transfer')} />
-      </View>
+      <SlidingSegment
+        compact
+        value={sub}
+        onChange={setSub}
+        style={styles.seg}
+        options={[
+          { value: 'term', label: 'Терминал' },
+          { value: 'explorer', label: 'Файлы' },
+          { value: 'screen', label: 'Экран' },
+          { value: 'transfer', label: 'Sync' },
+        ]}
+      />
 
       {!!busyMsg && <ThemedText type="small" style={styles.toast}>{busyMsg}</ThemedText>}
 
@@ -866,14 +893,6 @@ export default function PcScreen() {
   );
 }
 
-function SegBtn({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress} style={[styles.segBtn, active && styles.segBtnOn]}>
-      <ThemedText type="smallBold" style={{ color: active ? '#fff' : c.textSecondary }}>{label}</ThemedText>
-    </Pressable>
-  );
-}
-
 const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
 
 const styles = StyleSheet.create({
@@ -887,9 +906,7 @@ const styles = StyleSheet.create({
   devList: { marginHorizontal: Spacing.three, marginBottom: Spacing.two, borderRadius: Radius.md, backgroundColor: c.backgroundElement, overflow: 'hidden' },
   devRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two, paddingHorizontal: Spacing.three, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.separator },
   dot: { width: 9, height: 9, borderRadius: 5 },
-  seg: { flexDirection: 'row', gap: 4, marginHorizontal: Spacing.three, padding: 4, borderRadius: Radius.md, backgroundColor: c.backgroundElement, marginBottom: Spacing.two },
-  segBtn: { flex: 1, paddingVertical: Spacing.two, borderRadius: Radius.sm, alignItems: 'center' },
-  segBtnOn: { backgroundColor: c.accent },
+  seg: { marginHorizontal: Spacing.three, marginBottom: Spacing.two },
   toast: { textAlign: 'center', color: c.text, paddingVertical: 4 },
   termTabs: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: Spacing.three, marginBottom: Spacing.two },
   presetDot: { width: 7, height: 7, borderRadius: 2 },

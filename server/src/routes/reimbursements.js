@@ -10,7 +10,12 @@ const clean = (value) => {
   const text = value == null ? '' : String(value).trim();
   return text || null;
 };
-const recipient = (value) => /^дани(?:ил)?$/i.test(String(value || '').trim()) ? 'Дани' : 'Тима';
+const recipient = (value) => {
+  const name = String(value || '').trim();
+  if (/^дан(?:я|и|иил|ил)?$/i.test(name)) return 'Дани';
+  if (/^(женя|евгений)$/i.test(name)) return 'Женя';
+  return 'Тима';
+};
 
 export default async function reimbursementRoutes(app) {
   app.get('/reimbursements', { preHandler: app.auth }, async (request) => {
