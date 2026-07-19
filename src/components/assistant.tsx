@@ -4,8 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Image,
   Keyboard,
+  KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -19,10 +22,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { VoiceRecorder } from '@/components/voice-recorder';
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
+import { useWorkspace } from '@/lib/workspace';
 
 type Msg = { id: string; role: 'user' | 'assistant'; content: string; created_at?: string };
 type Attachment = { uri: string; data: string };
@@ -31,27 +35,22 @@ const hhmm = (iso?: string) => iso
   ? new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
   : '';
 
-const STARTERS = [
-  'Помоги распланировать день',
-  'Создай заметку из моих мыслей',
-  'Объясни сложное простыми словами',
-];
-
-export function Assistant() {
+export function Assistant({ embedded = false }: { embedded?: boolean }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const workspace = useWorkspace();
   const [messages, setMessages] = useState<Msg[]>([]);
+  const messagesRef = useRef<Msg[]>([]);
   const [input, setInput] = useState('');
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const scrollRef = useRef<ScrollView>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const listRef = useRef<FlatList<Msg>>(null);
   const inputRef = useRef<TextInput>(null);
+  const localMode = workspace.selectedModel.startsWith('local:');
 
-  const scrollEnd = useCallback((animated = true) => {
-    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated }));
-  }, []);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   useFocusEffect(useCallback(() => {
     inputRef.current?.blur();
@@ -59,46 +58,67 @@ export function Assistant() {
     return () => { inputRef.current?.blur(); Keyboard.dismiss(); };
   }, []));
 
-  useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const show = Keyboard.addListener(showEvent, (event) => {
-      setKeyboardHeight(event.endCoordinates?.height || 0);
-      scrollEnd(false);
-    });
-    const hide = Keyboard.addListener(hideEvent, () => setKeyboardHeight(0));
-    return () => { show.remove(); hide.remove(); };
-  }, [scrollEnd]);
-
   const load = useCallback(async () => {
     try {
-      const result = await api<{ messages: Msg[] }>('/ai/messages');
+      const result = await api<{ messages: Msg[] }>(`/ai/messages?thread=${encodeURIComponent(workspace.threadKey)}`);
       setMessages(result.messages || []);
     } catch {
-      // История не блокирует сам экран: ошибка отправки будет показана отдельно.
+      // История не блокирует экран.
     }
-  }, []);
+  }, [workspace.threadKey]);
 
   useEffect(() => {
-    // История загружается после первого кадра, чтобы открытие вкладки не блокировалось сетью.
+    setMessages([]);
+    setInput('');
+    setAttachment(null);
+    setError('');
     const timer = setTimeout(load, 0);
     return () => clearTimeout(timer);
-  }, [load]);
+  }, [load, workspace.activeProject?.name, workspace.threadKey]);
 
   async function send(value: string, forcedAttachment = attachment) {
     const text = value.trim();
     if ((!text && !forcedAttachment) || sending) return;
+    if (localMode && forcedAttachment) {
+      setError('Фото пока обрабатывает облачная модель. Переключи модель или убери вложение.');
+      return;
+    }
     Keyboard.dismiss();
     setInput('');
     setAttachment(null);
     setError('');
     const optimistic = forcedAttachment ? `📷 ${text || 'Фото'}` : text;
-    setMessages((current) => [...current, { id: `tmp-${Date.now()}`, role: 'user', content: optimistic }]);
+    const userMessage: Msg = { id: `user-${Date.now()}`, role: 'user', content: optimistic };
+    const outgoing = [...messagesRef.current, userMessage];
+    setMessages(outgoing);
     setSending(true);
     haptic.tap();
     try {
-      await api('/ai/assistant', { body: { text, image: forcedAttachment?.data } });
-      await load();
+      if (localMode) {
+        const answer = await workspace.localChat([
+          ...outgoing.map((message) => ({ role: message.role, content: message.content })),
+        ]);
+        const assistantMessage: Msg = { id: `local-assistant-${Date.now()}`, role: 'assistant', content: answer.content };
+        setMessages((current) => [...current, assistantMessage]);
+        await api('/ai/messages/sync', {
+          body: {
+            threadKey: workspace.threadKey,
+            project: null,
+            messages: [userMessage, assistantMessage],
+          },
+        }).catch(() => {});
+      } else {
+        await api('/ai/assistant', {
+          body: {
+            text,
+            image: forcedAttachment?.data,
+            threadKey: workspace.threadKey,
+            project: null,
+          },
+        });
+        await load();
+      }
+      workspace.refreshThreads();
       haptic.success();
     } catch (sendError: any) {
       haptic.error();
@@ -124,152 +144,191 @@ export function Assistant() {
   }
 
   function pickImage() {
-    Alert.alert('Фото для Noda', '', [
-      { text: 'Снять', onPress: () => chooseImage(true) },
-      { text: 'Из галереи', onPress: () => chooseImage(false) },
+    Alert.alert('Добавить фото', '', [
+      { text: 'Камера', onPress: () => chooseImage(true) },
+      { text: 'Галерея', onPress: () => chooseImage(false) },
       { text: 'Отмена', style: 'cancel' },
     ]);
   }
 
-  function clearHistory() {
-    if (!messages.length) return;
-    Alert.alert('Очистить диалог?', 'Заметки и другие данные не удалятся.', [
+  function pickModel() {
+    const actions: any[] = [
+      { text: 'Noda Cloud', onPress: () => workspace.setSelectedModel('cloud') },
+      ...workspace.models.map((model) => ({ text: `${model.name} · локально`, onPress: () => workspace.setSelectedModel(`local:${model.name}`) })),
+      { text: 'Обновить список', onPress: workspace.refresh },
       { text: 'Отмена', style: 'cancel' },
-      { text: 'Очистить', style: 'destructive', onPress: async () => { await api('/ai/messages', { method: 'DELETE' }); setMessages([]); } },
-    ]);
+    ];
+    Alert.alert('Модель', workspace.devices.find((device) => device.id === workspace.activeDeviceId)?.name || '', actions);
   }
+
+  const renderMessage = ({ item }: { item: Msg }) => (
+    <View style={item.role === 'user' ? styles.userRow : styles.aiRow}>
+      {item.role === 'assistant' && (
+        <View style={styles.aiMark}><SymbolView name="sparkles" tintColor={theme.text} size={15} /></View>
+      )}
+      <View style={item.role === 'user' ? styles.userBubble : styles.aiBubble}>
+        <ThemedText style={styles.messageText}>{item.content}</ThemedText>
+        {!!hhmm(item.created_at) && <ThemedText style={styles.time}>{hhmm(item.created_at)}</ThemedText>}
+      </View>
+    </View>
+  );
+
+  const empty = (
+    <View style={styles.empty}>
+      <View style={styles.emptyMark}><SymbolView name="sparkles" tintColor={theme.text} size={18} /></View>
+      <ThemedText style={styles.emptyTitle}>Чем помочь?</ThemedText>
+      <ThemedText style={styles.emptyCopy}>Фото, голос и сообщения останутся в этом диалоге.</ThemedText>
+    </View>
+  );
 
   return (
     <ThemedView style={styles.container}>
-      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
-        <View style={styles.nameRow}>
-          <View style={[styles.liveDot, { backgroundColor: theme.tint }]} />
-          <ThemedText style={styles.title}>Noda</ThemedText>
-        </View>
-        <TouchableOpacity onPress={clearHistory} hitSlop={10} style={[styles.clearButton, { borderColor: theme.separator }]}>
-          <SymbolView name="trash" tintColor={theme.textSecondary} size={16} />
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView
-        ref={scrollRef}
-        style={{ flex: 1 }}
-        contentContainerStyle={styles.feed}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="interactive"
-        showsVerticalScrollIndicator={false}
-        onContentSizeChange={() => scrollEnd(false)}>
-        {messages.length === 0 ? (
-          <View style={styles.empty}>
-            <View style={[styles.orb, { backgroundColor: `${theme.tint}1A`, borderColor: `${theme.tint}45` }]}>
-              <SymbolView name="sparkles" tintColor={theme.tint} size={30} />
-            </View>
-            <ThemedText style={styles.emptyTitle}>Спросите что угодно</ThemedText>
-            <View style={styles.starters}>
-              {STARTERS.map((starter) => (
-                <Pressable key={starter} onPress={() => setInput(starter)} style={[styles.starter, { backgroundColor: theme.backgroundElement }]}>
-                  <ThemedText type="small">{starter}</ThemedText>
-                  <SymbolView name="arrow.up.left" tintColor={theme.textSecondary} size={13} />
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        ) : (
-          messages.map((message) => (
-            <View key={message.id} style={message.role === 'user' ? styles.userRow : styles.aiRow}>
-              {message.role === 'assistant' && (
-                <View style={[styles.aiMark, { backgroundColor: `${theme.tint}1F` }]}>
-                  <SymbolView name="sparkles" tintColor={theme.tint} size={14} />
-                </View>
-              )}
-              <View style={message.role === 'user'
-                ? [styles.userBubble, { backgroundColor: theme.tint }]
-                : [styles.aiBubble, { backgroundColor: theme.backgroundElement }]}>
-                <ThemedText style={message.role === 'user' ? { color: '#FFFFFF' } : undefined}>{message.content}</ThemedText>
-                {!!hhmm(message.created_at) && (
-                  <ThemedText type="small" style={[styles.time, { color: message.role === 'user' ? 'rgba(255,255,255,0.58)' : theme.textSecondary }]}>{hhmm(message.created_at)}</ThemedText>
-                )}
-              </View>
-            </View>
-          ))
-        )}
-        {sending && (
-          <View style={styles.aiRow}>
-            <View style={[styles.aiMark, { backgroundColor: `${theme.tint}1F` }]}><SymbolView name="sparkles" tintColor={theme.tint} size={14} /></View>
-            <View style={[styles.typing, { backgroundColor: theme.backgroundElement }]}>
-              <ActivityIndicator size="small" color={theme.tint} /><ThemedText type="small" themeColor="textSecondary">Думаю…</ThemedText>
-            </View>
-          </View>
-        )}
-        {!!error && (
-          <Pressable onPress={() => send(input)} style={[styles.error, { borderColor: theme.danger }]}>
-            <SymbolView name="exclamationmark.triangle.fill" tintColor={theme.danger} size={16} />
-            <ThemedText type="small" style={{ color: theme.danger, flex: 1 }}>{error}</ThemedText>
+      <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 48 : 0}>
+        <View style={styles.contextBar}>
+          <Pressable onPress={() => setHistoryOpen(true)} style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}>
+            <SymbolView name="sidebar.left" tintColor={theme.textSecondary} size={17} />
           </Pressable>
-        )}
-      </ScrollView>
-
-      <View style={[styles.dock, { paddingBottom: (keyboardHeight > 0 ? keyboardHeight : Math.max(insets.bottom, BottomTabInset)) + Spacing.two, backgroundColor: theme.background }]}>
-        {!!attachment && (
-          <View style={[styles.attachment, { backgroundColor: theme.backgroundElement }]}>
-            <Image source={{ uri: attachment.uri }} style={styles.attachmentImage} />
-            <View style={{ flex: 1 }} />
-            <TouchableOpacity onPress={() => setAttachment(null)}><SymbolView name="xmark.circle.fill" tintColor={theme.textSecondary} size={23} /></TouchableOpacity>
-          </View>
-        )}
-        <View style={[styles.composer, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
-          <TouchableOpacity accessibilityLabel="Добавить" onPress={pickImage} style={styles.iconButton}>
-            <SymbolView name="plus" tintColor={theme.textSecondary} size={22} />
-          </TouchableOpacity>
-          <TextInput
-            ref={inputRef}
-            value={input}
-            onChangeText={setInput}
-            placeholder="Сообщение Noda"
-            placeholderTextColor={theme.textSecondary}
-            multiline
-            returnKeyType="default"
-            style={[styles.input, { color: theme.text }]}
-          />
-          {(input.trim() || attachment) ? (
-            <TouchableOpacity accessibilityLabel="Отправить" disabled={sending} onPress={() => send(input)} style={[styles.sendButton, { backgroundColor: theme.tint }]}>
-              <SymbolView name="arrow.up" tintColor="#FFFFFF" size={21} />
-            </TouchableOpacity>
-          ) : (
-            <VoiceRecorder disabled={sending} onTranscript={(text) => send(text, null)} />
-          )}
+          <ThemedText type="smallBold" numberOfLines={1} style={styles.chatTitle}>
+            {workspace.threads.find((thread) => thread.thread_key === workspace.threadKey)?.title || 'Новый диалог'}
+          </ThemedText>
+          <Pressable onPress={pickModel} style={({ pressed }) => [styles.modelButton, pressed && styles.pressed]}>
+            <View style={[styles.modelDot, localMode && styles.modelDotLocal]} />
+            <ThemedText style={styles.modelLabel} numberOfLines={1}>
+              {localMode ? workspace.selectedModel.slice(6) : 'Noda Cloud'}
+            </ThemedText>
+            <SymbolView name="chevron.down" tintColor={theme.textSecondary} size={10} />
+          </Pressable>
+          <Pressable accessibilityLabel="Новый диалог" onPress={workspace.newTask} hitSlop={8} style={styles.clearButton}>
+            <SymbolView name="square.and.pencil" tintColor={theme.textSecondary} size={16} />
+          </Pressable>
         </View>
-      </View>
+
+        <Modal visible={historyOpen} transparent animationType="fade" onRequestClose={() => setHistoryOpen(false)}>
+          <Pressable style={styles.historyBackdrop} onPress={() => setHistoryOpen(false)}>
+            <Pressable style={[styles.historySheet, { paddingTop: Math.max(insets.top, 12), paddingBottom: Math.max(insets.bottom, 12) }]} onPress={(event) => event.stopPropagation()}>
+              <View style={styles.historyHead}>
+                <ThemedText style={styles.historyTitle}>Диалоги</ThemedText>
+                <Pressable onPress={() => setHistoryOpen(false)} style={styles.historyClose}><SymbolView name="xmark" tintColor={theme.textSecondary} size={15} /></Pressable>
+              </View>
+              <Pressable onPress={() => { workspace.newTask(); setHistoryOpen(false); }} style={styles.historyNew}>
+                <SymbolView name="square.and.pencil" tintColor={theme.text} size={16} /><ThemedText type="smallBold">Новый диалог</ThemedText>
+              </Pressable>
+              <ScrollView style={styles.historyList} showsVerticalScrollIndicator={false}>
+                {workspace.threads.filter((thread) => !thread.project_name && !thread.thread_key.startsWith('project:')).map((thread) => (
+                  <Pressable key={thread.thread_key} onPress={() => { workspace.openThread(thread); setHistoryOpen(false); }} style={[styles.historyRow, thread.thread_key === workspace.threadKey && styles.historyRowActive]}>
+                    <ThemedText numberOfLines={1} style={styles.historyRowText}>{thread.title || 'Новый диалог'}</ThemedText>
+                  </Pressable>
+                ))}
+                {!workspace.threads.some((thread) => !thread.project_name && !thread.thread_key.startsWith('project:')) && <ThemedText style={styles.historyEmpty}>История появится после первого сообщения.</ThemedText>}
+              </ScrollView>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        <FlatList
+          ref={listRef}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={(item) => item.id}
+          style={styles.feed}
+          contentContainerStyle={[styles.feedContent, !messages.length && styles.feedEmpty]}
+          ListEmptyComponent={empty}
+          ListFooterComponent={sending ? (
+            <View style={styles.thinking}><ActivityIndicator size="small" color={theme.textSecondary} /><ThemedText style={styles.thinkingText}>Думаю…</ThemedText></View>
+          ) : error ? (
+            <View style={styles.error}><SymbolView name="exclamationmark.triangle.fill" tintColor={theme.danger} size={15} /><ThemedText style={[styles.errorText, { color: theme.danger }]}>{error}</ThemedText></View>
+          ) : null}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+        />
+
+        <View style={[styles.dock, { paddingBottom: Math.max(embedded ? 8 : insets.bottom, 8) }]}>
+          {!!attachment && (
+            <View style={styles.attachment}>
+              <Image source={{ uri: attachment.uri }} style={{ width: 41, height: 41, borderRadius: 9 }} />
+              <ThemedText type="small" style={{ flex: 1 }}>Фото добавлено</ThemedText>
+              <TouchableOpacity onPress={() => setAttachment(null)}><SymbolView name="xmark.circle.fill" tintColor={theme.textSecondary} size={23} /></TouchableOpacity>
+            </View>
+          )}
+          <View style={styles.composer}>
+            <TextInput
+              ref={inputRef}
+              value={input}
+              onChangeText={setInput}
+              placeholder="Спросить Noda"
+              placeholderTextColor={theme.textSecondary}
+              multiline
+              returnKeyType="default"
+              style={[styles.input, { color: theme.text }]}
+            />
+            <View style={styles.composerActions}>
+              <TouchableOpacity accessibilityLabel="Добавить" onPress={pickImage} style={styles.iconButton}>
+                <SymbolView name="plus" tintColor={theme.textSecondary} size={20} />
+              </TouchableOpacity>
+              <ThemedText style={styles.composerContext} numberOfLines={1}>{localMode ? workspace.selectedModel.slice(6) : 'Noda Cloud'}</ThemedText>
+              {(input.trim() || attachment) ? (
+                <TouchableOpacity accessibilityLabel="Отправить" disabled={sending} onPress={() => send(input)} style={styles.sendButton}>
+                  <SymbolView name="arrow.up" tintColor="#171717" size={19} />
+                </TouchableOpacity>
+              ) : (
+                <VoiceRecorder disabled={sending} onTranscript={(text) => { setInput(text); inputRef.current?.focus(); }} />
+              )}
+            </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  header: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.two, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  liveDot: { width: 9, height: 9, borderRadius: 5 },
-  title: { fontSize: 34, lineHeight: 39, fontWeight: '800', letterSpacing: -1.1 },
-  clearButton: { width: 40, height: 40, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
-  feed: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two, paddingBottom: Spacing.four, gap: 10, flexGrow: 1 },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.five },
-  orb: { width: 72, height: 72, borderRadius: 26, borderWidth: 1, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.three },
-  emptyTitle: { fontSize: 24, lineHeight: 30, fontWeight: '800' },
-  starters: { width: '100%', gap: 7, marginTop: Spacing.four },
-  starter: { minHeight: 46, paddingHorizontal: 14, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  userRow: { alignItems: 'flex-end', paddingLeft: 40 },
-  aiRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingRight: 30 },
-  aiMark: { width: 28, height: 28, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
-  userBubble: { maxWidth: '94%', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 18, borderBottomRightRadius: 6 },
-  aiBubble: { maxWidth: '94%', paddingVertical: 11, paddingHorizontal: 14, borderRadius: 18, borderBottomLeftRadius: 6 },
-  time: { fontSize: 10, lineHeight: 13, textAlign: 'right', marginTop: 3 },
-  typing: { minHeight: 44, borderRadius: 18, borderBottomLeftRadius: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  error: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, padding: 12, flexDirection: 'row', gap: 8, alignItems: 'center' },
-  dock: { paddingHorizontal: Spacing.three, paddingTop: 7, gap: 7 },
-  attachment: { minHeight: 58, borderRadius: 14, padding: 7, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  attachmentImage: { width: 44, height: 44, borderRadius: 10 },
-  composer: { minHeight: 52, maxHeight: 130, borderRadius: 26, borderWidth: StyleSheet.hairlineWidth, padding: 5, flexDirection: 'row', alignItems: 'flex-end', gap: 5, position: 'relative' },
-  iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  input: { flex: 1, minHeight: 40, maxHeight: 112, paddingVertical: 9, fontSize: 16, lineHeight: 21 },
-  sendButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  container: { flex: 1, minHeight: 0, overflow: 'hidden' },
+  contextBar: { minHeight: 45, paddingHorizontal: 13, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.07)', flexDirection: 'row', alignItems: 'center', gap: 7 },
+  historyButton: { width: 31, height: 31, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
+  chatTitle: { minWidth: 0, flex: 1, fontSize: 12 },
+  modelButton: { maxWidth: 152, height: 31, paddingHorizontal: 9, borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.11)', backgroundColor: '#292929', flexDirection: 'row', alignItems: 'center', gap: 6 },
+  modelDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#A0A0A0' },
+  modelDotLocal: { backgroundColor: '#2FBF71' },
+  modelLabel: { minWidth: 0, flexShrink: 1, color: '#BDBDBD', fontSize: 10 },
+  clearButton: { width: 31, height: 31, alignItems: 'center', justifyContent: 'center' },
+  historyBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.58)' },
+  historySheet: { width: '82%', maxWidth: 350, height: '100%', paddingHorizontal: 10, backgroundColor: '#1B2129', borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: 'rgba(255,255,255,0.09)' },
+  historyHead: { height: 48, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center' },
+  historyTitle: { flex: 1, fontSize: 15, fontWeight: '600' },
+  historyClose: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  historyNew: { height: 40, paddingHorizontal: 11, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.1)', backgroundColor: '#252B33', flexDirection: 'row', alignItems: 'center', gap: 10 },
+  historyList: { flex: 1, marginTop: 10 },
+  historyRow: { minHeight: 40, paddingHorizontal: 11, borderRadius: 8, justifyContent: 'center' },
+  historyRowActive: { backgroundColor: 'rgba(255,255,255,0.08)' },
+  historyRowText: { color: '#C8CDD2', fontSize: 13 },
+  historyEmpty: { paddingHorizontal: 11, paddingVertical: 18, color: '#737B84', fontSize: 12, lineHeight: 17 },
+  feed: { flex: 1, minHeight: 0 },
+  feedContent: { paddingHorizontal: Spacing.three, paddingTop: 18, paddingBottom: 18, gap: 22 },
+  feedEmpty: { flexGrow: 1 },
+  empty: { flex: 1, alignItems: 'flex-start', justifyContent: 'center', paddingHorizontal: 7, paddingVertical: 92 },
+  emptyMark: { width: 36, height: 36, marginBottom: 17, borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' },
+  emptyTitle: { fontSize: 23, lineHeight: 29, fontWeight: '600', letterSpacing: -0.7 },
+  emptyCopy: { marginTop: 7, color: '#818181', fontSize: 13 },
+  pressed: { opacity: 0.68 },
+  userRow: { alignItems: 'flex-end', paddingLeft: 44 },
+  aiRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingRight: 12 },
+  aiMark: { width: 28, height: 28, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center' },
+  userBubble: { maxWidth: '94%', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 18, backgroundColor: '#303030' },
+  aiBubble: { flex: 1, paddingTop: 3 },
+  messageText: { fontSize: 15, lineHeight: 22 },
+  time: { marginTop: 4, color: '#777', fontSize: 9, textAlign: 'right' },
+  thinking: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 9, paddingLeft: 38 },
+  thinkingText: { color: '#898989', fontSize: 12 },
+  error: { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(239,100,100,0.4)', borderRadius: 11, padding: 11, flexDirection: 'row', gap: 8, alignItems: 'center' },
+  errorText: { flex: 1, fontSize: 12 },
+  dock: { paddingHorizontal: Spacing.three, paddingTop: 7, gap: 7, backgroundColor: '#101010' },
+  attachment: { minHeight: 55, borderRadius: 12, padding: 7, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#2B2B2B' },
+  composer: { maxHeight: 150, borderRadius: 18, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.14)', backgroundColor: '#262626', overflow: 'hidden' },
+  input: { minHeight: 49, maxHeight: 105, paddingHorizontal: 15, paddingTop: 14, paddingBottom: 6, fontSize: 16, lineHeight: 21, textAlignVertical: 'top' },
+  composerActions: { minHeight: 43, paddingHorizontal: 6, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  iconButton: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  composerContext: { flex: 1, paddingHorizontal: 5, color: '#777', fontSize: 10 },
+  sendButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#ECECEC', alignItems: 'center', justifyContent: 'center' },
 });

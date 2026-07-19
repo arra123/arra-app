@@ -6,6 +6,7 @@ import { extname, join } from 'node:path';
 import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { compactDeviceRows, normalizeDeviceRole } from '../devices.js';
+import { buildRtcConfig } from '../rtc.js';
 import { addAgent, isAgentOnline, isClientOnline, notifyDevice, notifyUser, onlineTokenIds, relayToAgents, relayToClients, removeAgent } from '../ws.js';
 
 // Совместимость с Noda <= 1.10.9: старый удалённый ПК отправлял кадры
@@ -26,6 +27,15 @@ const legacyScreenViewer = (userId, targetId) => {
 
 export default async function fileRoutes(app) {
   await mkdir(config.uploadDir, { recursive: true });
+
+  app.get('/pc/rtc-config', { preHandler: app.auth }, async (request) => {
+    return buildRtcConfig({
+      userId: request.user.id,
+      turnUrl: config.rtc.turnUrl,
+      turnSecret: config.rtc.turnSecret,
+      credentialTtlSeconds: config.rtc.credentialTtlSeconds,
+    });
+  });
 
   // Загрузка файла с телефона. targetTokenId (необязательно, в query) — на какой ПК отправить.
   app.post('/files', { preHandler: app.auth }, async (request, reply) => {

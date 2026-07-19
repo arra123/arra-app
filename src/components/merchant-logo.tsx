@@ -40,6 +40,12 @@ const DIRECT_LOGOS: { test: RegExp; uri: string }[] = [
   },
 ];
 
+const APP_ICONS = [
+  { test: /belka|белк/i, source: require('../../assets/brands/belkacar.jpg') },
+  { test: /city\s*drive|citydrive|ситидрайв|сити\s*драйв/i, source: require('../../assets/brands/citydrive.jpg') },
+  { test: /delimobil|делимоб|дели\b/i, source: require('../../assets/brands/delimobil.jpg') },
+];
+
 // Спокойная палитра (Linear-стиль), без кислотных цветов
 const PALETTE = ['#6E79E6', '#6F9AE8', '#69A5C8', '#E0A33E', '#E06C75', '#9A7BE0', '#5B8DEF', '#5FB8CF', '#C98AB8', '#8A8F98'];
 function colorFor(name: string) {
@@ -58,9 +64,18 @@ function domainFor(merchant: string) {
 
 export function MerchantLogo({ merchant, size = 40 }: { merchant: string; size?: number }) {
   const [failed, setFailed] = useState(false);
+  const bundled = APP_ICONS.find((entry) => entry.test.test(merchant));
   const domain = domainFor(merchant);
   const directLogo = DIRECT_LOGOS.find((entry) => entry.test.test(merchant))?.uri;
   const radius = size / 2; // круглые иконки, как в банках
+
+  if (bundled) {
+    return (
+      <View style={[styles.tile, { width: size, height: size, borderRadius: size * 0.24 }]}>
+        <Image source={bundled.source} style={{ width: size, height: size }} contentFit="cover" transition={100} />
+      </View>
+    );
+  }
 
   // Unavatar ищет актуальный знак по домену сразу у нескольких провайдеров.
   // При отсутствии изображения показываем нейтральную иконку компании.

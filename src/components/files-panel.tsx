@@ -1,5 +1,4 @@
 import * as DocumentPicker from 'expo-document-picker';
-import { GlassView } from 'expo-glass-effect';
 import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
 import { useFocusEffect } from 'expo-router';
 import { Image } from 'expo-image';
@@ -224,22 +223,22 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
         {/* Быстрые источники. Камеру убрали: основной сценарий — уже снятые фото. */}
         <View style={styles.captureRow}>
           <TouchableOpacity activeOpacity={0.85} style={styles.captureWrap} onPress={() => setLastPicker(true)} disabled={uploading}>
-            <GlassView isInteractive tintColor={theme.tint} style={[styles.capture, { borderRadius: Radius.lg }]}>
+            <View style={[styles.capture, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
               <SymbolView name="photo.stack.fill" tintColor={theme.text} size={20} />
               <ThemedText type="small" style={{ fontWeight: '600' }}>Последние фото</ThemedText>
-            </GlassView>
+            </View>
           </TouchableOpacity>
           <TouchableOpacity activeOpacity={0.85} style={styles.captureWrap} onPress={() => capture(false)} disabled={uploading}>
-            <GlassView isInteractive tintColor={theme.tint} style={[styles.capture, { borderRadius: Radius.lg }]}>
+            <View style={[styles.capture, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
               <SymbolView name="photo.on.rectangle" tintColor={theme.text} size={20} />
               <ThemedText type="small" style={{ fontWeight: '600' }}>Галерея</ThemedText>
-            </GlassView>
+            </View>
           </TouchableOpacity>
           <TouchableOpacity activeOpacity={0.85} style={styles.captureWrap} onPress={pickDocument} disabled={uploading}>
-            <GlassView isInteractive tintColor={theme.tint} style={[styles.capture, { borderRadius: Radius.lg }]}>
+            <View style={[styles.capture, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
               <SymbolView name="doc.fill" tintColor={theme.text} size={20} />
               <ThemedText type="small" style={{ fontWeight: '600' }}>Файл</ThemedText>
-            </GlassView>
+            </View>
           </TouchableOpacity>
         </View>
 
@@ -364,7 +363,7 @@ const styles = StyleSheet.create({
   dot: { width: 12, height: 12, borderRadius: Radius.pill },
   captureRow: { flexDirection: 'row', gap: Spacing.two },
   captureWrap: { flex: 1 },
-  capture: { height: 72, alignItems: 'center', justifyContent: 'center', gap: 5, overflow: 'hidden' },
+  capture: { height: 72, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center', gap: 5, overflow: 'hidden' },
   uploadingRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, justifyContent: 'center' },
   empty: { textAlign: 'center', marginTop: Spacing.three },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },

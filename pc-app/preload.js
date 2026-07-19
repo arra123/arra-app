@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('arra', {
   recopy: (f) => ipcRenderer.invoke('recopy', f),
   logout: () => ipcRenderer.invoke('logout'),
   winMin: () => ipcRenderer.send('win-min'),
+  winMax: () => ipcRenderer.invoke('win-max'),
   winClose: () => ipcRenderer.send('win-close'),
   onStatus: (cb) => ipcRenderer.on('status', (_e, s) => cb(s)),
   onFile: (cb) => ipcRenderer.on('file-received', (_e, f) => cb(f)),
@@ -38,6 +39,11 @@ contextBridge.exposeInMainWorld('arra', {
   // Перенос (синхронизация рабочих файлов с сервером)
   syncRun: (mode, only, role) => ipcRenderer.invoke('sync-run', { mode, only, role }),
   syncLocalInventory: () => ipcRenderer.invoke('sync-local-inventory'),
+  workspaceSettings: () => ipcRenderer.invoke('workspace-settings'),
+  projectEnvironment: (projectPath) => ipcRenderer.invoke('project-environment', projectPath),
+  setLocalAiUrl: (url) => ipcRenderer.invoke('set-local-ai-url', url),
+  localModels: () => ipcRenderer.invoke('local-models'),
+  localChat: (model, messages, project) => ipcRenderer.invoke('local-chat', { model, messages, project }),
   syncPause: () => ipcRenderer.invoke('sync-pause'),
   syncResume: () => ipcRenderer.invoke('sync-resume'),
   syncCancel: () => ipcRenderer.invoke('sync-cancel'),
@@ -60,6 +66,7 @@ contextBridge.exposeInMainWorld('arra', {
   log: (level, source, payload) => ipcRenderer.invoke('app-log', { level, source, payload }),
   openLogs: () => ipcRenderer.invoke('open-logs'),
   logPath: () => ipcRenderer.invoke('log-path'),
+  heartbeat: (payload) => ipcRenderer.send('renderer-heartbeat', payload),
   // Голосовой ввод помощника: аудио → текст
   transcribe: (base64, mime) => ipcRenderer.invoke('transcribe', { base64, mime }),
 });

@@ -210,7 +210,7 @@ export default function NotesScreen() {
       <ThemedView style={styles.container}>
         <GestureDetector gesture={versionGesture}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <View style={[styles.editorBar, { paddingTop: insets.top + Spacing.two }]}>
+          <View style={[styles.editorBar, { paddingTop: Spacing.two }]}>
             <TouchableOpacity onPress={save} hitSlop={10} style={styles.barBtn}>
               <SymbolView name="chevron.left" tintColor={theme.tint} size={22} />
               <ThemedText style={{ color: theme.tint }}>Готово</ThemedText>
@@ -290,11 +290,11 @@ export default function NotesScreen() {
   return (
     <ThemedView style={styles.container}>
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingTop: insets.top + Spacing.two }]}
+        contentContainerStyle={[styles.content, { paddingTop: Spacing.two }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.textSecondary} />}>
         <View style={styles.headRow}>
-          <ThemedText style={styles.h1}>Заметки</ThemedText>
+          <View style={{ flex: 1 }} />
           <TouchableOpacity onPress={openNew} activeOpacity={0.85}>
             <View style={[styles.addBtn, { backgroundColor: theme.tint }]}>
               <SymbolView name="plus" tintColor="#fff" size={20} />
@@ -323,7 +323,7 @@ export default function NotesScreen() {
                 )}>
                 <Pressable onPress={() => openNote(n)}>
                   {/* Плоская карточка (без блюра) — иначе свайп дёргался */}
-                  <View style={[styles.noteCard, n.color ? { borderLeftWidth: 4, borderLeftColor: n.color } : null]}>
+                  <View style={[styles.noteCard, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }, n.color ? { borderLeftWidth: 3, borderLeftColor: n.color } : null]}>
                     <View style={styles.noteTitleRow}>
                       {!!n.color && <View style={[styles.catDot, { backgroundColor: n.color }]} />}
                       <ThemedText type="smallBold" numberOfLines={1} style={{ flex: 1 }}>
@@ -358,7 +358,7 @@ const styles = StyleSheet.create({
   h1: { fontSize: 34, fontWeight: '700', lineHeight: 40, marginTop: Spacing.one },
   addBtn: { width: 42, height: 42, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
   emptyCard: { paddingVertical: Spacing.five, alignItems: 'center', gap: Spacing.two, marginTop: Spacing.two },
-  noteCard: { padding: Spacing.three, backgroundColor: '#242428', borderRadius: Radius.lg, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.07)' },
+  noteCard: { paddingHorizontal: 14, paddingVertical: 13, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth },
   noteTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   noteTime: { marginTop: Spacing.two, fontSize: 12 },
   catRow: { gap: 8, paddingVertical: Spacing.two, paddingRight: Spacing.three },

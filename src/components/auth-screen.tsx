@@ -1,7 +1,7 @@
-import { GlassView } from 'expo-glass-effect';
 import { useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   ScrollView,
   StyleSheet,
   TextInput,
@@ -10,11 +10,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { AppleButton } from '@/components/apple-button';
-import { GlassCard } from '@/components/glass-card';
+import { SlidingSegment } from '@/components/sliding-segment';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Radius, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/lib/auth';
 
@@ -55,24 +54,21 @@ export function AuthScreen() {
         keyboardDismissMode="interactive"
         automaticallyAdjustKeyboardInsets
         showsVerticalScrollIndicator={false}>
-        <GlassCard radius={Radius.xl} style={styles.card}>
-          {/* Переключатель Войти / Регистрация */}
-          <View style={[styles.segment, { backgroundColor: theme.backgroundSelected }]}>
-            {(['register', 'login'] as const).map((m) => (
-              <TouchableOpacity
-                key={m}
-                activeOpacity={0.9}
-                onPress={() => {
-                  setError(null);
-                  setMode(m);
-                }}
-                style={[styles.segmentBtn, mode === m && { backgroundColor: theme.backgroundElement }]}>
-                <ThemedText type="smallBold" themeColor={mode === m ? 'text' : 'textSecondary'}>
-                  {m === 'register' ? 'Создать аккаунт' : 'Войти'}
-                </ThemedText>
-              </TouchableOpacity>
-            ))}
-          </View>
+        <View style={styles.brand}>
+          <Image source={require('../../assets/images/noda-mark.png')} style={styles.mark} resizeMode="contain" />
+          <ThemedText style={styles.logo}>Noda</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary" style={styles.subtitle}>Рабочее пространство на всех устройствах</ThemedText>
+        </View>
+
+        <View style={styles.card}>
+          <SlidingSegment
+            value={mode}
+            onChange={(next) => { setError(null); setMode(next); }}
+            options={[
+              { value: 'login', label: 'Войти' },
+              { value: 'register', label: 'Регистрация' },
+            ]}
+          />
 
           {mode === 'register' && (
             <TextInput
@@ -80,7 +76,7 @@ export function AuthScreen() {
               placeholderTextColor={theme.textSecondary}
               value={name}
               onChangeText={setName}
-              style={[styles.input, { color: theme.text, borderColor: theme.separator }]}
+              style={[styles.input, { color: theme.text, borderColor: theme.separator, backgroundColor: theme.backgroundElement }]}
             />
           )}
           <TextInput
@@ -90,7 +86,7 @@ export function AuthScreen() {
             onChangeText={setLoginValue}
             autoCapitalize="none"
             autoCorrect={false}
-            style={[styles.input, { color: theme.text, borderColor: theme.separator }]}
+            style={[styles.input, { color: theme.text, borderColor: theme.separator, backgroundColor: theme.backgroundElement }]}
           />
           <TextInput
             placeholder="Пароль"
@@ -100,7 +96,7 @@ export function AuthScreen() {
             secureTextEntry
             autoCapitalize="none"
             autoCorrect={false}
-            style={[styles.input, { color: theme.text, borderColor: theme.separator }]}
+            style={[styles.input, { color: theme.text, borderColor: theme.separator, backgroundColor: theme.backgroundElement }]}
           />
 
           {error && (
@@ -110,18 +106,13 @@ export function AuthScreen() {
           )}
 
           {busy ? (
-            <GlassView isInteractive tintColor={theme.tint} style={[styles.button, { borderRadius: Radius.pill }]}>
-              <ActivityIndicator color="#fff" />
-            </GlassView>
+            <View style={styles.button}><ActivityIndicator color="#171717" /></View>
           ) : (
-            <AppleButton
-              label={mode === 'login' ? 'Войти' : 'Создать аккаунт'}
-              onPress={submit}
-              variant="glass"
-              full
-            />
+            <TouchableOpacity activeOpacity={0.76} onPress={submit} style={styles.button}>
+              <ThemedText type="smallBold" style={styles.buttonText}>{mode === 'login' ? 'Войти' : 'Создать аккаунт'}</ThemedText>
+            </TouchableOpacity>
           )}
-        </GlassCard>
+        </View>
       </ScrollView>
     </ThemedView>
   );
@@ -129,23 +120,19 @@ export function AuthScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  center: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: Spacing.four, gap: Spacing.four },
-  logoWrap: { alignItems: 'center', gap: Spacing.two },
-  logoBadge: { width: 72, height: 72, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  logoBadgeText: { color: '#fff', fontSize: 40, fontWeight: '800' },
-  logo: { fontSize: 40, fontWeight: '700', marginTop: Spacing.one },
+  center: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.four, paddingVertical: Spacing.five, gap: Spacing.five },
+  brand: { alignItems: 'center' },
+  mark: { width: 46, height: 46, marginBottom: 12 },
+  logo: { fontSize: 30, lineHeight: 36, fontWeight: '700', letterSpacing: -0.8 },
   subtitle: { textAlign: 'center' },
-  card: { padding: Spacing.four, gap: Spacing.three },
-  segment: { flexDirection: 'row', borderRadius: Radius.md, padding: 4, gap: 4 },
-  segmentBtn: { flex: 1, alignItems: 'center', paddingVertical: Spacing.two, borderRadius: Radius.sm },
+  card: { width: '100%', maxWidth: 420, gap: 12 },
   input: {
     height: 52,
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: Radius.md,
+    borderRadius: 12,
     paddingHorizontal: Spacing.three,
     fontSize: 16,
   },
-  button: { height: 54, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  buttonText: { color: '#fff', fontSize: 17, fontWeight: '600' },
-  hint: { textAlign: 'center' },
+  button: { height: 50, marginTop: 2, borderRadius: 12, backgroundColor: '#ECECEC', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  buttonText: { color: '#171717' },
 });

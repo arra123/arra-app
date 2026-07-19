@@ -7,6 +7,13 @@ const users = new Map();
 // Клиентские сокеты (телефон/веб-приложение): userId -> Set<socket>
 // Используются для релея «телефон ↔ ПК-агент» (терминал, файлы, Claude).
 const clients = new Map();
+const MAX_SCREEN_SOCKET_BUFFER = 450 * 1024;
+
+function socketCanAccept(socket, event) {
+  // Screen frames are disposable: keeping an old JPEG in a congested socket
+  // makes the mouse appear seconds behind. Drop it and let the next frame win.
+  return event?.type !== 'screen_frame' || (socket.bufferedAmount || 0) < MAX_SCREEN_SOCKET_BUFFER;
+}
 
 export function addAgent(userId, tokenId, socket) {
   if (!users.has(userId)) users.set(userId, new Map());
@@ -46,6 +53,7 @@ export function notifyDevice(userId, tokenId, event) {
   const payload = JSON.stringify(event);
   let sent = false;
   for (const socket of set) {
+    if (!socketCanAccept(socket, event)) continue;
     try {
       socket.send(payload);
       sent = true;
@@ -63,6 +71,7 @@ export function notifyUser(userId, event) {
   const payload = JSON.stringify(event);
   for (const set of devices.values()) {
     for (const socket of set) {
+      if (!socketCanAccept(socket, event)) continue;
       try {
         socket.send(payload);
       } catch {
@@ -104,6 +113,7 @@ export function relayToClients(userId, event) {
   const payload = JSON.stringify(event);
   let sent = false;
   for (const socket of set) {
+    if (!socketCanAccept(socket, event)) continue;
     try {
       socket.send(payload);
       sent = true;
@@ -135,6 +145,7 @@ export function relayToAgents(userId, event, deviceId) {
   let sent = false;
   for (const set of devices.values()) {
     for (const socket of set) {
+      if (!socketCanAccept(socket, event)) continue;
       try {
         socket.send(payload);
         sent = true;

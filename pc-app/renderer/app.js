@@ -99,10 +99,13 @@ const remoteDesktop = {
   frame: null, frameW: 16, frameH: 9, frameQueued: false, lastFrameAt: 0,
   frameBytes: 0, startedAt: 0, restarting: false, nextRestartAt: 0, restartCount: 0,
   moveAt: 0, uiAt: 0, error: '', inputError: '', inputSeq: 0, inputAckAt: 0,
-  engine: '', frames: 0, failures: 0, blackFrames: 0,
+  moveInFlight: null, queuedMove: null, moveReleaseTimer: null, inputSentAt: new Map(), inputRtt: 0,
+  engine: '', frames: 0, failures: 0, blackFrames: 0, receiveFps: 0, frameLatency: 0,
+  peer: null, inputChannel: null, rtcStream: null, rtcCandidates: [], rtcState: '',
+  rtcVideoGeneration: 0, audioAvailable: false, muted: false,
 };
 
-const REMOTE_STREAM_CONFIG = Object.freeze({ fps: 8, quality: 80, width: 1920 });
+const REMOTE_STREAM_CONFIG = Object.freeze({ fps: 30, quality: 76, width: 2560, rtc: true });
 
 function deviceRole(device, currentId, currentRole, deviceCount) {
   if (device.id === currentId) return currentRole || 'pc';
@@ -369,6 +372,7 @@ function mountActiveTerm() {
 }
 // Имя вкладки — как в VS Code: имя папки проекта, в которой открыт терминал
 const TERM_TAB_ICON = '<svg class="ticon" viewBox="0 0 24 24"><path d="M4 17l6-5-6-5M12 19h8"/></svg>';
+const TERM_CLOSE_ICON = '<svg class="tclose-icon" viewBox="0 0 16 16"><path d="m4.5 4.5 7 7m0-7-7 7"/></svg>';
 function termTabLabel(id) {
   const x = xts[id];
   const p = (x && x.cwd) || term.cwd || term.root || '';
@@ -382,11 +386,12 @@ function renderTermTabs() {
     + localTerms.map((id) => {
       const x = xts[id]; const phone = x && x.phone;
       const t = termTabLabel(id);
-      return `<button class="ttab ${id === activeLocal ? 'on' : ''} ${phone ? 'phone' : ''}" data-id="${id}" title="${esc(t.path)}">${phone ? '📱 ' : TERM_TAB_ICON}<span class="tname">${esc(t.name)}</span>${localTerms.length > 1 ? ` <span class="tclose" data-close="${id}">✕</span>` : ''}</button>`;
+      return `<button class="ttab ${id === activeLocal ? 'on' : ''} ${phone ? 'phone' : ''}" data-id="${id}" title="${esc(t.path)}">${phone ? TERM_TAB_ICON : TERM_TAB_ICON}<span class="tname">${esc(t.name)}</span>${localTerms.length > 1 ? `<span class="tclose" data-close="${id}" title="Закрыть терминал">${TERM_CLOSE_ICON}</span>` : ''}</button>`;
     }).join('') + `<button class="ttadd" id="ttadd" title="Новый терминал">＋</button>`
     + `<span class="ttag"><span class="dot on"></span>общий c телефоном</span>`;
   bar.querySelectorAll('.ttab').forEach((b) => (b.onclick = (e) => {
-    if (e.target.dataset.close) { closeLocalTerm(e.target.dataset.close); return; }
+    const closeButton = e.target.closest('[data-close]');
+    if (closeButton) { closeLocalTerm(closeButton.dataset.close); return; }
     switchLocalTerm(b.dataset.id);
   }));
   document.getElementById('ttadd').onclick = () => addTermQuick();
@@ -433,27 +438,84 @@ function closeLocalTerm(id) {
 
 // ---- titlebar ----
 document.getElementById('min').onclick = () => window.arra.winMin();
+document.getElementById('max').onclick = () => window.arra.winMax();
 document.getElementById('close').onclick = () => window.arra.winClose();
+document.querySelector('.titlebar')?.addEventListener('dblclick', (event) => {
+  if (!event.target.closest('button, nav')) window.arra.winMax();
+});
+document.getElementById('nav-back').onclick = () => goWorkspaceBack();
+document.getElementById('nav-forward').onclick = () => goWorkspaceForward();
+document.querySelectorAll('[data-window-menu]').forEach((button) => {
+  button.onclick = (event) => {
+    event.stopPropagation();
+    const rect = button.getBoundingClientRect();
+    const menu = button.dataset.windowMenu;
+    const menus = {
+      file: [
+        { label: 'Новый диалог', action: () => openAssistantThread(newAssistantThreadKey()) },
+        { label: 'Открыть рабочую папку', action: () => window.arra.openFolder() },
+        { label: 'Закрыть Noda', action: () => window.arra.winClose() },
+      ],
+      edit: [
+        { label: 'Отменить', action: () => document.execCommand('undo') },
+        { label: 'Повторить', action: () => document.execCommand('redo') },
+        { label: 'Вырезать', action: () => document.execCommand('cut') },
+        { label: 'Копировать', action: () => document.execCommand('copy') },
+        { label: 'Вставить', action: async () => { const text = await window.arra.clipRead(); if (typeof text === 'string') document.execCommand('insertText', false, text); } },
+        { label: 'Выделить всё', action: () => document.execCommand('selectAll') },
+      ],
+      view: [
+        { label: 'Показать / скрыть панель', action: () => document.getElementById('navtoggle').click() },
+        { label: 'Развернуть / восстановить', action: () => window.arra.winMax() },
+        { label: 'Терминал', action: () => navigateWorkspace('term') },
+        { label: 'Файлы', action: () => navigateWorkspace('files') },
+        { label: 'Передача', action: () => navigateWorkspace('sync') },
+      ],
+      help: [
+        { label: 'Проверить обновление', action: () => triggerUpdateCheck() },
+        { label: 'Открыть журнал', action: () => window.arra.openLogs() },
+      ],
+    };
+    showCtxMenu(rect.left, rect.bottom + 2, menus[menu] || []);
+  };
+});
 let updateUiState = '';
 let updateUiLabel = 'Проверить обновление';
 function setUpdateButton(updateState, label) {
   updateUiState = updateState || '';
   updateUiLabel = label || 'Проверить обновление';
   const btn = document.getElementById('side-update');
-  if (!btn) return;
-  btn.classList.remove('checking', 'downloading', 'ready');
-  if (updateUiState) btn.classList.add(updateUiState);
-  btn.disabled = updateUiState === 'checking' || updateUiState === 'downloading';
-  const text = btn.querySelector('b'); if (text) text.textContent = updateUiLabel;
+  if (btn) {
+    btn.classList.remove('checking', 'downloading', 'ready', 'installing');
+    if (updateUiState) btn.classList.add(updateUiState);
+    btn.disabled = updateUiState === 'checking' || updateUiState === 'downloading' || updateUiState === 'installing';
+    const text = btn.querySelector('b'); if (text) text.textContent = updateUiLabel;
+  }
+  const settingsButton = document.getElementById('workspace-update-check');
+  if (settingsButton) {
+    settingsButton.textContent = updateUiLabel;
+    settingsButton.disabled = updateUiState === 'checking' || updateUiState === 'downloading' || updateUiState === 'installing';
+    settingsButton.classList.toggle('checking', updateUiState === 'checking');
+    settingsButton.classList.toggle('downloading', updateUiState === 'downloading');
+    settingsButton.classList.toggle('ready', updateUiState === 'ready');
+  }
 }
 async function triggerUpdateCheck() {
   setUpdateButton('checking', 'Проверяю…');
-  try { await window.arra.updateCheck(); }
-  catch { setUpdateButton('', 'Проверить обновление'); }
+  try {
+    const result = await window.arra.updateCheck();
+    if (!result?.ok) {
+      setUpdateButton('', 'Повторить проверку');
+      toast('Обновление', result?.error || 'Механизм обновления недоступен', 'warn', 8000);
+    }
+  } catch (error) {
+    setUpdateButton('', 'Повторить проверку');
+    toast('Обновление', error?.message || 'Не удалось проверить обновление', 'warn', 8000);
+  }
 }
 // ---- единая тёмная палитра ----
 const XTERM_THEMES = {
-  dark: { background: '#151922', foreground: '#E4E8F1', cursor: '#9DA8FF', selectionBackground: 'rgba(124,134,240,0.35)' },
+  dark: { background: '#111111', foreground: '#E2E2E2', cursor: '#D8D8D8', selectionBackground: 'rgba(255,255,255,0.18)' },
 };
 function curTheme() { return 'dark'; }
 function applyTheme() {
@@ -474,17 +536,24 @@ document.getElementById('navtoggle').onclick = () => {
 
 // ================= LOGIN =================
 function renderLogin() {
+  document.body.classList.add('workspace-login-mode');
   nav.classList.add('hidden');
   app.innerHTML = `
-    <div class="center">
-      <h1>Подключить компьютер</h1>
-      <div class="card gap">
-        <label class="field"><span>Логин</span><input id="login" type="text" autocomplete="username" /></label>
-        <label class="field"><span>Пароль</span><input id="password" type="password" autocomplete="current-password" /></label>
-        <label class="field"><span>Имя компьютера</span><input id="device" type="text" placeholder="Определится автоматически" /></label>
-        <button class="btn full" id="connect">Подключить</button>
-        <div class="err" id="err"></div>
-      </div>
+    <div class="workspace-login">
+      <section class="workspace-login-intro">
+        <div class="workspace-login-mark" aria-hidden="true"><span></span><span></span></div>
+        <div><strong>Noda</strong><small>Рабочая среда</small></div>
+      </section>
+      <section class="workspace-login-card">
+        <header><h1>Подключить компьютер</h1><p>Проекты, задачи и локальные модели будут доступны на ваших устройствах.</p></header>
+        <div class="workspace-login-fields">
+          <label class="field"><span>Логин</span><input id="login" type="text" autocomplete="username" placeholder="Ваш логин" /></label>
+          <label class="field"><span>Пароль</span><input id="password" type="password" autocomplete="current-password" placeholder="Пароль" /></label>
+          <label class="field"><span>Название устройства</span><input id="device" type="text" placeholder="Определится автоматически" /></label>
+        </div>
+        <button class="workspace-login-submit" id="connect">Продолжить</button>
+        <div class="err" id="err" role="alert"></div>
+      </section>
     </div>`;
   document.getElementById('connect').onclick = doLogin;
   app.querySelectorAll('input').forEach((i) => (i.onkeydown = (e) => { if (e.key === 'Enter') doLogin(); }));
@@ -589,13 +658,243 @@ async function sendRemoteDesktop(message) {
   return result;
 }
 
-function sendRemoteInput(message) {
+const REMOTE_RTC_FALLBACK_CONFIG = Object.freeze({
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+  ],
+  bundlePolicy: 'max-bundle',
+});
+let remoteRtcConfig = REMOTE_RTC_FALLBACK_CONFIG;
+let remoteRtcConfigLoadedAt = 0;
+
+async function loadRemoteRtcConfig(force = false) {
+  if (!force && Date.now() - remoteRtcConfigLoadedAt < 45 * 60_000) return remoteRtcConfig;
+  try {
+    const result = await api('GET', '/pc/rtc-config');
+    if (Array.isArray(result?.iceServers) && result.iceServers.length) {
+      remoteRtcConfig = { iceServers: result.iceServers, bundlePolicy: 'max-bundle' };
+      remoteRtcConfigLoadedAt = Date.now();
+    }
+  } catch (error) {
+    reportError('remote.rtc-config', error);
+    remoteRtcConfig = REMOTE_RTC_FALLBACK_CONFIG;
+  }
+  return remoteRtcConfig;
+}
+
+function closeRemotePeer() {
+  remoteDesktop.rtcVideoGeneration += 1;
+  if (remoteDesktop.inputChannel) {
+    try { remoteDesktop.inputChannel.close(); } catch {}
+  }
+  remoteDesktop.inputChannel = null;
+  if (remoteDesktop.peer) {
+    try {
+      remoteDesktop.peer.onicecandidate = null;
+      remoteDesktop.peer.ontrack = null;
+      remoteDesktop.peer.onconnectionstatechange = null;
+      remoteDesktop.peer.close();
+    } catch {}
+  }
+  remoteDesktop.peer = null;
+  remoteDesktop.rtcStream = null;
+  remoteDesktop.rtcCandidates = [];
+  remoteDesktop.rtcState = '';
+  remoteDesktop.audioAvailable = false;
+  const video = document.getElementById('remote-video');
+  if (video) { try { video.pause(); } catch {} video.srcObject = null; }
+}
+
+async function sendRemoteRtcSignal(signal) {
+  if (!remoteDesktop.running) return;
+  const payload = signal?.description?.type === 'offer'
+    ? { ...signal, iceServers: remoteRtcConfig.iceServers }
+    : signal;
+  const result = await sendRemoteDesktop({ type: 'screen_rtc_signal', role: 'viewer', signal: payload });
+  if (!result?.ok) reportError('remote.rtc-signal', new Error(result?.error || 'Сигнал прямого соединения не отправлен'));
+}
+
+function handleRemoteDataMessage(event) {
+  try {
+    const message = JSON.parse(String(event.data || ''));
+    if (message?.type === 'screen_input_ack') handleRemoteDesktopEvent(message);
+  } catch (error) {
+    reportError('remote.rtc-data', error);
+  }
+}
+
+function attachRemoteInputChannel(channel) {
+  remoteDesktop.inputChannel = channel;
+  channel.onopen = () => {
+    remoteDesktop.rtcState = remoteDesktop.peer?.connectionState || 'connected';
+    updateRemoteDeviceUi();
+  };
+  channel.onclose = () => { if (remoteDesktop.inputChannel === channel) remoteDesktop.inputChannel = null; };
+  channel.onerror = (event) => reportError('remote.rtc-input', new Error(event?.error?.message || 'Канал управления закрыт'));
+  channel.onmessage = handleRemoteDataMessage;
+}
+
+function attachRemoteStreamToVideo() {
+  const video = document.getElementById('remote-video');
+  if (!video || !remoteDesktop.rtcStream) return;
+  if (video.srcObject !== remoteDesktop.rtcStream) video.srcObject = remoteDesktop.rtcStream;
+  video.muted = remoteDesktop.muted;
+  const generation = ++remoteDesktop.rtcVideoGeneration;
+  const frame = (_now, metadata = {}) => {
+    if (generation !== remoteDesktop.rtcVideoGeneration || !remoteDesktop.running) return;
+    const previous = remoteDesktop.lastFrameAt;
+    remoteDesktop.lastFrameAt = Date.now();
+    remoteDesktop.frameW = Number(video.videoWidth) || remoteDesktop.frameW;
+    remoteDesktop.frameH = Number(video.videoHeight) || remoteDesktop.frameH;
+    if (previous) {
+      const fps = 1000 / Math.max(1, remoteDesktop.lastFrameAt - previous);
+      remoteDesktop.receiveFps = remoteDesktop.receiveFps ? remoteDesktop.receiveFps * 0.8 + fps * 0.2 : fps;
+    }
+    if (metadata?.captureTime) {
+      const latency = Math.max(0, performance.timeOrigin + performance.now() - metadata.captureTime);
+      if (Number.isFinite(latency) && latency < 60_000) {
+        remoteDesktop.frameLatency = remoteDesktop.frameLatency ? remoteDesktop.frameLatency * 0.8 + latency * 0.2 : latency;
+      }
+    }
+    fitRemoteCanvas();
+    const hint = document.getElementById('remote-stage-hint'); if (hint) hint.hidden = true;
+    if (remoteDesktop.lastFrameAt - remoteDesktop.uiAt > 1000) {
+      remoteDesktop.uiAt = remoteDesktop.lastFrameAt;
+      updateRemoteDeviceUi();
+    }
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(frame);
+  };
+  video.onloadedmetadata = () => {
+    remoteDesktop.frameW = video.videoWidth || remoteDesktop.frameW;
+    remoteDesktop.frameH = video.videoHeight || remoteDesktop.frameH;
+    fitRemoteCanvas();
+  };
+  video.onplaying = () => {
+    remoteDesktop.engine = 'webrtc';
+    remoteDesktop.lastFrameAt = Date.now();
+    document.getElementById('remote-stage')?.classList.add('is-webrtc');
+    const hint = document.getElementById('remote-stage-hint'); if (hint) hint.hidden = true;
+    updateRemoteDeviceUi();
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(frame);
+  };
+  video.play().catch((error) => reportError('remote.rtc-play', error));
+}
+
+function ensureRemotePeer() {
+  if (remoteDesktop.peer && remoteDesktop.peer.connectionState !== 'closed') return remoteDesktop.peer;
+  const peer = new RTCPeerConnection(remoteRtcConfig);
+  remoteDesktop.peer = peer;
+  remoteDesktop.rtcCandidates = [];
+  peer.addTransceiver('video', { direction: 'recvonly' });
+  peer.addTransceiver('audio', { direction: 'recvonly' });
+  attachRemoteInputChannel(peer.createDataChannel('noda-input', { ordered: false, maxRetransmits: 0 }));
+  peer.onicecandidate = (event) => {
+    if (event.candidate) sendRemoteRtcSignal({ candidate: event.candidate.toJSON?.() || event.candidate });
+  };
+  peer.ontrack = (event) => {
+    const nextStream = event.streams?.[0] || remoteDesktop.rtcStream || new MediaStream();
+    if (!event.streams?.[0] && !nextStream.getTracks().some((track) => track.id === event.track.id)) nextStream.addTrack(event.track);
+    remoteDesktop.rtcStream = nextStream;
+    remoteDesktop.audioAvailable = nextStream.getAudioTracks().length > 0;
+    attachRemoteStreamToVideo();
+  };
+  peer.onconnectionstatechange = () => {
+    remoteDesktop.rtcState = peer.connectionState;
+    if (peer.connectionState === 'connected') {
+      remoteDesktop.engine = 'webrtc';
+      remoteDesktop.error = '';
+      remoteDesktop.lastFrameAt = Date.now();
+      attachRemoteStreamToVideo();
+    } else if (peer.connectionState === 'failed') {
+      remoteDesktop.error = 'Прямое соединение недоступно — включён резервный поток';
+      document.getElementById('remote-stage')?.classList.remove('is-webrtc');
+    }
+    updateRemoteDeviceUi();
+  };
+  return peer;
+}
+
+async function beginRemotePeer() {
+  try {
+    closeRemotePeer();
+    await loadRemoteRtcConfig();
+    const peer = ensureRemotePeer();
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    await sendRemoteRtcSignal({ description: peer.localDescription.toJSON?.() || peer.localDescription });
+  } catch (error) {
+    remoteDesktop.rtcState = 'failed';
+    reportError('remote.rtc-start', error);
+  }
+}
+
+async function handleRemoteRtcSignal(signal = {}) {
+  try {
+    const peer = ensureRemotePeer();
+    if (signal.description) {
+      await peer.setRemoteDescription(signal.description);
+      const queued = remoteDesktop.rtcCandidates;
+      remoteDesktop.rtcCandidates = [];
+      for (const candidate of queued) await peer.addIceCandidate(candidate);
+    } else if (signal.candidate) {
+      if (peer.remoteDescription) await peer.addIceCandidate(signal.candidate);
+      else remoteDesktop.rtcCandidates.push(signal.candidate);
+    }
+  } catch (error) {
+    remoteDesktop.rtcState = 'failed';
+    reportError('remote.rtc-answer', error);
+  }
+}
+
+function dispatchRemoteInput(message) {
   remoteDesktop.inputSeq += 1;
-  return sendRemoteDesktop({
-    ...message,
-    type: 'screen_input',
-    seq: String(remoteDesktop.inputSeq),
-  });
+  const seq = String(remoteDesktop.inputSeq);
+  remoteDesktop.inputSentAt.set(seq, Date.now());
+  while (remoteDesktop.inputSentAt.size > 80) remoteDesktop.inputSentAt.delete(remoteDesktop.inputSentAt.keys().next().value);
+  const payload = { ...message, type: 'screen_input', seq };
+  const directChannel = remoteDesktop.inputChannel;
+  if (directChannel?.readyState === 'open') {
+    try {
+      directChannel.send(JSON.stringify(payload));
+      return Promise.resolve({ ok: true, direct: true });
+    } catch (error) {
+      reportError('remote.rtc-input-send', error);
+    }
+  }
+  if (message.action === 'move') {
+    remoteDesktop.moveInFlight = seq;
+    clearTimeout(remoteDesktop.moveReleaseTimer);
+    remoteDesktop.moveReleaseTimer = setTimeout(() => releaseRemoteMove(seq), 180);
+  }
+  return sendRemoteDesktop(payload);
+}
+
+function releaseRemoteMove(seq) {
+  if (remoteDesktop.moveInFlight !== String(seq)) return;
+  remoteDesktop.moveInFlight = null;
+  clearTimeout(remoteDesktop.moveReleaseTimer);
+  remoteDesktop.moveReleaseTimer = null;
+  const queued = remoteDesktop.queuedMove;
+  remoteDesktop.queuedMove = null;
+  if (queued && remoteDesktop.running) dispatchRemoteInput(queued);
+}
+
+function sendRemoteInput(message) {
+  if (remoteDesktop.inputChannel?.readyState === 'open') return dispatchRemoteInput(message);
+  if (message.action === 'move') {
+    if (remoteDesktop.moveInFlight) {
+      // Pointer events arrive faster than a network round-trip. Retaining every
+      // intermediate coordinate creates a visible tail; only the newest point matters.
+      remoteDesktop.queuedMove = message;
+      return Promise.resolve({ ok: true, queued: true });
+    }
+    return dispatchRemoteInput(message);
+  }
+  // Click/down/up already carry their own coordinates, so an older queued move
+  // must not be replayed after the click.
+  remoteDesktop.queuedMove = null;
+  return dispatchRemoteInput(message);
 }
 
 async function startRemoteDesktop() {
@@ -611,16 +910,26 @@ async function startRemoteDesktop() {
   remoteDesktop.startedAt = Date.now();
   remoteDesktop.nextRestartAt = remoteDesktop.startedAt + 7000;
   remoteDesktop.restartCount = 0;
+  remoteDesktop.receiveFps = 0;
+  remoteDesktop.frameLatency = 0;
+  remoteDesktop.inputRtt = 0;
+  remoteDesktop.inputSentAt.clear();
+  remoteDesktop.moveInFlight = null;
+  remoteDesktop.queuedMove = null;
+  clearTimeout(remoteDesktop.moveReleaseTimer);
+  remoteDesktop.moveReleaseTimer = null;
   clearRemoteCanvas();
   updateRemoteDeviceUi();
   // Stop a previous diagnostic or dropped viewer before opening a new stream.
   await sendRemoteDesktop({ type: 'screen_stop' });
   await sendRemoteDesktop({ type: 'screen_start', displayId: remoteDesktop.activeScreen || undefined, ...REMOTE_STREAM_CONFIG });
   await sendRemoteDesktop({ type: 'screen_list' });
+  await beginRemotePeer();
 }
 
 async function stopRemoteDesktop() {
   if (remoteDesktop.deviceId) await window.arra.remoteScreenSend(remoteDesktop.deviceId, { type: 'screen_stop' });
+  closeRemotePeer();
   remoteDesktop.running = false;
   remoteDesktop.frame = null;
   remoteDesktop.frameBytes = 0;
@@ -630,6 +939,11 @@ async function stopRemoteDesktop() {
   remoteDesktop.nextRestartAt = 0;
   remoteDesktop.restartCount = 0;
   remoteDesktop.inputError = '';
+  remoteDesktop.inputSentAt.clear();
+  remoteDesktop.moveInFlight = null;
+  remoteDesktop.queuedMove = null;
+  clearTimeout(remoteDesktop.moveReleaseTimer);
+  remoteDesktop.moveReleaseTimer = null;
   clearRemoteCanvas();
   updateRemoteDeviceUi();
 }
@@ -677,6 +991,7 @@ async function maintainRemoteDesktop() {
     await sendRemoteDesktop({ type: 'screen_stop' });
     await sendRemoteDesktop({ type: 'screen_start', displayId: remoteDesktop.activeScreen || undefined, ...REMOTE_STREAM_CONFIG });
     await sendRemoteDesktop({ type: 'screen_list' });
+    await beginRemotePeer();
   } catch (error) {
     reportError('remote.screen-restart', error, { deviceId: remoteDesktop.deviceId, attempt: remoteDesktop.restartCount });
   } finally {
@@ -688,6 +1003,7 @@ async function maintainRemoteDesktop() {
 function fitRemoteCanvas() {
   const stage = document.getElementById('remote-stage');
   const canvas = document.getElementById('remote-canvas');
+  const video = document.getElementById('remote-video');
   if (!stage || !canvas) return;
   const maxW = Math.max(1, stage.clientWidth - 24);
   const maxH = Math.max(1, stage.clientHeight - 24);
@@ -697,6 +1013,10 @@ function fitRemoteCanvas() {
   if (height > maxH) { height = maxH; width = height * ratio; }
   canvas.style.width = `${Math.round(width)}px`;
   canvas.style.height = `${Math.round(height)}px`;
+  if (video) {
+    video.style.width = `${Math.round(width)}px`;
+    video.style.height = `${Math.round(height)}px`;
+  }
 }
 
 function drawRemoteFrame() {
@@ -743,12 +1063,26 @@ function drawRemoteFrame() {
   image.src = `data:image/jpeg;base64,${frame}`;
 }
 
-function queueRemoteFrame(data, width, height) {
+function queueRemoteFrame(data, width, height, capturedAt = 0) {
+  const previousFrameAt = remoteDesktop.lastFrameAt;
+  const now = Date.now();
   remoteDesktop.frame = data;
   remoteDesktop.frameW = Number(width) || remoteDesktop.frameW;
   remoteDesktop.frameH = Number(height) || remoteDesktop.frameH;
   remoteDesktop.frameBytes = Math.round(String(data || '').length * 0.75);
-  remoteDesktop.lastFrameAt = Date.now();
+  remoteDesktop.lastFrameAt = now;
+  if (previousFrameAt) {
+    const instantFps = 1000 / Math.max(1, now - previousFrameAt);
+    remoteDesktop.receiveFps = remoteDesktop.receiveFps
+      ? remoteDesktop.receiveFps * 0.75 + instantFps * 0.25
+      : instantFps;
+  }
+  if (Number(capturedAt) > 0) {
+    const latency = Math.max(0, now - Number(capturedAt));
+    remoteDesktop.frameLatency = remoteDesktop.frameLatency
+      ? remoteDesktop.frameLatency * 0.75 + latency * 0.25
+      : latency;
+  }
   remoteDesktop.error = '';
   remoteDesktop.restartCount = 0;
   remoteDesktop.nextRestartAt = remoteDesktop.lastFrameAt + 7000;
@@ -768,7 +1102,7 @@ function handleRemoteDesktopEvent(message) {
   if (message.type === 'screen_frame' && message.data) {
     remoteDesktop.running = true;
     remoteDesktop.engine = message.engine || remoteDesktop.engine;
-    queueRemoteFrame(message.data, message.w, message.h);
+    queueRemoteFrame(message.data, message.w, message.h, message.capturedAt);
   } else if (message.type === 'screens') {
     remoteDesktop.screens = message.screens || [];
     remoteDesktop.activeScreen = remoteDesktop.activeScreen
@@ -784,7 +1118,21 @@ function handleRemoteDesktopEvent(message) {
     updateRemoteDeviceUi();
   } else if (message.type === 'screen_input_ack') {
     remoteDesktop.inputAckAt = Date.now();
+    const sentAt = remoteDesktop.inputSentAt.get(String(message.seq));
+    if (sentAt) {
+      const rtt = Math.max(0, remoteDesktop.inputAckAt - sentAt);
+      remoteDesktop.inputRtt = remoteDesktop.inputRtt ? remoteDesktop.inputRtt * 0.7 + rtt * 0.3 : rtt;
+      remoteDesktop.inputSentAt.delete(String(message.seq));
+    }
+    if (message.action === 'move') releaseRemoteMove(message.seq);
     remoteDesktop.inputError = message.ok ? '' : (message.error || 'Удалённый компьютер не принял управление');
+    updateRemoteDeviceUi();
+  } else if (message.type === 'screen_rtc_signal' && message.role === 'host') {
+    handleRemoteRtcSignal(message.signal || {});
+  } else if (message.type === 'screen_rtc_state') {
+    remoteDesktop.rtcState = String(message.state || remoteDesktop.rtcState);
+    remoteDesktop.audioAvailable = message.audio !== false && (remoteDesktop.audioAvailable || !!message.audio);
+    if (message.state === 'failed' && message.error) remoteDesktop.error = message.error;
     updateRemoteDeviceUi();
   } else if (message.type === 'pc_offline') {
     remoteDesktop.running = false;
@@ -796,9 +1144,11 @@ function handleRemoteDesktopEvent(message) {
 window.arra.onRemoteScreenEvent?.(handleRemoteDesktopEvent);
 
 function remotePoint(event) {
-  const canvas = document.getElementById('remote-canvas');
-  if (!canvas) return null;
-  const rect = canvas.getBoundingClientRect();
+  const surface = event?.currentTarget?.id === 'remote-video' || event?.currentTarget?.id === 'remote-canvas'
+    ? event.currentTarget
+    : (remoteDesktop.engine === 'webrtc' ? document.getElementById('remote-video') : document.getElementById('remote-canvas'));
+  if (!surface) return null;
+  const rect = surface.getBoundingClientRect();
   return {
     nx: Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width))),
     ny: Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height))),
@@ -808,12 +1158,14 @@ function remotePoint(event) {
 function moveRemoteCursor(event, visible = true) {
   const stage = document.getElementById('remote-stage');
   const cursor = document.getElementById('remote-cursor');
-  const canvas = document.getElementById('remote-canvas');
-  if (!stage || !cursor || !canvas || !remoteDesktop.running) return;
+  const surface = event?.currentTarget?.id === 'remote-video' || event?.currentTarget?.id === 'remote-canvas'
+    ? event.currentTarget
+    : document.getElementById('remote-canvas');
+  if (!stage || !cursor || !surface || !remoteDesktop.running) return;
   const stageRect = stage.getBoundingClientRect();
-  const canvasRect = canvas.getBoundingClientRect();
-  const inside = event.clientX >= canvasRect.left && event.clientX <= canvasRect.right
-    && event.clientY >= canvasRect.top && event.clientY <= canvasRect.bottom;
+  const surfaceRect = surface.getBoundingClientRect();
+  const inside = event.clientX >= surfaceRect.left && event.clientX <= surfaceRect.right
+    && event.clientY >= surfaceRect.top && event.clientY <= surfaceRect.bottom;
   cursor.hidden = !visible || !inside;
   if (!inside) return;
   cursor.style.transform = `translate3d(${Math.round(event.clientX - stageRect.left)}px,${Math.round(event.clientY - stageRect.top)}px,0)`;
@@ -821,40 +1173,42 @@ function moveRemoteCursor(event, visible = true) {
 
 function wireRemoteCanvas() {
   const canvas = document.getElementById('remote-canvas');
-  if (!canvas) return;
-  canvas.onpointerdown = (event) => {
-    canvas.focus();
+  const video = document.getElementById('remote-video');
+  if (!canvas || !video) return;
+  const wireSurface = (surface) => {
+  surface.onpointerdown = (event) => {
+    surface.focus();
     moveRemoteCursor(event);
     if (event.button !== 0) return;
     event.preventDefault();
-    canvas.setPointerCapture?.(event.pointerId);
+    surface.setPointerCapture?.(event.pointerId);
     const point = remotePoint(event); if (point) sendRemoteInput({ action: 'down', ...point });
   };
-  canvas.onpointermove = (event) => {
+  surface.onpointermove = (event) => {
     moveRemoteCursor(event);
-    const now = Date.now(); if (now - remoteDesktop.moveAt < 28) return;
+    const now = Date.now(); if (now - remoteDesktop.moveAt < (remoteDesktop.inputChannel?.readyState === 'open' ? 16 : 28)) return;
     remoteDesktop.moveAt = now;
     const point = remotePoint(event); if (point) sendRemoteInput({ action: 'move', ...point });
   };
-  canvas.onpointerup = (event) => {
+  surface.onpointerup = (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
     const point = remotePoint(event); if (point) sendRemoteInput({ action: 'up', ...point });
   };
-  canvas.onpointercancel = (event) => {
+  surface.onpointercancel = (event) => {
     const point = remotePoint(event); if (point) sendRemoteInput({ action: 'up', ...point });
   };
-  canvas.onpointerenter = (event) => moveRemoteCursor(event);
-  canvas.onpointerleave = (event) => moveRemoteCursor(event, false);
-  canvas.oncontextmenu = (event) => {
+  surface.onpointerenter = (event) => moveRemoteCursor(event);
+  surface.onpointerleave = (event) => moveRemoteCursor(event, false);
+  surface.oncontextmenu = (event) => {
     event.preventDefault();
     const point = remotePoint(event); if (point) sendRemoteInput({ action: 'click', button: 'right', ...point });
   };
-  canvas.onwheel = (event) => {
+  surface.onwheel = (event) => {
     event.preventDefault();
     const point = remotePoint(event); if (point) sendRemoteInput({ action: 'scroll', dy: event.deltaY > 0 ? -120 : 120, ...point });
   };
-  canvas.onkeydown = (event) => {
+  surface.onkeydown = (event) => {
     const map = { Enter: 'enter', Backspace: 'backspace', Escape: 'esc', Tab: 'tab', ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Delete: 'delete', Home: 'home', End: 'end', ' ': 'space' };
     const key = map[event.key];
     const modifiers = { ctrl: event.ctrlKey || event.metaKey, alt: event.altKey, shift: event.shiftKey };
@@ -870,6 +1224,9 @@ function wireRemoteCanvas() {
       }
     }
   };
+  };
+  wireSurface(canvas);
+  wireSurface(video);
   new ResizeObserver(fitRemoteCanvas).observe(document.getElementById('remote-stage'));
 }
 
@@ -893,28 +1250,41 @@ function updateRemoteDeviceUi() {
   const current = selectedRemoteDevice();
   const status = document.getElementById('remote-status');
   const action = document.getElementById('remote-connect');
+  const audio = document.getElementById('remote-audio');
   const stage = document.getElementById('remote-stage');
   const cursor = document.getElementById('remote-cursor');
   const displayError = remoteDesktop.error || remoteDesktop.inputError;
   stage?.classList.toggle('is-live', remoteDesktop.running);
+  stage?.classList.toggle('is-webrtc', remoteDesktop.engine === 'webrtc' && remoteDesktop.rtcState === 'connected');
   if (cursor && !remoteDesktop.running) cursor.hidden = true;
   if (status) {
     const frameAge = remoteDesktop.lastFrameAt ? Math.max(0, Math.round((Date.now() - remoteDesktop.lastFrameAt) / 1000)) : null;
     const frameInfo = remoteDesktop.lastFrameAt
       ? ` · ${remoteDesktop.frameW}×${remoteDesktop.frameH}${remoteDesktop.frameBytes ? ` · ${Math.max(1, Math.round(remoteDesktop.frameBytes / 1024))} КБ` : ''}`
       : '';
+    const liveInfo = remoteDesktop.lastFrameAt
+      ? `${remoteDesktop.receiveFps ? ` · ${Math.max(1, Math.round(remoteDesktop.receiveFps))} кадр/с` : ''}${remoteDesktop.frameLatency ? ` · ${Math.round(remoteDesktop.frameLatency)} мс` : ''}${remoteDesktop.inputRtt ? ` · ввод ${Math.round(remoteDesktop.inputRtt)} мс` : ''}`
+      : '';
     status.textContent = displayError || (remoteDesktop.running
       ? (remoteDesktop.restarting || (frameAge != null && frameAge > 4)
         ? `Восстанавливаю экран${remoteDesktop.restartCount ? ` · попытка ${remoteDesktop.restartCount}` : ''}`
         : (!remoteDesktop.lastFrameAt
           ? 'Подключаю экран…'
-          : `Экран в сети${frameInfo}${remoteDesktop.engine ? ` · ${remoteDesktop.engine === 'windows' ? 'Windows' : 'Electron'}` : ''}`))
+          : `Экран в сети${frameInfo}${liveInfo}${remoteDesktop.engine ? ` · ${remoteDesktop.engine === 'webrtc' ? 'прямое соединение' : (remoteDesktop.engine === 'stream' ? 'резервный поток' : (remoteDesktop.engine === 'windows' ? 'Windows' : 'резервный режим'))}` : ''}`))
       : (current?.online ? 'Готов к подключению' : 'Устройство не в сети'));
-    status.className = displayError ? 'remote-status bad' : 'remote-status';
+    status.className = (displayError || (!remoteDesktop.running && !current?.online)) ? 'remote-status bad' : 'remote-status';
   }
   if (action) {
     action.textContent = remoteDesktop.running ? 'Отключиться' : 'Подключиться';
     action.disabled = !remoteDesktop.running && !current?.online;
+  }
+  if (audio) {
+    audio.hidden = !remoteDesktop.running;
+    audio.disabled = !remoteDesktop.audioAvailable;
+    audio.classList.toggle('is-muted', remoteDesktop.muted);
+    audio.title = remoteDesktop.audioAvailable
+      ? (remoteDesktop.muted ? 'Включить звук компьютера' : 'Выключить звук компьютера')
+      : 'Системный звук недоступен в резервном режиме';
   }
 }
 
@@ -924,8 +1294,8 @@ function renderRemoteDesktop() {
   app.innerHTML = `<div class="remote-page">
     <header class="remote-head"><div><h1>Удалённый ПК</h1></div>
       <div class="remote-device-controls"><select id="remote-device" aria-label="Компьютер"></select><button class="btn" id="remote-connect">Подключиться</button></div></header>
-    <div class="remote-meta"><span id="remote-status">Готов к подключению</span><div id="remote-monitors" class="remote-monitors"></div></div>
-    <div class="remote-stage" id="remote-stage"><canvas id="remote-canvas" tabindex="0"></canvas><div id="remote-cursor" class="remote-cursor" hidden><svg viewBox="0 0 24 30" aria-hidden="true"><path d="M2 2v22l6.1-5.2 4.2 9.2 4.1-1.9-4.2-9.1H21L2 2Z"/></svg></div><div id="remote-stage-hint" class="remote-stage-hint"><b>${device ? 'Экран появится здесь' : 'Другой компьютер пока не найден'}</b><span>${device ? 'Noda на втором устройстве должна быть открыта и находиться в сети.' : 'Установи Noda на ПК и войди под тем же аккаунтом.'}</span></div></div>
+    <div class="remote-meta"><span id="remote-status">Готов к подключению</span><div class="remote-monitors" id="remote-monitors"></div><button class="remote-audio" id="remote-audio" aria-label="Системный звук" title="Системный звук" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6.5 9H3v6h3.5l4.5 4V5Z"/><path d="M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12"/></svg></button></div>
+    <div class="remote-stage" id="remote-stage"><video id="remote-video" tabindex="0" autoplay playsinline></video><canvas id="remote-canvas" tabindex="0"></canvas><div id="remote-cursor" class="remote-cursor" hidden><svg viewBox="0 0 24 30" aria-hidden="true"><path d="M2 2v22l6.1-5.2 4.2 9.2 4.1-1.9-4.2-9.1H21L2 2Z"/></svg></div><div id="remote-stage-hint" class="remote-stage-hint"><b>${device ? 'Экран появится здесь' : 'Другой компьютер пока не найден'}</b><span>${device ? 'Noda на втором устройстве должна быть открыта и находиться в сети.' : 'Установи Noda на ПК и войди под тем же аккаунтом.'}</span></div></div>
   </div>`;
   const select = document.getElementById('remote-device');
   select.onchange = async () => {
@@ -937,9 +1307,15 @@ function renderRemoteDesktop() {
     updateRemoteDeviceUi(); renderRemoteScreenButtons();
   };
   document.getElementById('remote-connect').onclick = () => remoteDesktop.running ? stopRemoteDesktop() : startRemoteDesktop();
+  document.getElementById('remote-audio').onclick = () => {
+    remoteDesktop.muted = !remoteDesktop.muted;
+    const video = document.getElementById('remote-video'); if (video) video.muted = remoteDesktop.muted;
+    updateRemoteDeviceUi();
+  };
   wireRemoteCanvas();
   renderRemoteScreenButtons();
   updateRemoteDeviceUi();
+  if (remoteDesktop.rtcStream) attachRemoteStreamToVideo();
   if (remoteDesktop.frame) drawRemoteFrame();
 }
 
@@ -1477,10 +1853,8 @@ async function renderTerminal() {
       </div>
       <div class="ws-right">
         <div class="term-launchbar">
-          <span class="term-launch-label">Запустить</span>
-          <button class="term-preset" id="start-codex" title="Запустить Codex в YOLO mode"><i></i>Codex · YOLO mode</button>
-          <button class="term-preset claude" id="start-claude" title="Запустить Claude Code без запросов разрешений"><i></i>Claude · полный доступ</button>
-          <span class="term-preset-note">в текущей папке</span>
+          <button class="term-preset" id="start-codex" title="Запустить Codex в текущей папке">Codex</button>
+          <button class="term-preset claude" id="start-claude" title="Запустить Claude Code в текущей папке">Claude</button>
         </div>
         <div class="termtabs" id="termtabs"></div>
         <div id="xterm-host" class="xterm-host"></div>
@@ -1518,11 +1892,13 @@ const sync = {
   speed: 0, eta: null, lastProgressAt: 0, current: null,
   liveProjects: {}, recentFiles: [], blockedFiles: [], verify: null,
   transferTree: null, paused: false, pauseRequested: false, closeHistory: [],
+  treeRenderTimer: null, treeRenderLastAt: 0,
   step: 'idle', failedStep: 'scan', stepError: '', errors: [],
   panelTab: localStorage.getItem('noda-sync-panel') || 'tree',
   blockers: [], blockersChecked: false, blockersBusy: false, closeResult: null,
   remote: {}, showAll: false,
   lastRequest: null, networkRetries: 0,
+  pullArmedUntil: 0,
   authority: (() => { try { return JSON.parse(localStorage.getItem('noda-sync-authority') || 'null'); } catch { return null; } })(),
   authorityRequested: false,
 };
@@ -1564,8 +1940,94 @@ function syncConnectionState() {
   return { label: 'данные идут', cls: 'ok' };
 }
 
+function restoreSyncRuntime(runtime) {
+  const event = runtime?.lastEvent;
+  if (!event?.type) return;
+  const started = Date.parse(runtime.startedAt || '');
+  if (Number.isFinite(started)) sync.startedAt = started;
+  sync.busy = !!runtime.busy;
+  sync.lastProgressAt = Date.now();
+  if (event.type === 'status') {
+    sync.info = event;
+    sync.projects = event.projects || [];
+    setTransferTreeFromStatus(event);
+    updateSyncAuthority(event.serverState);
+    sync.step = 'idle';
+    sync.phase = (event.upload || event.download || event.conflicts) ? 'Состояние устройств проверено' : 'Это устройство соответствует серверу';
+    sync.detail = `${event.localFiles || 0} файлов здесь · ${event.remoteFiles || 0} файлов на сервере`;
+  } else if (event.type === 'done') {
+    const verb = event.direction === 'push' ? 'Отправлено на сервер' : 'Забрано с сервера';
+    sync.step = event.errors ? 'error' : 'done';
+    sync.pct = 100;
+    sync.phase = `${verb}: ${fileCount(event.transferred)}`;
+    sync.detail = `${fmtB(event.bytes || 0)} · проверено ${event.verified ?? event.transferred ?? 0}${event.errors ? ` · ошибок ${event.errors}` : ''}`;
+    updateSyncAuthority(event.serverState);
+  } else if (event.type === 'blocked') {
+    sync.step = 'blocked';
+    sync.blockedFiles = event.files || [];
+    sync.phase = `${Number(event.count) === 1 ? 'Занят' : 'Занято'} ${fileCount(event.count)}`;
+    sync.detail = 'Нужно освободить указанные файлы';
+  } else if (event.type === 'error') {
+    sync.step = 'error';
+    sync.phase = 'Передача остановлена';
+    sync.detail = event.error || 'Неизвестная ошибка';
+  } else if (event.type === 'progress') {
+    sync.step = 'transfer';
+    sync.current = event;
+    sync.speed = Number(event.speed) || 0;
+    sync.eta = event.eta;
+    sync.pct = event.totalBytes ? Math.round((event.bytes || 0) / event.totalBytes * 100) : 0;
+    sync.phase = event.direction === 'pull' ? 'Обновляю это устройство с сервера' : 'Сохраняю актуальную работу на сервере';
+    sync.detail = `${event.done || 0}/${event.total || 0} · ${fmtB(event.bytes || 0)} из ${fmtB(event.totalBytes || 0)}`;
+  } else if (event.type === 'verify' || event.type === 'verify_progress') {
+    sync.step = 'verify';
+    sync.verify = { done: event.done || 0, total: event.total || 0, verified: event.verified || 0, errors: event.errors || 0, file: event.file };
+    sync.pct = event.total ? Math.round((event.done || 0) / event.total * 100) : 0;
+    sync.phase = 'Проверяю, что все файлы дошли';
+    sync.detail = `${event.verified || 0} подтверждено из ${event.total || 0}`;
+  } else if (event.type === 'phase') {
+    sync.step = 'scan';
+    sync.phase = event.msg || 'Подготовка передачи';
+    sync.detail = event.detail || '';
+  }
+}
+
 function syncTreeKey(scopeId, projectKey, file) {
   return `${scopeId || ''}|${projectKey || ''}|${String(file || '').replace(/\\/g, '/')}`;
+}
+
+function syncProjectKey(scopeId, projectKey) {
+  return `${scopeId || ''}|${projectKey || ''}`;
+}
+
+function syncFolderKey(scopeId, projectKey, folder) {
+  return `${scopeId || ''}|${projectKey || ''}|${folder || '(корень)'}`;
+}
+
+function pushTreeIndex(map, key, value) {
+  const rows = map.get(key);
+  if (rows) rows.push(value);
+  else map.set(key, [value]);
+}
+
+function indexTransferTree(tree) {
+  if (!tree) return tree;
+  tree.projectsByScope = new Map();
+  tree.itemsByScope = new Map();
+  tree.itemsByProject = new Map();
+  tree.itemsByFolder = new Map();
+  for (const project of tree.projects || []) {
+    pushTreeIndex(tree.projectsByScope, project.scopeId || project.scope, project);
+  }
+  for (const item of tree.items || []) {
+    const scopeId = item.scopeId || '';
+    const projectKey = item.projectKey || item.project || '';
+    const folder = item.folder || '(корень)';
+    pushTreeIndex(tree.itemsByScope, scopeId, item);
+    pushTreeIndex(tree.itemsByProject, syncProjectKey(scopeId, projectKey), item);
+    pushTreeIndex(tree.itemsByFolder, syncFolderKey(scopeId, projectKey, folder), item);
+  }
+  return tree;
 }
 
 function setTransferTreeFromPlan(event) {
@@ -1575,12 +2037,12 @@ function setTransferTreeFromPlan(event) {
     folders: (project.folders || []).map((folder) => ({ ...folder })),
   }));
   const items = (event.items || []).map((item) => ({ ...item, state: 'queued' }));
-  sync.transferTree = {
+  sync.transferTree = indexTransferTree({
     direction: event.direction,
     scopes, projects, items,
     itemMap: new Map(items.map((item) => [syncTreeKey(item.scopeId, item.projectKey, item.file), item])),
     proof: null,
-  };
+  });
 }
 
 function setTransferTreeFromStatus(event) {
@@ -1606,11 +2068,11 @@ function setTransferTreeFromStatus(event) {
     bytes: change.bytes || 0,
     state: change.blocked || change.direction === 'conflict' ? 'failed' : 'queued',
   })));
-  sync.transferTree = {
+  sync.transferTree = indexTransferTree({
     direction: 'status', scopes, projects, items,
     itemMap: new Map(items.map((item) => [syncTreeKey(item.scopeId, item.projectKey, item.file), item])),
     proof: null,
-  };
+  });
 }
 
 function updateSyncAuthority(serverState) {
@@ -1626,36 +2088,46 @@ function renderSyncAuthority() {
   if (!box) return;
   const authority = sync.authority;
   if (!authority?.at) {
-    box.innerHTML = `<span>Актуальная версия</span><b>ещё не определена</b>`;
+    box.innerHTML = `<span>Последняя отправка</span><b>ещё не было</b>`;
     box.className = 'sync-authority unknown';
     return;
   }
   const role = authority.role === 'laptop' ? 'Ноутбук' : authority.role === 'pc' ? 'ПК' : (authority.device || 'Устройство');
   let when = '';
   try { when = new Date(authority.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch {}
-  box.innerHTML = `<span>Актуальная версия</span><b>${esc(role)}</b><time>${esc(when)}</time>`;
+  box.innerHTML = `<span>Последняя отправка на сервер</span><b>${esc(role)}</b><time>${esc(when)}</time>`;
   box.className = `sync-authority ${authority.errors ? 'bad' : 'ok'}`;
 }
 
 function updateTransferTreeItem(event, state) {
   const tree = sync.transferTree;
-  if (!tree) return;
+  if (!tree) return false;
   const key = syncTreeKey(event.scopeId, event.projectKey || event.project, event.file);
   let item = tree.itemMap.get(key);
   if (!item) {
     item = tree.items.find((candidate) => candidate.projectKey === (event.projectKey || event.project) && candidate.file === event.file);
   }
-  if (!item) return;
+  if (!item) return false;
+  const changed = item.state !== state
+    || (event.snapshot != null && item.snapshot !== !!event.snapshot)
+    || (event.snapshotBytes != null && Number(item.snapshotBytes || 0) !== Number(event.snapshotBytes || 0));
   item.state = state;
   if (event.snapshot != null) item.snapshot = !!event.snapshot;
   if (event.snapshotBytes != null) item.snapshotBytes = Number(event.snapshotBytes) || 0;
+  return changed;
 }
 
 function syncTreeState(items, planned, proof) {
-  const failed = items.filter((item) => item.state === 'failed').length + Number(proof?.errors || 0);
-  const verified = items.filter((item) => item.state === 'verified').length;
-  const copied = items.filter((item) => item.state === 'done' || item.state === 'verified').length;
-  const active = items.some((item) => item.state === 'copying');
+  let failed = Number(proof?.errors || 0);
+  let verified = 0;
+  let copied = 0;
+  let active = false;
+  for (const item of items) {
+    if (item.state === 'failed') failed += 1;
+    if (item.state === 'verified') verified += 1;
+    if (item.state === 'done' || item.state === 'verified') copied += 1;
+    if (item.state === 'copying') active = true;
+  }
   if (failed) return { cls: 'bad', icon: '!', label: `${failed} с ошибкой` };
   if (!planned) return { cls: 'ok', icon: '✓', label: 'актуально' };
   if (proof && Number(proof.verified || 0) >= planned) return { cls: 'ok', icon: '✓', label: `${planned}/${planned} подтверждено` };
@@ -1665,9 +2137,26 @@ function syncTreeState(items, planned, proof) {
   return { cls: 'queued', icon: '·', label: `${copied}/${planned}` };
 }
 
-function renderTransferTree() {
+function renderTransferTree(force = false) {
   const box = document.getElementById('sync-transfer-tree');
   if (!box) return;
+  const now = Date.now();
+  const minInterval = sync.busy ? 240 : 0;
+  const elapsed = now - Number(sync.treeRenderLastAt || 0);
+  if (!force && minInterval && elapsed < minInterval) {
+    if (!sync.treeRenderTimer) {
+      sync.treeRenderTimer = setTimeout(() => {
+        sync.treeRenderTimer = null;
+        renderTransferTree(true);
+      }, Math.max(16, minInterval - elapsed));
+    }
+    return;
+  }
+  if (sync.treeRenderTimer) {
+    clearTimeout(sync.treeRenderTimer);
+    sync.treeRenderTimer = null;
+  }
+  sync.treeRenderLastAt = now;
   const tree = sync.transferTree;
   if (!tree) {
     box.innerHTML = `<div class="sync-tree-caption"><b>Проекты</b><span>читаю папки…</span></div>`;
@@ -1676,22 +2165,24 @@ function renderTransferTree() {
   const proofByScope = new Map((tree.proof || []).map((row) => [row.id, row]));
   const totalInventory = tree.scopes.reduce((sum, scope) => sum + Number(scope.inventoryFiles || scope.localFiles || 0), 0);
   const scopeHtml = tree.scopes.map((scope, scopeIndex) => {
-    const projects = tree.projects.filter((project) => (project.scopeId || project.scope) === scope.id);
-    const scopeItems = tree.items.filter((item) => item.scopeId === scope.id);
+    const projects = tree.projectsByScope?.get(scope.id) || tree.projects.filter((project) => (project.scopeId || project.scope) === scope.id);
+    const scopeItems = tree.itemsByScope?.get(scope.id) || tree.items.filter((item) => item.scopeId === scope.id);
     const planned = Number(scope.files || 0);
     const proof = proofByScope.get(scope.id);
     const state = syncTreeState(scopeItems, planned, proof);
     const inventory = Number(scope.inventoryFiles || scope.localFiles || 0);
     const open = scope.id === 'projects' || planned > 0;
     const projectsHtml = projects.map((project) => {
-      const projectItems = tree.items.filter((item) => item.scopeId === scope.id && item.projectKey === project.name);
+      const projectItems = tree.itemsByProject?.get(syncProjectKey(scope.id, project.name))
+        || tree.items.filter((item) => item.scopeId === scope.id && item.projectKey === project.name);
       const projectPlanned = Number(project.files || 0);
       const projectState = tree.localOnly ? { cls: 'local', icon: '○', label: 'на этом устройстве' } : syncTreeState(projectItems, projectPlanned, null);
       const folders = project.folders?.length ? project.folders : [{ name: '(корень)', inventoryFiles: project.inventoryFiles || 0, files: projectPlanned }];
       const folderHtml = folders.map((folder) => {
-        const folderItems = projectItems.filter((item) => (item.folder || '(корень)') === folder.name);
+        const folderItems = tree.itemsByFolder?.get(syncFolderKey(scope.id, project.name, folder.name))
+          || projectItems.filter((item) => (item.folder || '(корень)') === folder.name);
         const folderState = tree.localOnly ? { cls: 'local', icon: '·', label: folder.subfolders ? `${folder.subfolders} папок внутри` : 'папка' } : syncTreeState(folderItems, Number(folder.files || 0), null);
-        const visible = folderItems.slice(0, 120);
+        const visible = folderItems.slice(0, sync.busy ? 20 : 80);
         const filesHtml = visible.map((item) => {
           const itemState = item.state === 'verified' ? ['ok', '✓', 'подтверждён']
             : item.state === 'done' ? ['verify', '…', 'передан']
@@ -1754,7 +2245,7 @@ function wireSyncEvents() {
       if (!sync.lastRequest) sync.step = 'idle';
       sync.phase = (o.upload || o.download || o.conflicts) ? 'Состояние устройств проверено' : 'Это устройство соответствует серверу';
       sync.detail = `${o.localFiles || 0} файлов здесь · ${o.remoteFiles || 0} файлов на сервере · проверка ${fmtDuration(o.elapsed)}`;
-      sync.pct = 0; sync.indeterminate = false; renderSyncViewBody(); updateSyncStage(); renderTransferTree();
+      sync.pct = 0; sync.indeterminate = false; renderSyncViewBody(); updateSyncStage(); renderTransferTree(true);
     } else if (o.type === 'plan') {
       syncLog(`${o.direction === 'push' ? 'Отправка на сервер' : 'Получение с сервера'}: ${o.files || 0} файлов, ${fmtB(o.bytes || 0)}`);
       sync.step = 'files'; sync.stepError = '';
@@ -1764,7 +2255,7 @@ function wireSyncEvents() {
       sync.speed = 0; sync.eta = null; sync.current = null; sync.recentFiles = []; sync.blockedFiles = []; sync.verify = null;
       sync.paused = false; sync.pauseRequested = false; setTransferTreeFromPlan(o);
       sync.liveProjects = Object.fromEntries((o.projects || []).map((p) => [p.name, { ...p, done: 0, doneBytes: 0 }]));
-      updateSyncStage(); updateSyncLive(); renderTransferTree();
+      updateSyncStage(); updateSyncLive(); renderTransferTree(true);
     } else if (o.type === 'preflight') {
       sync.step = 'files';
       sync.phase = 'Проверяю, не заняты ли файлы';
@@ -1787,7 +2278,7 @@ function wireSyncEvents() {
       sync.detail = `${o.done || 0}/${o.total || 0} · ${fmtB(o.bytes || 0)} из ${fmtB(o.totalBytes || 0)} · ${fmtB(o.speed || 0)}/с${eta ? ` · осталось ~${eta}` : ''}${o.file ? ` · ${o.file}` : ''}`;
       sync.pct = pct; sync.indeterminate = false; sync.speed = Number(o.speed) || 0; sync.eta = o.eta;
       sync.lastProgressAt = Date.now(); sync.current = o;
-      updateTransferTreeItem(o, o.state === 'failed' ? 'failed' : (o.state === 'done' ? 'done' : 'copying'));
+      const treeChanged = updateTransferTreeItem(o, o.state === 'failed' ? 'failed' : (o.state === 'done' ? 'done' : 'copying'));
       const projectKey = o.projectKey || o.project;
       if (projectKey) sync.liveProjects[projectKey] = {
         ...(sync.liveProjects[projectKey] || { name: projectKey, label: o.project }),
@@ -1798,7 +2289,8 @@ function wireSyncEvents() {
         sync.recentFiles.unshift({ file: o.file, project: o.project, direction: o.direction, ok: o.state === 'done', bytes: o.fileTotal || 0 });
         sync.recentFiles = sync.recentFiles.slice(0, 8);
       }
-      setSyncProgress(pct, sync.detail); updateSyncStage(); updateSyncLive(); renderTransferTree();
+      setSyncProgress(pct, sync.detail); updateSyncStage(); updateSyncLive();
+      if (treeChanged) renderTransferTree();
     } else if (o.type === 'retry') {
       sync.step = 'transfer';
       sync.lastProgressAt = Date.now();
@@ -1815,21 +2307,27 @@ function wireSyncEvents() {
       setSyncProgress(0, sync.detail); updateSyncStage(); updateSyncLive();
     } else if (o.type === 'verify_progress') {
       sync.step = 'verify';
-      sync.verify = { done: o.done || 0, total: o.total || 0, verified: o.verified || 0, errors: o.errors || 0, file: o.file };
+      const verifyItems = Array.isArray(o.items) && o.items.length ? o.items : [o];
+      const latestVerifiedItem = verifyItems[verifyItems.length - 1] || o;
+      sync.verify = { done: o.done || 0, total: o.total || 0, verified: o.verified || 0, errors: o.errors || 0, file: latestVerifiedItem.file || o.file };
       sync.phase = 'Проверяю, что все файлы дошли';
       sync.detail = `${o.verified || 0} подтверждено из ${o.total || 0}${o.errors ? ` · ошибок ${o.errors}` : ''} · ${syncShortPath(o.file)}`;
       sync.pct = o.total ? Math.round((o.done || 0) / o.total * 100) : 100;
       sync.indeterminate = false; sync.lastProgressAt = Date.now();
-      updateTransferTreeItem(o, o.ok === false ? 'failed' : 'verified');
-      setSyncProgress(sync.pct, sync.detail); updateSyncStage(); updateSyncLive(); renderTransferTree();
+      let treeChanged = false;
+      for (const item of verifyItems) {
+        treeChanged = updateTransferTreeItem(item, item.ok === false ? 'failed' : 'verified') || treeChanged;
+      }
+      setSyncProgress(sync.pct, sync.detail); updateSyncStage(); updateSyncLive();
+      if (treeChanged) renderTransferTree();
     } else if (o.type === 'paused') {
       sync.paused = true; sync.pauseRequested = false; sync.speed = 0;
       sync.phase = 'Передача на паузе'; sync.detail = 'Соединение сохранено. Нажми «Продолжить», чтобы продолжить с того же места.';
-      updateSyncStage(); renderTransferTree();
+      updateSyncStage(); renderTransferTree(true);
     } else if (o.type === 'resumed') {
       sync.paused = false; sync.pauseRequested = false;
       sync.phase = 'Передача продолжена'; sync.detail = 'Продолжаю с того же файла'; sync.lastProgressAt = Date.now();
-      updateSyncStage(); renderTransferTree();
+      updateSyncStage(); renderTransferTree(true);
     } else if (o.type === 'fileerror') {
       syncLog(`⚠ ${o.file}: ${o.error}`);
       sync.errors.push({ file: o.file || 'Файл', error: o.error || 'Ошибка' });
@@ -1848,7 +2346,7 @@ function wireSyncEvents() {
       sync.paused = false; sync.pauseRequested = false;
       if (sync.transferTree) sync.transferTree.proof = o.proof || [];
       syncLog(`${verb}: ${o.transferred || 0} файлов, ${fmtB(o.bytes || 0)}, ошибок ${o.errors || 0}`);
-      setSyncProgress(100, sync.detail); updateSyncStage(); updateSyncLive(); renderTransferTree();
+      setSyncProgress(100, sync.detail); updateSyncStage(); updateSyncLive(); renderTransferTree(true);
       toast('Передача', `${verb}: ${fileCount(o.transferred)}${o.errors ? `, ошибок ${o.errors}` : ''}`, o.errors ? 'warn' : 'ok');
     } else if (o.type === 'error') {
       const transient = /timed out|timeout|etimedout|econnreset|socket|сервер.*не ответил/i.test(String(o.error || ''));
@@ -1869,7 +2367,7 @@ function wireSyncEvents() {
       syncLog(o.msg || 'Ошибка Python'); sync.errors.push({ file: 'Движок', error: o.msg || 'Ошибка Python' });
       renderSyncViewBody();
     } else if (o.type === 'closed') {
-      sync.busy = false; sync.indeterminate = false; sync.paused = false; sync.pauseRequested = false; renderSyncViewBody(); updateSyncStage(); updateSyncLive(); renderTransferTree();
+      sync.busy = false; sync.indeterminate = false; sync.paused = false; sync.pauseRequested = false; renderSyncViewBody(); updateSyncStage(); updateSyncLive(); renderTransferTree(true);
     }
   });
 }
@@ -1986,6 +2484,26 @@ function startSyncStatus() {
 }
 function runSyncOp(mode, only, automaticRetry = false) {
   if (sync.busy) { toast('Перенос', 'Идёт операция, подожди', 'info'); return; }
+  if (mode === 'pull' && !automaticRetry) {
+    const project = only ? sync.projects.find((item) => item.name === only) : null;
+    const localNewer = project
+      ? Number(project.upload || 0) + Number(project.conflicts || 0)
+      : Number(sync.info?.upload || 0) + Number(sync.info?.conflicts || 0);
+    if (localNewer > 0 && Date.now() > sync.pullArmedUntil) {
+      sync.pullArmedUntil = Date.now() + 15000;
+      sync.phase = 'На этом устройстве есть более свежая работа';
+      sync.detail = `${fileCount(localNewer)} ещё не отправлено. Нажми «Забрать всё равно» ещё раз — локальная ветка Codex будет сохранена отдельно.`;
+      sync.step = 'idle';
+      toast('Защита от потери', sync.detail, 'warn', 9000);
+      renderSyncV2Body();
+      updateSyncStage();
+      setTimeout(() => {
+        if (Date.now() > sync.pullArmedUntil && state.section === 'sync' && !sync.busy) renderSyncV2Body();
+      }, 15200);
+      return;
+    }
+    sync.pullArmedUntil = 0;
+  }
   if (!automaticRetry) sync.networkRetries = 0;
   sync.lastRequest = { mode, only: only || null };
   sync.step = 'scan'; sync.stepError = ''; sync.errors = [];
@@ -2332,6 +2850,7 @@ async function renderSyncV2() {
     sync.deviceProfile = st.deviceProfile || null;
     sync.autoRole = st.deviceProfile?.role || 'pc';
     if (sync.roleSource === 'auto' || !sync.role) sync.role = sync.autoRole;
+    restoreSyncRuntime(st.sync);
   } catch { sync.deviceName = 'Это устройство'; if (!sync.role) sync.role = 'pc'; }
   app.innerHTML = `
     <div class="syncwrap sync-v3">
@@ -2395,15 +2914,15 @@ async function renderSyncV2() {
   if (!sync.transferTree) {
     window.arra.syncLocalInventory().then((inventory) => {
       if (sync.transferTree) return;
-      sync.transferTree = { ...inventory, direction: 'local', itemMap: new Map(), proof: null };
-      renderTransferTree();
+      sync.transferTree = indexTransferTree({ ...inventory, direction: 'local', itemMap: new Map(), proof: null });
+      renderTransferTree(true);
     }).catch((error) => reportError('sync.local-inventory', error));
   }
   if (!sync.authority?.at && !sync.authorityRequested && !sync.busy) {
     sync.authorityRequested = true;
     window.arra.syncRun('authority', null, sync.role).catch((error) => reportError('sync.authority', error));
   }
-  renderSyncV2Body(); renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney(); renderTransferTree();
+  renderSyncV2Body(); renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney(); renderTransferTree(true);
   renderSyncAuthority();
 }
 
@@ -2418,13 +2937,15 @@ function renderSyncV2Body() {
   const uploadBytes = sync.projects.reduce((n, p) => n + Number(p.uploadBytes || 0), 0);
   const downloadBytes = sync.projects.reduce((n, p) => n + Number(p.downloadBytes || 0), 0);
   const hasCheck = !!sync.info;
+  const localNewer = Number(i.upload || 0) + Number(i.conflicts || 0);
+  const pullArmed = localNewer > 0 && Date.now() <= sync.pullArmedUntil;
   const actions = document.getElementById('sync-actions');
   if (actions) actions.innerHTML = `
     <button class="sync-transfer-choice" id="sync-push-all">
       <b>Отправить</b>${hasCheck ? `<span>${fmt(i.upload || 0)} · ${fmtB(uploadBytes)}</span>` : ''}
     </button>
-    <button class="sync-transfer-choice secondary" id="sync-pull-all">
-      <b>Забрать</b>${hasCheck ? `<span>${fmt(i.download || 0)} · ${fmtB(downloadBytes)}</span>` : ''}
+    <button class="sync-transfer-choice secondary ${pullArmed ? 'danger-armed' : ''}" id="sync-pull-all">
+      <b>${pullArmed ? 'Забрать всё равно' : 'Забрать'}</b>${hasCheck ? `<span>${fmt(i.download || 0)} · ${fmtB(downloadBytes)}</span>` : ''}
     </button>`;
   document.getElementById('sync-push-all').onclick = () => runSyncOp('push', null);
   document.getElementById('sync-pull-all').onclick = () => runSyncOp('pull', null);
@@ -2578,7 +3099,14 @@ function openEditorModal() {
 // ================= file receive events =================
 window.arra.onFile((f) => {
   state.files.unshift(f);
-  if (state.section === 'files') renderFeed();
+  if (state.section === 'files') {
+    const liquidHost = document.getElementById('liquid-files-content');
+    if (liquidHost && typeof liquidFilesHtml === 'function') {
+      liquidHost.innerHTML = liquidFilesHtml();
+      if (typeof bindLiquidFiles === 'function') bindLiquidFiles();
+    }
+    else renderFeed();
+  }
   toast('Файл получен', `${f.name} — скопирован (${f.copied || 'путь'})`, 'ok');
 });
 window.arra.onStatus((s) => {
@@ -2604,6 +3132,9 @@ window.arra.onUpdate((o) => {
   } else if (o.state === 'ready') {
     setUpdateButton('ready', `Готово ${o.version || ''}`);
     toast('Обновление готово', 'Версия ' + (o.version || '') + ' скачана', 'ok', 8000);
+  } else if (o.state === 'installing') {
+    setUpdateButton('installing', 'Перезапускаю…');
+    toast('Устанавливаю обновление', 'Noda сейчас перезапустится', 'ok', 5000);
   } else if (o.state === 'error') {
     setUpdateButton('', 'Проверить обновление');
     toast('Обновление', 'Не удалось проверить: ' + (o.message || ''), 'warn', 6000);
@@ -2617,11 +3148,24 @@ window.addEventListener('drop', (e) => { e.preventDefault(); }, false);
 async function boot() {
   const st = await window.arra.getStatus();
   if (!st.paired || !st.hasAuth) { renderLogin(); return; }
+  document.body.classList.remove('workspace-login-mode');
   try { const hist = await window.arra.getHistory(); if (Array.isArray(hist)) state.files = hist; } catch {}
   await refreshPresence(false);
   renderNav();
   route();
 }
 boot();
+function sendRendererHeartbeat() {
+  const root = document.getElementById('app');
+  const rect = root?.getBoundingClientRect();
+  window.arra.heartbeat?.({
+    healthy: !!root && Number(rect?.width || 0) > 0 && Number(rect?.height || 0) > 0,
+    section: state.section || '',
+    syncBusy: !!sync.busy,
+    childCount: root?.childElementCount || 0,
+  });
+}
+sendRendererHeartbeat();
+setInterval(sendRendererHeartbeat, 5000);
 setInterval(() => refreshPresence(true), 5000);
 setInterval(() => maintainRemoteDesktop(), 1000);

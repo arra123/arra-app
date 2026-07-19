@@ -537,28 +537,111 @@ async function execTool(userId, name, args) {
 }
 
 export default async function assistantRoutes(app) {
-  app.get('/ai/messages', { preHandler: app.auth }, async (request) => {
+  const normalizeThreadKey = (value) => String(value || 'general')
+    .replace(/[\r\n\t]+/g, '-')
+    .trim()
+    .slice(0, 180) || 'general';
+
+  app.get('/ai/threads', { preHandler: app.auth }, async (request) => {
     const { rows } = await query(
-      'SELECT id, role, content, created_at FROM chat_messages WHERE user_id = $1 ORDER BY created_at ASC LIMIT 200',
+      `SELECT thread_key, title, project_name, project_path, device_name, created_at, updated_at
+       FROM assistant_threads WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 100`,
       [request.user.id],
     );
-    return { messages: rows };
+    return { threads: rows };
+  });
+
+  app.get('/ai/messages', { preHandler: app.auth }, async (request) => {
+    const threadKey = normalizeThreadKey(request.query?.thread);
+    const { rows } = await query(
+      `SELECT id, role, content, created_at FROM chat_messages
+       WHERE user_id = $1 AND thread_key = $2 ORDER BY created_at ASC LIMIT 200`,
+      [request.user.id, threadKey],
+    );
+    return { messages: rows, threadKey };
+  });
+
+  // Локальная модель отвечает на выбранном компьютере, но ветка проекта должна
+  // продолжаться на любом устройстве. Этот маршрут сохраняет уже готовую пару
+  // сообщений и никогда не отправляет её во внешний AI-провайдер.
+  app.post('/ai/messages/sync', { preHandler: app.auth }, async (request, reply) => {
+    const threadKey = normalizeThreadKey(request.body?.threadKey);
+    const input = Array.isArray(request.body?.messages) ? request.body.messages.slice(-12) : [];
+    const messages = input.map((message) => ({
+      clientId: String(message?.id || '').replace(/[^a-zA-Z0-9:._-]+/g, '-').slice(0, 180) || null,
+      role: message?.role === 'assistant' ? 'assistant' : message?.role === 'user' ? 'user' : null,
+      content: String(message?.content || '').trim().slice(0, 120000),
+    })).filter((message) => message.role && message.content);
+    if (!messages.length) return reply.code(400).send({ error: 'Нет сообщений для сохранения' });
+
+    const clean = (value, max = 280) => String(value || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, max);
+    const project = request.body?.project && typeof request.body.project === 'object' ? request.body.project : null;
+    const title = clean(project?.name || messages.find((message) => message.role === 'user')?.content || 'Новая задача', 90) || 'Новая задача';
+    await query(
+      `INSERT INTO assistant_threads (user_id, thread_key, title, project_name, project_path, device_name)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (user_id, thread_key) DO UPDATE SET
+         project_name = COALESCE(EXCLUDED.project_name, assistant_threads.project_name),
+         project_path = COALESCE(EXCLUDED.project_path, assistant_threads.project_path),
+         device_name = COALESCE(EXCLUDED.device_name, assistant_threads.device_name),
+         updated_at = now()`,
+      [request.user.id, threadKey, title, clean(project?.name, 100) || null, clean(project?.path, 320) || null, clean(project?.device, 100) || null],
+    );
+    for (const message of messages) {
+      await query(
+        `INSERT INTO chat_messages (user_id, role, content, thread_key, client_id)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (user_id, thread_key, client_id) WHERE client_id IS NOT NULL DO NOTHING`,
+        [request.user.id, message.role, message.content, threadKey, message.clientId],
+      );
+    }
+    return { ok: true, threadKey, saved: messages.length };
   });
 
   app.post('/ai/assistant', { preHandler: app.auth }, async (request, reply) => {
     const text = String(request.body?.text || '').trim();
     const image = String(request.body?.image || '').trim();
+    const projectInput = request.body?.project && typeof request.body.project === 'object'
+      ? request.body.project
+      : null;
+    const cleanProjectField = (value, max = 280) => String(value || '')
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+      .slice(0, max);
+    const project = projectInput ? {
+      name: cleanProjectField(projectInput.name, 100),
+      path: cleanProjectField(projectInput.path, 320),
+      device: cleanProjectField(projectInput.device, 100),
+    } : null;
     if (!text && !image) return reply.code(400).send({ error: 'Нужно сообщение или фото' });
     if (image && (!image.startsWith('data:image/') || image.length > 22 * 1024 * 1024)) {
       return reply.code(400).send({ error: 'Фото слишком большое или имеет неверный формат' });
     }
     const storedText = text || 'Фото';
+    const threadKey = normalizeThreadKey(request.body?.threadKey);
 
-    await query('INSERT INTO chat_messages (user_id, role, content) VALUES ($1,$2,$3)', [request.user.id, 'user', storedText]);
+    const threadTitle = cleanProjectField(project?.name || text || 'Новая задача', 90) || 'Новая задача';
+    await query(
+      `INSERT INTO assistant_threads (user_id, thread_key, title, project_name, project_path, device_name)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (user_id, thread_key) DO UPDATE SET
+         project_name = COALESCE(EXCLUDED.project_name, assistant_threads.project_name),
+         project_path = COALESCE(EXCLUDED.project_path, assistant_threads.project_path),
+         device_name = COALESCE(EXCLUDED.device_name, assistant_threads.device_name),
+         updated_at = now()`,
+      [request.user.id, threadKey, threadTitle, project?.name || null, project?.path || null, project?.device || null],
+    );
+
+    await query(
+      'INSERT INTO chat_messages (user_id, role, content, thread_key) VALUES ($1,$2,$3,$4)',
+      [request.user.id, 'user', storedText, threadKey],
+    );
 
     const { rows: hist } = await query(
-      'SELECT role, content FROM chat_messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT 40',
-      [request.user.id],
+      `SELECT role, content FROM chat_messages
+       WHERE user_id = $1 AND thread_key = $2 ORDER BY created_at DESC LIMIT 40`,
+      [request.user.id, threadKey],
     );
     const context = await buildContext(request.user.id);
     const historyMessages = hist.reverse().map((h) => ({ role: h.role, content: h.content }));
@@ -574,8 +657,11 @@ export default async function assistantRoutes(app) {
         };
       }
     }
+    const projectContext = project?.name
+      ? `\n\nТекущий рабочий контекст пользователя: проект «${project.name}»${project.path ? `, локальный путь «${project.path}»` : ''}${project.device ? `, устройство «${project.device}»` : ''}. Используй это только как контекст разговора. Не утверждай, что прочитал или изменил локальные файлы, если их содержимое не было передано тебе явно.`
+      : '';
     const messages = [
-      { role: 'system', content: `${PROMPT}\n\n${currentDateNote()}\n\n${context}` },
+      { role: 'system', content: `${PROMPT}\n\n${currentDateNote()}\n\n${context}${projectContext}` },
       ...historyMessages,
     ];
 
@@ -601,13 +687,19 @@ export default async function assistantRoutes(app) {
     }
     if (!final) final = 'Готово.';
 
-    await query('INSERT INTO chat_messages (user_id, role, content) VALUES ($1,$2,$3)', [request.user.id, 'assistant', final]);
-    return { reply: final };
+    await query(
+      'INSERT INTO chat_messages (user_id, role, content, thread_key) VALUES ($1,$2,$3,$4)',
+      [request.user.id, 'assistant', final, threadKey],
+    );
+    await query('UPDATE assistant_threads SET updated_at = now() WHERE user_id = $1 AND thread_key = $2', [request.user.id, threadKey]);
+    return { reply: final, threadKey };
   });
 
   // Очистить диалог
   app.delete('/ai/messages', { preHandler: app.auth }, async (request) => {
-    await query('DELETE FROM chat_messages WHERE user_id = $1', [request.user.id]);
+    const threadKey = normalizeThreadKey(request.query?.thread);
+    await query('DELETE FROM chat_messages WHERE user_id = $1 AND thread_key = $2', [request.user.id, threadKey]);
+    await query('DELETE FROM assistant_threads WHERE user_id = $1 AND thread_key = $2', [request.user.id, threadKey]);
     return { ok: true };
   });
 

@@ -17,14 +17,17 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
+import sqlite3
 import sys
 import base64
 import threading
 import time
 import ctypes
 import zlib
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -88,7 +91,7 @@ SCOPES = (
         "includeRoots": {
             ".codex-global-state.json", ".personality_migration", "AGENTS.md",
             "config.toml", "history.jsonl", "hooks.json", "keybindings.json",
-            "session_index.jsonl", "external_agent_session_imports.json",
+            "external_agent_session_imports.json",
             "agents", "automations", "rules", "skills", "ambient-suggestions",
             "attachments",
         },
@@ -132,29 +135,36 @@ def wait_for_control():
         pass
 
 
-def local_file_issue(path, require_exclusive=False):
+def local_file_issue(path, require_replace=False):
     """Проверить, можно ли безопасно прочитать или заменить файл.
 
     Для отправки достаточно совместного чтения: VS Code, Codex и Claude могут
-    продолжать работу, пока Noda снимает текущий срез файла. Эксклюзивный доступ
-    нужен только при получении, когда локальный файл действительно заменяется.
+    продолжать работу, пока Noda снимает текущий срез файла. При получении нам
+    не нужен эксклюзивный доступ: важно лишь, разрешают ли уже открытые дескрипторы
+    атомарно переименовать файл. Проверка через share=0 была слишком строгой и
+    ошибочно считала занятым любой открытый JSONL сессии Codex.
     """
     path = Path(path)
     if not path.exists():
         return "файл исчез до начала передачи"
     try:
-        if os.name == "nt" and require_exclusive:
+        if os.name == "nt" and require_replace:
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
             create_file = kernel32.CreateFileW
             create_file.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32,
                                     ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p]
             create_file.restype = ctypes.c_void_p
-            handle = create_file(str(path), 0x80000000, 0, None, 3, 0x80, None)
+            # DELETE + FILE_SHARE_READ/WRITE/DELETE проверяет именно возможность
+            # будущего os.replace(), не требуя закрывать программу, которая лишь
+            # читает файл или держит JSONL открытым с корректным sharing mode.
+            handle = create_file(str(path), 0x00010000, 0x00000007, None, 3, 0x80, None)
             invalid = ctypes.c_void_p(-1).value
             if handle == invalid:
                 code = ctypes.get_last_error()
-                if code in (5, 32, 33):
-                    return "файл открыт или заблокирован другой программой"
+                if code in (32, 33):
+                    return "открытая программа запрещает заменить файл"
+                if code == 5:
+                    return "Windows не разрешает заменить файл"
                 return f"Windows не разрешает открыть файл (код {code})"
             kernel32.CloseHandle(ctypes.c_void_p(handle))
         with open(path, "rb") as stream:
@@ -188,7 +198,13 @@ def safe_remote_remove(sftp, path):
 
 
 def is_append_only_session(scope, rel):
-    return scope.get("id") in {"codex-sessions", "codex-archive"} and rel.lower().endswith(".jsonl")
+    if not rel.lower().endswith(".jsonl"):
+        return False
+    if scope.get("id") in {"codex-sessions", "codex-archive"}:
+        return True
+    return scope.get("id") == "codex-config" and Path(rel).name.lower() in {
+        "history.jsonl", "external_agent_session_imports.jsonl",
+    }
 
 
 def remote_matches_local_prefix(sftp, local_path, remote_path, remote_size, window=65536):
@@ -226,6 +242,26 @@ def upload_fixed_prefix(sftp, local_path, remote_stream, start, end, progress_ca
             remaining -= len(chunk)
             progress_callback(sent - origin, int(end) - origin)
     remote_stream.flush()
+
+
+def download_fixed_suffix(sftp, remote_path, local_path, start, end, progress_callback):
+    """Append only the stable missing suffix of a remote JSONL session."""
+    received = int(start)
+    origin = received
+    remaining = max(0, int(end) - received)
+    with sftp.open(remote_path, "rb") as remote_stream, open(local_path, "ab") as local_stream:
+        remote_stream.seek(received)
+        while remaining:
+            wait_for_control()
+            chunk = remote_stream.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise RuntimeError("серверный файл стал короче во время получения")
+            local_stream.write(chunk)
+            received += len(chunk)
+            remaining -= len(chunk)
+            progress_callback(received - origin, int(end) - origin)
+        local_stream.flush()
+        os.fsync(local_stream.fileno())
 
 
 def read_server_state(sftp):
@@ -607,6 +643,228 @@ def backup_remote_file(sftp, remote_path, scope_id, rel, stamp):
     sftp.get(remote_path, str(target))
 
 
+def is_codex_rollout(scope, rel):
+    return (
+        scope.get("id") in {"codex-sessions", "codex-archive"}
+        and rel.lower().endswith(".jsonl")
+        and Path(rel).name.lower().startswith("rollout-")
+    )
+
+
+def _codex_epoch(value, fallback):
+    if not value:
+        return int(fallback)
+    try:
+        from datetime import datetime
+        return int(datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return int(fallback)
+
+
+def _codex_clean_title(message):
+    text = str(message or "").strip()
+    marker = "## My request for Codex:"
+    if marker in text:
+        text = text.split(marker, 1)[1].strip()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return " ".join(lines)[:240]
+
+
+def _codex_first_user_message(path):
+    with open(path, "r", encoding="utf-8", errors="replace") as stream:
+        for index, line in enumerate(stream):
+            if index > 300:
+                break
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            payload = row.get("payload") if isinstance(row, dict) else None
+            if (
+                row.get("type") == "event_msg" and isinstance(payload, dict)
+                and payload.get("type") == "user_message"
+            ):
+                return str(payload.get("message") or "").strip()
+    return ""
+
+
+def fork_codex_rollout(local_path, stamp):
+    """Сохранить разошедшуюся локальную ветку как отдельную задачу Codex.
+
+    Pull делает серверную ветку основной, но никогда не уничтожает работу с
+    этого устройства. Новый UUID не даёт внутреннему индексу Codex склеить две
+    разные истории обратно в одну задачу.
+    """
+    local_path = Path(local_path)
+    new_id = str(uuid.uuid4())
+    now = time.strftime("%Y-%m-%dT%H-%M-%S")
+    fork_path = local_path.with_name(f"rollout-{now}-{new_id}.jsonl")
+    counter = 1
+    while fork_path.exists():
+        fork_path = local_path.with_name(f"rollout-{now}-{counter}-{new_id}.jsonl")
+        counter += 1
+    first_message = _codex_first_user_message(local_path)
+    base_title = _codex_clean_title(first_message) or "Сохранённая задача Codex"
+    branch_title = f"{base_title} — ветка {DEVICE_NAME} до загрузки"
+    temp_path = fork_path.with_suffix(".jsonl.noda-part")
+    with open(local_path, "r", encoding="utf-8", errors="replace") as source, open(
+        temp_path, "w", encoding="utf-8", newline="\n"
+    ) as target:
+        for line in source:
+            output = line
+            try:
+                row = json.loads(line)
+                payload = row.get("payload") if isinstance(row, dict) else None
+                if row.get("type") == "session_meta" and isinstance(payload, dict):
+                    payload["id"] = new_id
+                    if "session_id" in payload:
+                        payload["session_id"] = new_id
+                    payload["title"] = branch_title
+                    payload["noda_fork"] = {
+                        "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "device": DEVICE_NAME,
+                        "reason": "diverged-before-pull",
+                        "source": str(local_path),
+                        "backup": stamp,
+                    }
+                    output = json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
+            except Exception:
+                pass
+            target.write(output)
+    os.replace(temp_path, fork_path)
+    shutil.copystat(local_path, fork_path)
+    emit({
+        "type": "codex_fork",
+        "file": str(fork_path),
+        "title": branch_title,
+        "msg": "Локальная ветка Codex сохранена отдельной задачей",
+    })
+    return fork_path
+
+
+def _codex_session_record(path, archived):
+    meta = {}
+    context = {}
+    first_message = ""
+    with open(path, "r", encoding="utf-8", errors="replace") as stream:
+        for index, line in enumerate(stream):
+            if index > 300 or (meta and context and first_message):
+                break
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            payload = row.get("payload") if isinstance(row, dict) else None
+            if row.get("type") == "session_meta" and isinstance(payload, dict) and not meta:
+                meta = payload
+            elif row.get("type") == "turn_context" and isinstance(payload, dict) and not context:
+                context = payload
+            elif (
+                row.get("type") == "event_msg" and isinstance(payload, dict)
+                and payload.get("type") == "user_message" and not first_message
+            ):
+                first_message = str(payload.get("message") or "").strip()
+
+    info = path.stat()
+    updated = int(info.st_mtime)
+    created = _codex_epoch(meta.get("timestamp"), updated)
+    session_id = str(meta.get("id") or meta.get("session_id") or path.stem[-36:])
+    source = meta.get("source") or "vscode"
+    if not isinstance(source, str):
+        source = json.dumps(source, ensure_ascii=False, separators=(",", ":"))
+    sandbox = context.get("sandbox_policy") or {"type": "disabled"}
+    if not isinstance(sandbox, str):
+        sandbox = json.dumps(sandbox, ensure_ascii=False, separators=(",", ":"))
+    cwd = str(meta.get("cwd") or context.get("cwd") or "")
+    rollout_path = str(path.resolve())
+    if os.name == "nt":
+        if cwd and not cwd.startswith("\\\\?\\"):
+            cwd = "\\\\?\\" + cwd
+        if not rollout_path.startswith("\\\\?\\"):
+            rollout_path = "\\\\?\\" + rollout_path
+    title = str(meta.get("title") or _codex_clean_title(first_message))[:240]
+    return {
+        "id": session_id, "rollout_path": rollout_path,
+        "created_at": created, "updated_at": updated, "source": source,
+        "model_provider": str(meta.get("model_provider") or "openai"),
+        "cwd": cwd, "title": title, "sandbox_policy": sandbox,
+        "approval_mode": str(context.get("approval_policy") or "never"),
+        "tokens_used": 0, "has_user_event": 0,
+        "archived": 1 if archived else 0,
+        "archived_at": updated if archived else None,
+        "git_sha": None, "git_branch": None, "git_origin_url": None,
+        "cli_version": str(meta.get("cli_version") or ""),
+        "first_user_message": first_message,
+        "agent_nickname": meta.get("agent_nickname"), "agent_role": meta.get("agent_role"),
+        "memory_mode": "enabled", "model": context.get("model"),
+        "reasoning_effort": context.get("effort"), "agent_path": meta.get("agent_path"),
+        "created_at_ms": created * 1000, "updated_at_ms": updated * 1000,
+        "thread_source": meta.get("thread_source"), "preview": first_message[:12000],
+        "recency_at": updated, "recency_at_ms": updated * 1000,
+        "history_mode": str(meta.get("history_mode") or "legacy"),
+    }
+
+
+def repair_codex_thread_index():
+    """Зарегистрировать все скачанные и сохранённые ветки в локальном Codex."""
+    state_db = LOCAL_CODEX / "state_5.sqlite"
+    if not state_db.exists():
+        return 0
+    connection = sqlite3.connect(str(state_db), timeout=30)
+    try:
+        if not connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='threads'"
+        ).fetchone():
+            return 0
+        known = {row[0] for row in connection.execute("SELECT id FROM threads")}
+        missing = []
+        for root, archived in ((LOCAL_CODEX / "sessions", False), (LOCAL_CODEX / "archived_sessions", True)):
+            if not root.exists():
+                continue
+            for session_path in root.rglob("*.jsonl"):
+                session_id = session_path.stem[-36:]
+                if session_id not in known:
+                    record = _codex_session_record(session_path, archived)
+                    if record["id"] not in known:
+                        missing.append(record)
+                        known.add(record["id"])
+        if not missing:
+            return 0
+
+        backup_dir = LOCAL_CODEX / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        db_backup = backup_dir / ("noda-thread-index-" + time.strftime("%Y%m%d-%H%M%S") + ".sqlite")
+        backup = sqlite3.connect(str(db_backup))
+        try:
+            connection.backup(backup)
+        finally:
+            backup.close()
+
+        available = {row[1] for row in connection.execute("PRAGMA table_info(threads)")}
+        columns = [key for key in missing[0] if key in available]
+        placeholders = ",".join("?" for _ in columns)
+        statement = f"INSERT OR IGNORE INTO threads ({','.join(columns)}) VALUES ({placeholders})"
+        connection.execute("BEGIN IMMEDIATE")
+        for record in missing:
+            connection.execute(statement, [record[column] for column in columns])
+        connection.commit()
+        imported = sum(
+            1 for record in missing
+            if connection.execute("SELECT 1 FROM threads WHERE id = ?", (record["id"],)).fetchone()
+        )
+        emit({"type": "codex_index", "imported": imported,
+              "msg": f"Codex · восстановлено задач: {imported}"})
+        return imported
+    except Exception:
+        try:
+            connection.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        connection.close()
+
+
 def transfer(mode, only, dry_run=False):
     start_control_listener()
     client, sftp, scopes, started = scan_everything(mode)
@@ -646,7 +904,38 @@ def transfer(mode, only, dry_run=False):
                             size -= int(remote[0])
                     operations.append(("push", scope, rel, size))
             if mode in ("pull", "sync"):
-                operations.extend(("pull", scope, rel, scope["remoteMap"][rel][0]) for rel in downloads)
+                for rel in downloads:
+                    remote_size = int(scope["remoteMap"][rel][0])
+                    local_path = scope["local"] / Path(rel.replace("/", os.sep))
+                    if is_append_only_session(scope, rel) and local_path.exists():
+                        local_size = int(local_path.stat().st_size)
+                        remote_path = f"{scope['remote']}/{rel}"
+                        if 0 <= local_size < remote_size and remote_matches_local_prefix(
+                            sftp, local_path, remote_path, local_size
+                        ):
+                            scope.setdefault("pullAppendOffsets", {})[rel] = local_size
+                            operations.append(("pull", scope, rel, remote_size - local_size))
+                            continue
+                        if mode == "pull" and is_codex_rollout(scope, rel):
+                            scope.setdefault("forkOnPull", set()).add(rel)
+                            operations.append(("pull", scope, rel, remote_size))
+                            continue
+                        scope_conflicts.append(rel)
+                        continue
+                    operations.append(("pull", scope, rel, remote_size))
+                if mode == "pull":
+                    # Equal timestamps with different contents used to become
+                    # "пропущено". For Codex rollouts preserve the local branch
+                    # as a new task, then make the explicitly requested server
+                    # branch canonical on this device.
+                    resolved_conflicts = []
+                    for rel in list(scope_conflicts):
+                        if is_codex_rollout(scope, rel):
+                            scope.setdefault("forkOnPull", set()).add(rel)
+                            operations.append(("pull", scope, rel, int(scope["remoteMap"][rel][0])))
+                            resolved_conflicts.append(rel)
+                    if resolved_conflicts:
+                        scope_conflicts = [rel for rel in scope_conflicts if rel not in resolved_conflicts]
             conflicts.extend((scope, rel) for rel in scope_conflicts)
 
         operations.sort(key=lambda op: (project_label(project_key(op[1]["id"], op[2])).casefold(), op[2].casefold()))
@@ -748,13 +1037,23 @@ def transfer(mode, only, dry_run=False):
 
         if total == 0:
             done_state = None
+            restored_tasks = 0
+            index_errors = 0
+            if mode in ("pull", "sync"):
+                try:
+                    restored_tasks = repair_codex_thread_index()
+                except Exception as ex:
+                    index_errors = 1
+                    emit({"type": "fileerror", "file": "Codex · список задач",
+                          "error": "не удалось обновить индекс: " + str(ex)[:160]})
             if mode in ("push", "pull"):
-                record_server_state(sftp, mode, 0, 0, 0)
+                record_server_state(sftp, mode, 0, 0, index_errors)
                 write_remote_indexes(sftp, scopes)
                 done_state = read_server_state(sftp)
-            emit({"type": "done", "direction": mode, "transferred": 0, "errors": 0,
+            emit({"type": "done", "direction": mode, "transferred": 0, "errors": index_errors,
                   "bytes": 0, "skipped": len(conflicts), "msg": "Уже актуально",
                   "planned": 0, "verified": 0, "proof": scope_rows,
+                  "restoredTasks": restored_tasks,
                   "serverState": done_state or {},
                   "elapsed": int(time.time() - started)})
             return
@@ -767,7 +1066,8 @@ def transfer(mode, only, dry_run=False):
             local_path = scope["local"] / Path(rel.replace("/", os.sep))
             issue = ""
             if direction == "push" or local_path.exists():
-                issue = local_file_issue(local_path, require_exclusive=(direction == "pull"))
+                append_pull = direction == "pull" and rel in scope.get("pullAppendOffsets", {})
+                issue = local_file_issue(local_path, require_replace=(direction == "pull" and not append_pull))
             if issue:
                 blocked.append({
                     "project": project_label(project_key(scope["id"], rel)),
@@ -800,6 +1100,7 @@ def transfer(mode, only, dry_run=False):
             last_error = ""
             expected_mtime = 0
             success_size = int(size)
+            forked_local = None
 
             def progress_callback(transferred, file_total):
                 wait_for_control()
@@ -825,7 +1126,7 @@ def transfer(mode, only, dry_run=False):
             for attempt in range(4):
                 try:
                     if direction == "push":
-                        issue = local_file_issue(local_path, require_exclusive=False)
+                        issue = local_file_issue(local_path, require_replace=False)
                         if issue:
                             raise RuntimeError(issue)
                         before = local_path.stat()
@@ -878,32 +1179,44 @@ def transfer(mode, only, dry_run=False):
                         if int(sftp.stat(remote_path).st_size) != expected_size:
                             raise RuntimeError("проверка размера на сервере не пройдена")
                     else:
+                        append_offset = scope.get("pullAppendOffsets", {}).get(rel)
                         if local_path.exists():
-                            issue = local_file_issue(local_path, require_exclusive=True)
+                            issue = local_file_issue(local_path, require_replace=append_offset is None)
                             if issue:
                                 raise RuntimeError(issue)
+                        if (
+                            local_path.exists() and append_offset is None
+                            and rel in scope.get("forkOnPull", set()) and forked_local is None
+                        ):
+                            forked_local = fork_codex_rollout(local_path, stamp)
                         remote_before = sftp.stat(remote_path)
                         expected_mtime = int(remote_before.st_mtime)
                         success_size = int(remote_before.st_size)
-                        if local_path.exists():
+                        if local_path.exists() and append_offset is None:
                             backup_local_file(local_path, scope["id"], rel, stamp)
                         local_path.parent.mkdir(parents=True, exist_ok=True)
-                        tmp = str(local_path) + ".noda-part"
-                        try:
-                            os.remove(tmp)
-                        except OSError:
-                            pass
-                        sftp.get(remote_path, tmp, callback=progress_callback)
+                        if append_offset is not None:
+                            if int(local_path.stat().st_size) != int(append_offset):
+                                raise RuntimeError("активная сессия изменилась до получения продолжения")
+                            download_fixed_suffix(
+                                sftp, remote_path, local_path, int(append_offset),
+                                int(remote_before.st_size), progress_callback,
+                            )
+                        else:
+                            tmp = str(local_path) + ".noda-part"
+                            try:
+                                os.remove(tmp)
+                            except OSError:
+                                pass
+                            sftp.get(remote_path, tmp, callback=progress_callback)
+                            if os.path.getsize(tmp) != int(remote_before.st_size):
+                                try: os.remove(tmp)
+                                except OSError: pass
+                                raise RuntimeError("получен неполный размер файла")
+                            os.replace(tmp, str(local_path))
                         remote_after = sftp.stat(remote_path)
                         if (int(remote_before.st_size), int(remote_before.st_mtime)) != (int(remote_after.st_size), int(remote_after.st_mtime)):
-                            try: os.remove(tmp)
-                            except OSError: pass
                             raise RuntimeError("серверный файл изменился во время получения")
-                        if os.path.getsize(tmp) != int(remote_before.st_size):
-                            try: os.remove(tmp)
-                            except OSError: pass
-                            raise RuntimeError("получен неполный размер файла")
-                        os.replace(tmp, str(local_path))
                         try:
                             os.utime(str(local_path), (expected_mtime, expected_mtime))
                         except Exception:
@@ -946,6 +1259,8 @@ def transfer(mode, only, dry_run=False):
         verify_errors = 0
         verified_by_scope = {scope["id"]: 0 for scope in scopes}
         errors_by_scope = {scope["id"]: 0 for scope in scopes}
+        verify_batch = []
+        verify_emit_at = time.time()
         for index, (direction, scope, rel, expected_size, expected_mtime) in enumerate(successful, 1):
             wait_for_control()
             item_ok = False
@@ -965,15 +1280,36 @@ def transfer(mode, only, dry_run=False):
                 errors_by_scope[scope["id"]] += 1
                 emit({"type": "fileerror", "file": rel, "error": "проверка после передачи: " + str(ex)[:130]})
             key = project_key(scope["id"], rel)
-            emit({"type": "verify_progress", "done": index, "total": len(successful),
-                  "verified": verified, "errors": verify_errors,
-                  "scopeId": scope["id"], "scope": scope["label"],
-                  "projectKey": key, "project": project_label(key),
-                  "file": rel, "ok": item_ok,
-                  "snapshot": is_append_only_session(scope, rel),
-                  "snapshotBytes": int(expected_size)})
+            verify_batch.append({
+                "scopeId": scope["id"], "scope": scope["label"],
+                "projectKey": key, "project": project_label(key),
+                "file": rel, "ok": item_ok,
+                "snapshot": is_append_only_session(scope, rel),
+                "snapshotBytes": int(expected_size),
+            })
+            now = time.time()
+            if index == len(successful) or len(verify_batch) >= 40 or now - verify_emit_at >= 0.12:
+                latest = verify_batch[-1]
+                emit({"type": "verify_progress", "done": index, "total": len(successful),
+                      "verified": verified, "errors": verify_errors,
+                      "scopeId": latest["scopeId"], "scope": latest["scope"],
+                      "projectKey": latest["projectKey"], "project": latest["project"],
+                      "file": latest["file"], "ok": latest["ok"],
+                      "snapshot": latest["snapshot"],
+                      "snapshotBytes": latest["snapshotBytes"],
+                      "items": verify_batch})
+                verify_batch = []
+                verify_emit_at = now
 
         errors += verify_errors
+        restored_tasks = 0
+        if mode in ("pull", "sync"):
+            try:
+                restored_tasks = repair_codex_thread_index()
+            except Exception as ex:
+                errors += 1
+                emit({"type": "fileerror", "file": "Codex · список задач",
+                      "error": "не удалось обновить индекс: " + str(ex)[:160]})
         for scope_row in scope_rows:
             scope_row["verified"] = verified_by_scope.get(scope_row["id"], 0)
             scope_row["errors"] = max(0, int(scope_row["files"]) - int(scope_row["verified"]))
@@ -984,6 +1320,7 @@ def transfer(mode, only, dry_run=False):
         emit({"type": "done", "direction": mode, "transferred": verified,
               "errors": errors, "bytes": done_bytes, "skipped": len(conflicts),
               "verified": verified, "planned": total,
+              "restoredTasks": restored_tasks,
               "proof": scope_rows,
               "serverState": done_state or {},
               "elapsed": int(time.time() - started)})

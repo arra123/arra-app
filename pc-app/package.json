@@ -1,6 +1,6 @@
 {
   "name": "noda-desktop",
-  "version": "1.10.18",
+  "version": "1.10.23",
   "description": "Noda — терминал, файлы и передача проектов между ноутбуком, сервером и ПК",
   "main": "main.js",
   "author": "Noda",
@@ -67,7 +67,9 @@
       "uninstallerIcon": "icon.ico",
       "runAfterFinish": true,
       "language": "1049",
-      "installerLanguages": ["ru_RU"],
+      "installerLanguages": [
+        "ru_RU"
+      ],
       "multiLanguageInstaller": false,
       "installerHeader": "build/installerHeader.bmp",
       "installerSidebar": "build/installerSidebar.bmp",

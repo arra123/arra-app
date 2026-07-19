@@ -5,7 +5,9 @@ node_modules/
 
 # Expo
 .expo/
+.expo-*-test/
 dist/
+dist-web-test/
 web-build/
 expo-env.d.ts
 
@@ -36,6 +38,7 @@ yarn-error.*
 
 # typescript
 *.tsbuildinfo
+**/__pycache__/
 
 example
 

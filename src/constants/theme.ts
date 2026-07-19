@@ -25,19 +25,19 @@ export const Colors = {
   },
   dark: {
     // Та же холодная серо-голубая система, что и в настольном приложении.
-    text: '#F1F2F5',
-    background: '#1C1C1F',
-    backgroundElement: '#242428',
-    backgroundSelected: '#303139',
-    textSecondary: '#979BA6',
-    tint: '#7C85FF',
-    accent: '#7C85FF',
-    success: '#6F9AE8',
-    danger: '#EB5757',
-    warning: '#F2C94C',
-    glass: 'rgba(39,39,44,0.92)',
-    glassBorder: 'rgba(255,255,255,0.09)',
-    separator: 'rgba(255,255,255,0.08)',
+    text: '#ECECEC',
+    background: '#101010',
+    backgroundElement: '#1C1C1C',
+    backgroundSelected: '#2B3542',
+    textSecondary: '#9B9B9B',
+    tint: '#8F8F8F',
+    accent: '#ECECEC',
+    success: '#2FBF71',
+    danger: '#EF6464',
+    warning: '#F0B94F',
+    glass: 'rgba(28,28,28,0.96)',
+    glassBorder: 'rgba(255,255,255,0.10)',
+    separator: 'rgba(255,255,255,0.09)',
   },
 } as const;
 
@@ -93,8 +93,8 @@ export const Spacing = {
   six: 64,
 } as const;
 
-export const BottomTabInset = Platform.select({ ios: 50, android: 80, web: 64 }) ?? 0;
+export const BottomTabInset = 0;
 export const MaxContentWidth = 800;
 
 /** Пользовательская версия Noda. Меняется только вместе с нативной TestFlight-сборкой. */
-export const APP_BUILD = 76;
+export const APP_BUILD = 79;

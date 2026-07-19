@@ -22,15 +22,18 @@ const LIQUID_ICON = {
   car: '<svg viewBox="0 0 24 24"><path d="m5 16-1-3 2-5h12l2 5-1 3z"/><path d="M6 16v3M18 16v3M4 13h16M7 13h.01M17 13h.01"/></svg>',
   cloud: '<svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.8-7.9A6 6 0 0 1 17.7 9 4.5 4.5 0 0 1 18 18z"/></svg>',
   food: '<svg viewBox="0 0 24 24"><path d="M7 3v8M4 3v5a3 3 0 0 0 6 0V3M7 11v10M16 3v18M16 3c4 2 5 6 0 9"/></svg>',
+  folder: '<svg viewBox="0 0 24 24"><path d="M3 6.5h7l2 2h9v10.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  image: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m5 18 5-5 3 3 2-2 4 4"/></svg>',
+  copy: '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>',
 };
 function liquidIcon(name) { return LIQUID_ICON[name] || LIQUID_ICON.sparkle; }
 function liquidCompanyMark(className = '') {
   return `<span class="liquid-company-mark ${className}" aria-hidden="true">${liquidIcon('company')}</span>`;
 }
 const FINANCE_BRANDS = [
-  { test: /belka|белк/i, title: 'BelkaCar', merchant: 'belkacar', logo: 'https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/00/f3/3c/00f33c50-919e-25b2-58a4-2316eca1a104/ReleaseBelkacarAppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/100x100bb.jpg' },
-  { test: /city\s*drive|citydrive|ситидрайв|сити\s*драйв/i, title: 'City Drive', merchant: 'citydrive' },
-  { test: /delimobil|делимоб|дели\b/i, title: 'Делимобиль', merchant: 'delimobil' },
+  { test: /belka|белк/i, title: 'BelkaCar', merchant: 'belkacar', logo: 'assets/brands/belkacar.jpg' },
+  { test: /city\s*drive|citydrive|ситидрайв|сити\s*драйв/i, title: 'City Drive', merchant: 'citydrive', logo: 'assets/brands/citydrive.jpg' },
+  { test: /delimobil|делимоб|дели\b/i, title: 'Делимобиль', merchant: 'delimobil', logo: 'assets/brands/delimobil.jpg' },
   { test: /яндекс[.\s-]*(драйв|drive)|yandex[.\s-]*drive/i, title: 'Яндекс Драйв', merchant: 'яндекс драйв' },
   { test: /chat\s*gpt|open\s*ai|gpt(?:-|\s|\d|$)|codex/i, title: 'OpenAI', merchant: 'openai' },
   { test: /anthropic|claude|клод/i, title: 'Anthropic', merchant: 'anthropic' },
@@ -353,8 +356,8 @@ function financeTableHtml() {
   return `<div class="liquid-money-table-shell"><table class="liquid-money-table finance-week-table">
     <thead><tr><th>Кто</th><th>За что</th><th>Кому</th><th><button class="finance-date-sort" type="button" title="Изменить порядок">Когда <span>${liquidFinance.dateSort === 'desc' ? '↓' : '↑'}</span></button></th><th class="money">Сумма</th><th aria-label="Действия"></th></tr></thead>
     ${liquidFinance.groupMode === 'service'
-      ? groups.map((group) => { const expanded = liquidFinance.expandedServices.has(group.key); return `<tbody class="finance-service-group ${expanded ? 'expanded' : ''}"><tr class="finance-service-row" data-fin-service-toggle="${esc(group.key)}" tabindex="0" role="button" aria-expanded="${expanded}"><td colspan="4"><div>${group.icon}<b>${esc(group.label)}</b><small>${group.records.length}</small></div></td><td class="money"><strong>${fmt(group.total)} ₽</strong></td><td><span class="finance-service-chevron">${liquidIcon('right')}</span></td></tr>${expanded ? group.records.map(financeRecordRow).join('') : ''}</tbody>`; }).join('')
-      : groups.map((group) => `<tbody class="finance-week-group"><tr class="finance-week-row"><td colspan="4"><div><em>Неделя</em><b>${financeWeekLabel(group.start)}</b><small>${financeOperationCount(group.records.length)}</small></div></td><td class="money"><strong>${fmt(group.total)} ₽</strong></td><td></td></tr>${group.records.map(financeRecordRow).join('')}</tbody>`).join('')}
+      ? groups.map((group) => { const expanded = liquidFinance.expandedServices.has(group.key); const outstanding = group.records.filter((record) => !record.closed).reduce((sum, record) => sum + record.amount, 0); return `<tbody class="finance-service-group ${expanded ? 'expanded' : ''}"><tr class="finance-service-row" data-fin-service-toggle="${esc(group.key)}" tabindex="0" role="button" aria-expanded="${expanded}"><td colspan="4"><div>${group.icon}<b>${esc(group.label)}</b><small>${group.records.length}</small></div></td><td class="money"><strong>${fmt(outstanding)} ₽</strong></td><td><span class="finance-service-chevron">${liquidIcon('right')}</span></td></tr>${expanded ? group.records.map(financeRecordRow).join('') : ''}</tbody>`; }).join('')
+      : groups.map((group) => { const outstanding = group.records.filter((record) => !record.closed).reduce((sum, record) => sum + record.amount, 0); return `<tbody class="finance-week-group"><tr class="finance-week-row"><td colspan="4"><div><em>Неделя</em><b>${financeWeekLabel(group.start)}</b><small>${financeOperationCount(group.records.length)}</small></div></td><td class="money"><strong>${fmt(outstanding)} ₽</strong></td><td></td></tr>${group.records.map(financeRecordRow).join('')}</tbody>`; }).join('')}
     </table></div>`;
 }
 function financeLocalDateTime(value) {
@@ -478,12 +481,14 @@ function financeCategory(record) {
 }
 function renderFinanceAnalytics() {
   const body = document.getElementById('finance-body'); if (!body) return;
-  const records = financeMonthRecords(); const total = records.reduce((sum, record) => sum + record.amount, 0); const max = Math.max(1, ...financeWeekGroups(records).map((group) => group.total));
+  const monthRecords = financeMonthRecords();
+  const records = monthRecords;
+  const total = records.reduce((sum, record) => sum + record.amount, 0); const max = Math.max(1, ...financeWeekGroups(records).map((group) => group.total));
   const weeks = financeWeekGroups(records).sort((a, b) => a.start - b.start);
   const categoryMap = new Map(); records.forEach((record) => categoryMap.set(financeCategory(record), (categoryMap.get(financeCategory(record)) || 0) + record.amount));
   const categories = [...categoryMap.entries()].sort((a, b) => b[1] - a[1]);
   const recipients = FINANCE_RECIPIENTS.map((name) => ({ name, total: records.filter((record) => record.recipient === name).reduce((sum, record) => sum + record.amount, 0) })).filter((item) => item.total);
-  body.innerHTML = `${financePeriodHtml(records)}<div class="finance-analytics">
+  body.innerHTML = `${financePeriodHtml(monthRecords)}<div class="finance-analytics">
     <section class="finance-analytics-panel"><header><span>${liquidIcon('calendar')}</span><div><b>По неделям</b><small>Динамика расходов</small></div></header><div class="finance-week-bars">${weeks.length ? weeks.map((group) => `<div><label><span>${financeWeekLabel(group.start)}</span><strong>${fmt(group.total)} ₽</strong></label><i><b style="width:${Math.max(3, group.total / max * 100)}%"></b></i></div>`).join('') : '<p>Нет данных</p>'}</div></section>
     <section class="finance-analytics-panel"><header><span>${liquidIcon('chart')}</span><div><b>За что</b><small>Основные направления</small></div></header><div class="finance-category-list">${categories.length ? categories.map(([name, amount]) => `<div><span>${esc(name)}</span><b>${fmt(amount)} ₽</b><small>${total ? Math.round(amount / total * 100) : 0}%</small></div>`).join('') : '<p>Нет данных</p>'}</div></section>
     <section class="finance-recipient-summary"><b>Кому</b>${recipients.length ? recipients.map((item) => `<span><i class="${item.name === 'Даня' ? 'dani' : item.name === 'Женя' ? 'zhenya' : 'tima'}"></i>${item.name}<strong>${fmt(item.total)} ₽</strong></span>`).join('') : '<small>Нет данных</small>'}</section>
@@ -492,22 +497,35 @@ function renderFinanceAnalytics() {
 }
 function renderFinanceAdd() {
   const body = document.getElementById('finance-body'); if (!body) return;
+  const targetMeta = liquidFinance.target === 'owes_me'
+    ? { label: 'Мне должны', icon: liquidIcon('people') }
+    : liquidFinance.target === 'i_owe'
+      ? { label: 'Я должен', icon: liquidIcon('people') }
+      : { label: 'Компания', icon: liquidCompanyMark('context') };
   body.innerHTML = `<div class="liquid-conversation"><div class="liquid-feed" id="finance-feed">
       ${liquidFinance.saved ? `<div class="liquid-ai-row"><span class="liquid-ai-mark ok">${liquidIcon('check')}</span><div class="liquid-saved"><b>${esc(liquidFinance.saved.title)}</b><strong>${fmt(liquidFinance.saved.amount)} ₽</strong></div></div>` : ''}
       ${liquidFinance.userRaw ? `<div class="liquid-user-row"><div>${esc(liquidFinance.userRaw)}</div></div>` : ''}
       ${liquidFinance.parsing ? `<div class="liquid-ai-row"><span class="liquid-ai-mark">${liquidIcon('sparkle')}</span><div class="liquid-typing"><i></i><i></i><i></i></div></div>` : financeDraftHtml(liquidFinance.parsed)}
-    </div><div class="liquid-composer-wrap"><div class="liquid-finance-context" role="group" aria-label="К кому относится запись">
-      <button type="button" data-fin-target="reimbursement" class="${liquidFinance.target === 'reimbursement' ? 'active' : ''}">${liquidCompanyMark('context')}<span>Компания</span></button>
-      <button type="button" data-fin-target="owes_me" class="${liquidFinance.target === 'owes_me' ? 'active' : ''}">${liquidIcon('people')}<span>Мне должны</span></button>
-      <button type="button" data-fin-target="i_owe" class="${liquidFinance.target === 'i_owe' ? 'active' : ''}">${liquidIcon('people')}<span>Я должен</span></button>
-    </div>
-      <div class="finance-recipient-context" ${liquidFinance.target === 'reimbursement' ? '' : 'hidden'}>${financeRecipientButtons()}</div>
+    </div><div class="liquid-composer-wrap finance-composer-wrap">
+      <div class="finance-composer-context">
+        <div class="finance-target-picker"><button type="button" id="finance-target-toggle" aria-haspopup="menu" aria-expanded="false">${targetMeta.icon}<span>${targetMeta.label}</span>${liquidIcon('right')}</button><div class="finance-target-menu" id="finance-target-menu" role="menu">
+          <button type="button" data-fin-target="reimbursement" class="${liquidFinance.target === 'reimbursement' ? 'active' : ''}">${liquidCompanyMark('context')}<span>Компания</span>${liquidFinance.target === 'reimbursement' ? liquidIcon('check') : ''}</button>
+          <button type="button" data-fin-target="owes_me" class="${liquidFinance.target === 'owes_me' ? 'active' : ''}">${liquidIcon('people')}<span>Мне должны</span>${liquidFinance.target === 'owes_me' ? liquidIcon('check') : ''}</button>
+          <button type="button" data-fin-target="i_owe" class="${liquidFinance.target === 'i_owe' ? 'active' : ''}">${liquidIcon('people')}<span>Я должен</span>${liquidFinance.target === 'i_owe' ? liquidIcon('check') : ''}</button>
+        </div></div>
+        <div class="finance-recipient-context" ${liquidFinance.target === 'reimbursement' ? '' : 'hidden'}>${financeRecipientButtons()}</div>
+      </div>
       <div class="liquid-composer"><button id="finance-attach" title="Фото">${liquidIcon('clip')}</button><input id="finance-photo" type="file" accept="image/*" hidden/><textarea id="finance-input" rows="1" placeholder="Сообщение"></textarea><button id="finance-send" class="liquid-send" hidden>${liquidIcon('send')}</button><button id="finance-mic" class="liquid-mic">${liquidIcon('mic')}</button></div></div></div>`;
+  const targetPicker = document.querySelector('.finance-target-picker');
+  const targetToggle = document.getElementById('finance-target-toggle');
+  const closeTargetMenu = () => { targetPicker?.classList.remove('open'); targetToggle?.setAttribute('aria-expanded', 'false'); };
+  targetToggle?.addEventListener('click', (event) => {
+    event.stopPropagation(); const open = !targetPicker.classList.contains('open'); targetPicker.classList.toggle('open', open); targetToggle.setAttribute('aria-expanded', String(open));
+    if (open) setTimeout(() => document.addEventListener('click', closeTargetMenu, { once: true }), 0);
+  });
   document.querySelectorAll('[data-fin-target]').forEach((button) => button.onclick = () => {
     if (liquidFinance.target === button.dataset.finTarget) return;
-    liquidFinance.target = button.dataset.finTarget; liquidFinance.parsed = null;
-    document.querySelector('[data-fin-target].active')?.classList.remove('active'); button.classList.add('active');
-    const recipientContext = document.querySelector('.finance-recipient-context'); if (recipientContext) recipientContext.hidden = liquidFinance.target !== 'reimbursement';
+    liquidFinance.target = button.dataset.finTarget; liquidFinance.parsed = null; closeTargetMenu(); renderFinanceAdd();
   });
   document.querySelectorAll('[data-fin-recipient]').forEach((button) => button.onclick = () => selectFinanceRecipient(button.dataset.finRecipient));
   const input = document.getElementById('finance-input'); const send = document.getElementById('finance-send'); const mic = document.getElementById('finance-mic');
@@ -740,5 +758,46 @@ renderNotes = function renderLiquidNotes() {
   });
 };
 
-// If one of these pages was active while the override loaded, repaint it immediately.
-if (state.section === 'fin') renderFin();
+let liquidFileLimit = 120;
+function liquidFilesHtml() {
+  const allFiles = [...state.files].reverse();
+  const files = allFiles.slice(0, liquidFileLimit);
+  if (!files.length) return `<div class="liquid-files-empty">${liquidIcon('folder')}<b>Файлов пока нет</b></div>`;
+  const images = files.filter((file) => String(file.mime || '').startsWith('image'));
+  const documents = files.filter((file) => !String(file.mime || '').startsWith('image'));
+  return `${images.length ? `<section class="liquid-file-group"><header><b>Изображения</b><span>${images.length}</span></header><div class="liquid-image-grid">${images.map((file) => `<button type="button" class="liquid-image-card" data-file-image="${esc(file.path)}" title="${esc(file.name || file.path)}"><img src="${esc(fileURL(file.path))}" loading="lazy" decoding="async"/><span>${esc(file.name || 'Изображение')}</span></button>`).join('')}</div></section>` : ''}
+    ${documents.length ? `<section class="liquid-file-group"><header><b>Документы</b><span>${documents.length}</span></header><div class="liquid-file-list">${documents.map((file) => `<button type="button" class="liquid-file-row" data-file-path="${esc(file.path)}"><span>${liquidIcon('receipt')}</span><div><b>${esc(file.name || file.path)}</b><small>${esc(file.time || 'Нажмите, чтобы скопировать путь')}</small></div>${liquidIcon('copy')}</button>`).join('')}</div></section>` : ''}
+    ${allFiles.length > files.length ? `<button type="button" class="liquid-files-more" id="liquid-files-more">Показать ещё ${Math.min(120, allFiles.length - files.length)}</button>` : ''}`;
+}
+function bindLiquidFiles() {
+  app.querySelectorAll('[data-file-image]').forEach((button) => button.onclick = () => openViewer(button.dataset.fileImage));
+  app.querySelectorAll('[data-file-path]').forEach((button) => button.onclick = async () => {
+    await window.arra.copyPath(button.dataset.filePath); button.classList.add('copied'); button.querySelector('small').textContent = 'Путь скопирован';
+  });
+  document.getElementById('liquid-files-more')?.addEventListener('click', () => {
+    liquidFileLimit += 120;
+    const content = document.getElementById('liquid-files-content');
+    if (content) { content.innerHTML = liquidFilesHtml(); bindLiquidFiles(); }
+  });
+}
+renderFiles = async function renderLiquidFiles() {
+  let status;
+  try { status = await window.arra.getStatus(); } catch { status = {}; }
+  const mode = status.mode === 'file' ? 'file' : 'path';
+  liquidFileLimit = 120;
+  app.innerHTML = `<div class="liquid-page files-liquid"><header class="liquid-head liquid-files-head"><div><h1>Файлы</h1><span class="liquid-device-state ${status.phoneOnline || status.online ? 'online' : ''}" title="${status.phoneOnline || status.online ? 'Телефон в сети' : 'Телефон не в сети'}"><i></i></span></div><div class="liquid-files-actions"><code title="${esc(status.folder || '')}">${esc(status.folder || 'Папка не выбрана')}</code><button type="button" id="liquid-open-folder" title="Открыть папку">${liquidIcon('folder')}</button><button type="button" id="liquid-change-folder">Изменить</button></div></header>
+    <nav class="liquid-subtabs liquid-file-mode" aria-label="Как принимать файлы"><button type="button" data-file-mode="path" class="${mode === 'path' ? 'active' : ''}">Копировать путь</button><button type="button" data-file-mode="file" class="${mode === 'file' ? 'active' : ''}">Передавать файл</button></nav>
+    <section class="liquid-files-content" id="liquid-files-content">${liquidFilesHtml()}</section></div>`;
+  document.getElementById('liquid-open-folder').onclick = () => window.arra.openFolder();
+  document.getElementById('liquid-change-folder').onclick = async () => { await window.arra.chooseFolder(); renderFiles(); };
+  app.querySelectorAll('[data-file-mode]').forEach((button) => button.onclick = () => {
+    app.querySelector('[data-file-mode].active')?.classList.remove('active'); button.classList.add('active'); window.arra.setMode(button.dataset.fileMode);
+  });
+  bindLiquidFiles();
+};
+
+// Repaint an already active page only for an authenticated workspace. During
+// first launch app.js owns the login screen and no feature page may cover it.
+window.arra.getStatus().then((status) => {
+  if (status?.paired && status?.hasAuth && state.section === 'fin') renderFin();
+}).catch((error) => reportError('liquid.boot', error));
