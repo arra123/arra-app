@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('arra', {
   recopy: (f) => ipcRenderer.invoke('recopy', f),
   logout: () => ipcRenderer.invoke('logout'),
   winMin: () => ipcRenderer.send('win-min'),
+  winMax: () => ipcRenderer.invoke('win-max'),
   winClose: () => ipcRenderer.send('win-close'),
   onStatus: (cb) => ipcRenderer.on('status', (_e, s) => cb(s)),
   onFile: (cb) => ipcRenderer.on('file-received', (_e, f) => cb(f)),

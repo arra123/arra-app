@@ -220,7 +220,7 @@ function detectDeviceProfile() {
       "$e = Get-CimInstance Win32_SystemEnclosure -ErrorAction SilentlyContinue | Select-Object -First 1",
       "$c = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue | Select-Object -First 1",
       "[pscustomobject]@{hasBattery=($b.Count -gt 0);chassis=@($e.ChassisTypes);manufacturer=$c.Manufacturer;model=$c.Model;systemType=$c.PCSystemType;systemTypeEx=$c.PCSystemTypeEx}|ConvertTo-Json -Compress",
-    ].join('; ');
+    ].join('\n');
     const result = spawnSync('powershell.exe', psArgs(script), { encoding: 'utf8', windowsHide: true, timeout: 7000 });
     const data = JSON.parse(String(result.stdout || '').trim() || '{}');
     const chassis = (Array.isArray(data.chassis) ? data.chassis : [data.chassis]).map(Number).filter(Boolean);
@@ -731,6 +731,11 @@ function ensureCaptureWindow() {
       preload: path.join(__dirname, 'renderer', 'capture-preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // Noda is elevated so Windows permits remote input into elevated apps.
+      // Chromium's renderer sandbox exits with code 18 in that integrity
+      // context on affected Windows builds, so isolation stays at the context
+      // boundary while the OS sandbox is disabled for this local window.
+      sandbox: false,
       backgroundThrottling: false,
       partition: 'noda-capture',
     },
@@ -1750,7 +1755,12 @@ function createWindow() {
     backgroundColor: '#171717',
     title: 'Noda',
     icon: path.join(__dirname, 'icon.png'),
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
   });
   win.webContents.on('did-fail-load', (_e, code, description, validatedURL, isMainFrame) => {
     writeLog('error', 'renderer.did-fail-load', { code, description, validatedURL, isMainFrame });
@@ -2822,4 +2832,10 @@ ipcMain.on('pty-restart', (_e, { cols, rows, termId } = {}) => restartPty(termId
 ipcMain.on('pty-kill', (_e, { termId } = {}) => killPty(termId || 'L1'));
 
 ipcMain.on('win-min', () => win?.minimize());
+ipcMain.handle('win-max', () => {
+  if (!win || win.isDestroyed()) return { ok: false };
+  if (win.isMaximized()) win.unmaximize();
+  else win.maximize();
+  return { ok: true, maximized: win.isMaximized() };
+});
 ipcMain.on('win-close', () => { manualClose = true; try { ws?.close(); } catch {} app.quit(); });

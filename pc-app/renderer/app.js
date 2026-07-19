@@ -372,6 +372,7 @@ function mountActiveTerm() {
 }
 // Имя вкладки — как в VS Code: имя папки проекта, в которой открыт терминал
 const TERM_TAB_ICON = '<svg class="ticon" viewBox="0 0 24 24"><path d="M4 17l6-5-6-5M12 19h8"/></svg>';
+const TERM_CLOSE_ICON = '<svg class="tclose-icon" viewBox="0 0 16 16"><path d="m4.5 4.5 7 7m0-7-7 7"/></svg>';
 function termTabLabel(id) {
   const x = xts[id];
   const p = (x && x.cwd) || term.cwd || term.root || '';
@@ -385,11 +386,12 @@ function renderTermTabs() {
     + localTerms.map((id) => {
       const x = xts[id]; const phone = x && x.phone;
       const t = termTabLabel(id);
-      return `<button class="ttab ${id === activeLocal ? 'on' : ''} ${phone ? 'phone' : ''}" data-id="${id}" title="${esc(t.path)}">${phone ? '📱 ' : TERM_TAB_ICON}<span class="tname">${esc(t.name)}</span>${localTerms.length > 1 ? ` <span class="tclose" data-close="${id}">✕</span>` : ''}</button>`;
+      return `<button class="ttab ${id === activeLocal ? 'on' : ''} ${phone ? 'phone' : ''}" data-id="${id}" title="${esc(t.path)}">${phone ? TERM_TAB_ICON : TERM_TAB_ICON}<span class="tname">${esc(t.name)}</span>${localTerms.length > 1 ? `<span class="tclose" data-close="${id}" title="Закрыть терминал">${TERM_CLOSE_ICON}</span>` : ''}</button>`;
     }).join('') + `<button class="ttadd" id="ttadd" title="Новый терминал">＋</button>`
     + `<span class="ttag"><span class="dot on"></span>общий c телефоном</span>`;
   bar.querySelectorAll('.ttab').forEach((b) => (b.onclick = (e) => {
-    if (e.target.dataset.close) { closeLocalTerm(e.target.dataset.close); return; }
+    const closeButton = e.target.closest('[data-close]');
+    if (closeButton) { closeLocalTerm(closeButton.dataset.close); return; }
     switchLocalTerm(b.dataset.id);
   }));
   document.getElementById('ttadd').onclick = () => addTermQuick();
@@ -436,7 +438,47 @@ function closeLocalTerm(id) {
 
 // ---- titlebar ----
 document.getElementById('min').onclick = () => window.arra.winMin();
+document.getElementById('max').onclick = () => window.arra.winMax();
 document.getElementById('close').onclick = () => window.arra.winClose();
+document.querySelector('.titlebar')?.addEventListener('dblclick', (event) => {
+  if (!event.target.closest('button, nav')) window.arra.winMax();
+});
+document.getElementById('nav-back').onclick = () => goWorkspaceBack();
+document.getElementById('nav-forward').onclick = () => goWorkspaceForward();
+document.querySelectorAll('[data-window-menu]').forEach((button) => {
+  button.onclick = (event) => {
+    event.stopPropagation();
+    const rect = button.getBoundingClientRect();
+    const menu = button.dataset.windowMenu;
+    const menus = {
+      file: [
+        { label: 'Новый диалог', action: () => openAssistantThread(newAssistantThreadKey()) },
+        { label: 'Открыть рабочую папку', action: () => window.arra.openFolder() },
+        { label: 'Закрыть Noda', action: () => window.arra.winClose() },
+      ],
+      edit: [
+        { label: 'Отменить', action: () => document.execCommand('undo') },
+        { label: 'Повторить', action: () => document.execCommand('redo') },
+        { label: 'Вырезать', action: () => document.execCommand('cut') },
+        { label: 'Копировать', action: () => document.execCommand('copy') },
+        { label: 'Вставить', action: async () => { const text = await window.arra.clipRead(); if (typeof text === 'string') document.execCommand('insertText', false, text); } },
+        { label: 'Выделить всё', action: () => document.execCommand('selectAll') },
+      ],
+      view: [
+        { label: 'Показать / скрыть панель', action: () => document.getElementById('navtoggle').click() },
+        { label: 'Развернуть / восстановить', action: () => window.arra.winMax() },
+        { label: 'Терминал', action: () => navigateWorkspace('term') },
+        { label: 'Файлы', action: () => navigateWorkspace('files') },
+        { label: 'Передача', action: () => navigateWorkspace('sync') },
+      ],
+      help: [
+        { label: 'Проверить обновление', action: () => triggerUpdateCheck() },
+        { label: 'Открыть журнал', action: () => window.arra.openLogs() },
+      ],
+    };
+    showCtxMenu(rect.left, rect.bottom + 2, menus[menu] || []);
+  };
+});
 let updateUiState = '';
 let updateUiLabel = 'Проверить обновление';
 function setUpdateButton(updateState, label) {
@@ -473,7 +515,7 @@ async function triggerUpdateCheck() {
 }
 // ---- единая тёмная палитра ----
 const XTERM_THEMES = {
-  dark: { background: '#151922', foreground: '#E4E8F1', cursor: '#9DA8FF', selectionBackground: 'rgba(124,134,240,0.35)' },
+  dark: { background: '#111111', foreground: '#E2E2E2', cursor: '#D8D8D8', selectionBackground: 'rgba(255,255,255,0.18)' },
 };
 function curTheme() { return 'dark'; }
 function applyTheme() {
@@ -1230,7 +1272,7 @@ function updateRemoteDeviceUi() {
           ? 'Подключаю экран…'
           : `Экран в сети${frameInfo}${liveInfo}${remoteDesktop.engine ? ` · ${remoteDesktop.engine === 'webrtc' ? 'прямое соединение' : (remoteDesktop.engine === 'stream' ? 'резервный поток' : (remoteDesktop.engine === 'windows' ? 'Windows' : 'резервный режим'))}` : ''}`))
       : (current?.online ? 'Готов к подключению' : 'Устройство не в сети'));
-    status.className = displayError ? 'remote-status bad' : 'remote-status';
+    status.className = (displayError || (!remoteDesktop.running && !current?.online)) ? 'remote-status bad' : 'remote-status';
   }
   if (action) {
     action.textContent = remoteDesktop.running ? 'Отключиться' : 'Подключиться';
@@ -1811,10 +1853,8 @@ async function renderTerminal() {
       </div>
       <div class="ws-right">
         <div class="term-launchbar">
-          <span class="term-launch-label">Запустить</span>
-          <button class="term-preset" id="start-codex" title="Запустить Codex в YOLO mode"><i></i>Codex · YOLO mode</button>
-          <button class="term-preset claude" id="start-claude" title="Запустить Claude Code без запросов разрешений"><i></i>Claude · полный доступ</button>
-          <span class="term-preset-note">в текущей папке</span>
+          <button class="term-preset" id="start-codex" title="Запустить Codex в текущей папке">Codex</button>
+          <button class="term-preset claude" id="start-claude" title="Запустить Claude Code в текущей папке">Claude</button>
         </div>
         <div class="termtabs" id="termtabs"></div>
         <div id="xterm-host" class="xterm-host"></div>
@@ -1858,6 +1898,7 @@ const sync = {
   blockers: [], blockersChecked: false, blockersBusy: false, closeResult: null,
   remote: {}, showAll: false,
   lastRequest: null, networkRetries: 0,
+  pullArmedUntil: 0,
   authority: (() => { try { return JSON.parse(localStorage.getItem('noda-sync-authority') || 'null'); } catch { return null; } })(),
   authorityRequested: false,
 };
@@ -2047,14 +2088,14 @@ function renderSyncAuthority() {
   if (!box) return;
   const authority = sync.authority;
   if (!authority?.at) {
-    box.innerHTML = `<span>Актуальная версия</span><b>ещё не определена</b>`;
+    box.innerHTML = `<span>Последняя отправка</span><b>ещё не было</b>`;
     box.className = 'sync-authority unknown';
     return;
   }
   const role = authority.role === 'laptop' ? 'Ноутбук' : authority.role === 'pc' ? 'ПК' : (authority.device || 'Устройство');
   let when = '';
   try { when = new Date(authority.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch {}
-  box.innerHTML = `<span>Актуальная версия</span><b>${esc(role)}</b><time>${esc(when)}</time>`;
+  box.innerHTML = `<span>Последняя отправка на сервер</span><b>${esc(role)}</b><time>${esc(when)}</time>`;
   box.className = `sync-authority ${authority.errors ? 'bad' : 'ok'}`;
 }
 
@@ -2443,6 +2484,26 @@ function startSyncStatus() {
 }
 function runSyncOp(mode, only, automaticRetry = false) {
   if (sync.busy) { toast('Перенос', 'Идёт операция, подожди', 'info'); return; }
+  if (mode === 'pull' && !automaticRetry) {
+    const project = only ? sync.projects.find((item) => item.name === only) : null;
+    const localNewer = project
+      ? Number(project.upload || 0) + Number(project.conflicts || 0)
+      : Number(sync.info?.upload || 0) + Number(sync.info?.conflicts || 0);
+    if (localNewer > 0 && Date.now() > sync.pullArmedUntil) {
+      sync.pullArmedUntil = Date.now() + 15000;
+      sync.phase = 'На этом устройстве есть более свежая работа';
+      sync.detail = `${fileCount(localNewer)} ещё не отправлено. Нажми «Забрать всё равно» ещё раз — локальная ветка Codex будет сохранена отдельно.`;
+      sync.step = 'idle';
+      toast('Защита от потери', sync.detail, 'warn', 9000);
+      renderSyncV2Body();
+      updateSyncStage();
+      setTimeout(() => {
+        if (Date.now() > sync.pullArmedUntil && state.section === 'sync' && !sync.busy) renderSyncV2Body();
+      }, 15200);
+      return;
+    }
+    sync.pullArmedUntil = 0;
+  }
   if (!automaticRetry) sync.networkRetries = 0;
   sync.lastRequest = { mode, only: only || null };
   sync.step = 'scan'; sync.stepError = ''; sync.errors = [];
@@ -2876,13 +2937,15 @@ function renderSyncV2Body() {
   const uploadBytes = sync.projects.reduce((n, p) => n + Number(p.uploadBytes || 0), 0);
   const downloadBytes = sync.projects.reduce((n, p) => n + Number(p.downloadBytes || 0), 0);
   const hasCheck = !!sync.info;
+  const localNewer = Number(i.upload || 0) + Number(i.conflicts || 0);
+  const pullArmed = localNewer > 0 && Date.now() <= sync.pullArmedUntil;
   const actions = document.getElementById('sync-actions');
   if (actions) actions.innerHTML = `
     <button class="sync-transfer-choice" id="sync-push-all">
       <b>Отправить</b>${hasCheck ? `<span>${fmt(i.upload || 0)} · ${fmtB(uploadBytes)}</span>` : ''}
     </button>
-    <button class="sync-transfer-choice secondary" id="sync-pull-all">
-      <b>Забрать</b>${hasCheck ? `<span>${fmt(i.download || 0)} · ${fmtB(downloadBytes)}</span>` : ''}
+    <button class="sync-transfer-choice secondary ${pullArmed ? 'danger-armed' : ''}" id="sync-pull-all">
+      <b>${pullArmed ? 'Забрать всё равно' : 'Забрать'}</b>${hasCheck ? `<span>${fmt(i.download || 0)} · ${fmtB(downloadBytes)}</span>` : ''}
     </button>`;
   document.getElementById('sync-push-all').onclick = () => runSyncOp('push', null);
   document.getElementById('sync-pull-all').onclick = () => runSyncOp('pull', null);

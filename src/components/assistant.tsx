@@ -1,4 +1,4 @@
-import { router, useFocusEffect } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -8,8 +8,10 @@ import {
   Image,
   Keyboard,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -43,6 +45,7 @@ export function Assistant({ embedded = false }: { embedded?: boolean }) {
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
   const listRef = useRef<FlatList<Msg>>(null);
   const inputRef = useRef<TextInput>(null);
   const localMode = workspace.selectedModel.startsWith('local:');
@@ -92,13 +95,7 @@ export function Assistant({ embedded = false }: { embedded?: boolean }) {
     haptic.tap();
     try {
       if (localMode) {
-        const project = workspace.activeProject;
-        const system = project ? [{
-          role: 'system' as const,
-          content: `Ты работаешь в Noda над проектом «${project.label || project.name}». Локальный путь: ${project.path || 'не указан'}. Не утверждай, что прочитал файлы, если их содержимое не передано в диалог.`,
-        }] : [];
         const answer = await workspace.localChat([
-          ...system,
           ...outgoing.map((message) => ({ role: message.role, content: message.content })),
         ]);
         const assistantMessage: Msg = { id: `local-assistant-${Date.now()}`, role: 'assistant', content: answer.content };
@@ -106,18 +103,17 @@ export function Assistant({ embedded = false }: { embedded?: boolean }) {
         await api('/ai/messages/sync', {
           body: {
             threadKey: workspace.threadKey,
-            project: project ? { name: project.label || project.name, path: project.path, device: project.deviceName } : null,
+            project: null,
             messages: [userMessage, assistantMessage],
           },
         }).catch(() => {});
       } else {
-        const project = workspace.activeProject;
         await api('/ai/assistant', {
           body: {
             text,
             image: forcedAttachment?.data,
             threadKey: workspace.threadKey,
-            project: project ? { name: project.label || project.name, path: project.path, device: project.deviceName } : null,
+            project: null,
           },
         });
         await load();
@@ -165,19 +161,6 @@ export function Assistant({ embedded = false }: { embedded?: boolean }) {
     Alert.alert('Модель', workspace.devices.find((device) => device.id === workspace.activeDeviceId)?.name || '', actions);
   }
 
-  function clearHistory() {
-    if (!messages.length) return;
-    Alert.alert('Очистить диалог?', '', [
-      { text: 'Отмена', style: 'cancel' },
-      {
-        text: 'Очистить', style: 'destructive', onPress: async () => {
-          if (!localMode) await api(`/ai/messages?thread=${encodeURIComponent(workspace.threadKey)}`, { method: 'DELETE' });
-          setMessages([]);
-        },
-      },
-    ]);
-  }
-
   const renderMessage = ({ item }: { item: Msg }) => (
     <View style={item.role === 'user' ? styles.userRow : styles.aiRow}>
       {item.role === 'assistant' && (
@@ -192,8 +175,9 @@ export function Assistant({ embedded = false }: { embedded?: boolean }) {
 
   const empty = (
     <View style={styles.empty}>
-      <ThemedText style={styles.emptyTitle}>{workspace.activeProject ? `Что делаем в ${workspace.activeProject.label || workspace.activeProject.name}?` : 'С чего начнём?'}</ThemedText>
-      {workspace.activeProject && <ThemedText style={styles.emptyCopy}>Задача сохранится внутри проекта</ThemedText>}
+      <View style={styles.emptyMark}><SymbolView name="sparkles" tintColor={theme.text} size={18} /></View>
+      <ThemedText style={styles.emptyTitle}>Чем помочь?</ThemedText>
+      <ThemedText style={styles.emptyCopy}>Фото, голос и сообщения останутся в этом диалоге.</ThemedText>
     </View>
   );
 
@@ -201,12 +185,12 @@ export function Assistant({ embedded = false }: { embedded?: boolean }) {
     <ThemedView style={styles.container}>
       <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={Platform.OS === 'ios' ? 48 : 0}>
         <View style={styles.contextBar}>
-          <View style={styles.projectContext}>
-            <View style={[styles.contextDot, workspace.activeProject && styles.contextDotActive]} />
-            <ThemedText type="smallBold" numberOfLines={1} style={{ flex: 1 }}>
-              {workspace.activeProject?.label || workspace.activeProject?.name || 'Новая задача'}
-            </ThemedText>
-          </View>
+          <Pressable onPress={() => setHistoryOpen(true)} style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}>
+            <SymbolView name="sidebar.left" tintColor={theme.textSecondary} size={17} />
+          </Pressable>
+          <ThemedText type="smallBold" numberOfLines={1} style={styles.chatTitle}>
+            {workspace.threads.find((thread) => thread.thread_key === workspace.threadKey)?.title || 'Новый диалог'}
+          </ThemedText>
           <Pressable onPress={pickModel} style={({ pressed }) => [styles.modelButton, pressed && styles.pressed]}>
             <View style={[styles.modelDot, localMode && styles.modelDotLocal]} />
             <ThemedText style={styles.modelLabel} numberOfLines={1}>
@@ -214,15 +198,32 @@ export function Assistant({ embedded = false }: { embedded?: boolean }) {
             </ThemedText>
             <SymbolView name="chevron.down" tintColor={theme.textSecondary} size={10} />
           </Pressable>
-          {!!workspace.activeProject?.path && (
-            <Pressable accessibilityLabel="Открыть проект на компьютере" onPress={() => router.push('/pc')} hitSlop={8} style={styles.clearButton}>
-              <SymbolView name="terminal" tintColor={theme.textSecondary} size={15} />
-            </Pressable>
-          )}
-          <Pressable onPress={clearHistory} hitSlop={8} style={styles.clearButton}>
-            <SymbolView name="trash" tintColor={theme.textSecondary} size={15} />
+          <Pressable accessibilityLabel="Новый диалог" onPress={workspace.newTask} hitSlop={8} style={styles.clearButton}>
+            <SymbolView name="square.and.pencil" tintColor={theme.textSecondary} size={16} />
           </Pressable>
         </View>
+
+        <Modal visible={historyOpen} transparent animationType="fade" onRequestClose={() => setHistoryOpen(false)}>
+          <Pressable style={styles.historyBackdrop} onPress={() => setHistoryOpen(false)}>
+            <Pressable style={[styles.historySheet, { paddingTop: Math.max(insets.top, 12), paddingBottom: Math.max(insets.bottom, 12) }]} onPress={(event) => event.stopPropagation()}>
+              <View style={styles.historyHead}>
+                <ThemedText style={styles.historyTitle}>Диалоги</ThemedText>
+                <Pressable onPress={() => setHistoryOpen(false)} style={styles.historyClose}><SymbolView name="xmark" tintColor={theme.textSecondary} size={15} /></Pressable>
+              </View>
+              <Pressable onPress={() => { workspace.newTask(); setHistoryOpen(false); }} style={styles.historyNew}>
+                <SymbolView name="square.and.pencil" tintColor={theme.text} size={16} /><ThemedText type="smallBold">Новый диалог</ThemedText>
+              </Pressable>
+              <ScrollView style={styles.historyList} showsVerticalScrollIndicator={false}>
+                {workspace.threads.filter((thread) => !thread.project_name && !thread.thread_key.startsWith('project:')).map((thread) => (
+                  <Pressable key={thread.thread_key} onPress={() => { workspace.openThread(thread); setHistoryOpen(false); }} style={[styles.historyRow, thread.thread_key === workspace.threadKey && styles.historyRowActive]}>
+                    <ThemedText numberOfLines={1} style={styles.historyRowText}>{thread.title || 'Новый диалог'}</ThemedText>
+                  </Pressable>
+                ))}
+                {!workspace.threads.some((thread) => !thread.project_name && !thread.thread_key.startsWith('project:')) && <ThemedText style={styles.historyEmpty}>История появится после первого сообщения.</ThemedText>}
+              </ScrollView>
+            </Pressable>
+          </Pressable>
+        </Modal>
 
         <FlatList
           ref={listRef}
@@ -266,7 +267,7 @@ export function Assistant({ embedded = false }: { embedded?: boolean }) {
               <TouchableOpacity accessibilityLabel="Добавить" onPress={pickImage} style={styles.iconButton}>
                 <SymbolView name="plus" tintColor={theme.textSecondary} size={20} />
               </TouchableOpacity>
-              <ThemedText style={styles.composerContext} numberOfLines={1}>{workspace.activeProject?.label || 'Общий чат'}</ThemedText>
+              <ThemedText style={styles.composerContext} numberOfLines={1}>{localMode ? workspace.selectedModel.slice(6) : 'Noda Cloud'}</ThemedText>
               {(input.trim() || attachment) ? (
                 <TouchableOpacity accessibilityLabel="Отправить" disabled={sending} onPress={() => send(input)} style={styles.sendButton}>
                   <SymbolView name="arrow.up" tintColor="#171717" size={19} />
@@ -285,18 +286,29 @@ export function Assistant({ embedded = false }: { embedded?: boolean }) {
 const styles = StyleSheet.create({
   container: { flex: 1, minHeight: 0, overflow: 'hidden' },
   contextBar: { minHeight: 45, paddingHorizontal: 13, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.07)', flexDirection: 'row', alignItems: 'center', gap: 7 },
-  projectContext: { minWidth: 0, flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  contextDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#666' },
-  contextDotActive: { backgroundColor: '#ECECEC' },
+  historyButton: { width: 31, height: 31, alignItems: 'center', justifyContent: 'center', borderRadius: 8 },
+  chatTitle: { minWidth: 0, flex: 1, fontSize: 12 },
   modelButton: { maxWidth: 152, height: 31, paddingHorizontal: 9, borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.11)', backgroundColor: '#292929', flexDirection: 'row', alignItems: 'center', gap: 6 },
   modelDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#A0A0A0' },
   modelDotLocal: { backgroundColor: '#2FBF71' },
   modelLabel: { minWidth: 0, flexShrink: 1, color: '#BDBDBD', fontSize: 10 },
   clearButton: { width: 31, height: 31, alignItems: 'center', justifyContent: 'center' },
+  historyBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.58)' },
+  historySheet: { width: '82%', maxWidth: 350, height: '100%', paddingHorizontal: 10, backgroundColor: '#1B2129', borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: 'rgba(255,255,255,0.09)' },
+  historyHead: { height: 48, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center' },
+  historyTitle: { flex: 1, fontSize: 15, fontWeight: '600' },
+  historyClose: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  historyNew: { height: 40, paddingHorizontal: 11, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.1)', backgroundColor: '#252B33', flexDirection: 'row', alignItems: 'center', gap: 10 },
+  historyList: { flex: 1, marginTop: 10 },
+  historyRow: { minHeight: 40, paddingHorizontal: 11, borderRadius: 8, justifyContent: 'center' },
+  historyRowActive: { backgroundColor: 'rgba(255,255,255,0.08)' },
+  historyRowText: { color: '#C8CDD2', fontSize: 13 },
+  historyEmpty: { paddingHorizontal: 11, paddingVertical: 18, color: '#737B84', fontSize: 12, lineHeight: 17 },
   feed: { flex: 1, minHeight: 0 },
   feedContent: { paddingHorizontal: Spacing.three, paddingTop: 18, paddingBottom: 18, gap: 22 },
   feedEmpty: { flexGrow: 1 },
   empty: { flex: 1, alignItems: 'flex-start', justifyContent: 'center', paddingHorizontal: 7, paddingVertical: 92 },
+  emptyMark: { width: 36, height: 36, marginBottom: 17, borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.12)', backgroundColor: '#222', alignItems: 'center', justifyContent: 'center' },
   emptyTitle: { fontSize: 23, lineHeight: 29, fontWeight: '600', letterSpacing: -0.7 },
   emptyCopy: { marginTop: 7, color: '#818181', fontSize: 13 },
   pressed: { opacity: 0.68 },

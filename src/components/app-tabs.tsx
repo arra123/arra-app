@@ -88,7 +88,7 @@ function WorkspaceDrawer() {
         headerTitleAlign: 'center',
         headerTitleStyle: { fontSize: 15, fontWeight: '600' },
         headerRight: () => null,
-        drawerStyle: { width: 310, backgroundColor: '#1c242f' },
+        drawerStyle: { width: 292, backgroundColor: '#1B2129' },
         overlayColor: 'rgba(0,0,0,0.58)',
         sceneStyle: { backgroundColor: colors.background },
         swipeEdgeWidth: 72,
@@ -112,7 +112,7 @@ export default function AppTabs() {
 }
 
 const styles = StyleSheet.create({
-  drawer: { flex: 1, backgroundColor: '#1c242f', paddingHorizontal: 10 },
+  drawer: { flex: 1, backgroundColor: '#1B2129', paddingHorizontal: 9 },
   brandRow: { height: 46, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 10 },
   brandMark: { width: 23, height: 23, borderRadius: 6 },
   brandName: { fontSize: 16, fontWeight: '700', letterSpacing: -0.3 },
@@ -124,7 +124,7 @@ const styles = StyleSheet.create({
   drawerScrollContent: { paddingBottom: 14 },
   routeList: { gap: 2 },
   toolsMore: { gap: 2, paddingLeft: 12 },
-  drawerRow: { minHeight: 40, paddingHorizontal: 11, borderRadius: 9, flexDirection: 'row', alignItems: 'center', gap: 11 },
+  drawerRow: { minHeight: 38, paddingHorizontal: 10, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 10 },
   drawerRowActive: { backgroundColor: 'rgba(255,255,255,0.08)' },
   pressed: { opacity: 0.68 },
   mutedText: { color: '#b3b3b3' },
@@ -142,7 +142,7 @@ const styles = StyleSheet.create({
   drawerBottom: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#2c2c2c', paddingTop: 7 },
   deviceSingle: { minHeight: 40, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 9 },
   deviceDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#666' },
-  deviceDotOnline: { backgroundColor: '#2fbf71' },
+  deviceDotOnline: { backgroundColor: '#A8ADB3' },
   deviceState: { color: '#6e6e6e', fontSize: 10 },
   devicePills: { gap: 6, paddingVertical: 6 },
   devicePill: { maxWidth: 145, height: 31, paddingHorizontal: 9, borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#222' },

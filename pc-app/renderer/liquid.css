@@ -142,6 +142,124 @@ body:not(.term-mode) main:has(.notes-liquid){overflow:hidden;padding:0;}
 .liquid-files-actions{margin-left:auto;display:flex;align-items:center;gap:7px}.liquid-files-actions code{max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#777f8c;font:11px/1.2 ui-monospace,Consolas,monospace}.liquid-files-actions button{height:34px;padding:0 12px;border:1px solid rgba(255,255,255,.075);border-radius:11px;background:rgba(255,255,255,.045);color:#b8bec8;font:650 11px/1 inherit;cursor:pointer}.liquid-files-actions button:hover{background:rgba(255,255,255,.075);color:#fff}.liquid-files-actions button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8}.liquid-files-actions #liquid-open-folder{width:34px;padding:0;display:grid;place-items:center}
 .liquid-file-mode{align-self:flex-start;margin:14px 18px 0;padding:3px;border:1px solid rgba(255,255,255,.075);border-radius:12px;background:rgba(255,255,255,.035)}.liquid-file-mode button{height:30px;padding:0 13px;border:0;border-radius:9px;background:transparent;color:#858d9a;font:670 11px/1 inherit;cursor:pointer}.liquid-file-mode button.active{background:#303640;color:#f4f5f7;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
 .liquid-files-content{flex:1;min-height:0;overflow:auto;padding:24px 18px 34px}.liquid-files-empty{height:100%;display:grid;place-content:center;justify-items:center;gap:12px;color:#747c88}.liquid-files-empty svg{width:34px;height:34px;fill:none;stroke:currentColor;stroke-width:1.5}.liquid-files-empty b{font-size:12px;font-weight:600}.liquid-file-group{max-width:1100px;margin:0 auto 26px}.liquid-file-group>header{display:flex;align-items:center;gap:8px;height:34px;color:#a9b0ba}.liquid-file-group>header b{font-size:12px}.liquid-file-group>header span{min-width:21px;height:19px;padding:0 6px;display:grid;place-items:center;border-radius:10px;background:rgba(255,255,255,.055);color:#737b88;font-size:10px}
+
+/* Dense desktop surfaces: calm neutral hierarchy, no glass-pill clutter. */
+.finance-liquid .liquid-head { min-height: 66px; padding: 0 24px; background: #111; border-bottom-color: #292929; }
+.finance-liquid .liquid-head h1 { font-size: 22px; font-weight: 600; letter-spacing: -.025em; }
+.finance-main-tabs.liquid-tabs {
+  align-self: stretch;
+  min-width: 260px;
+  margin-left: auto;
+  padding: 0;
+  display: flex;
+  align-items: stretch;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.finance-main-tabs.liquid-tabs::before {
+  top: auto;
+  bottom: 0;
+  left: 0;
+  width: 33.333%;
+  height: 2px;
+  border-radius: 2px;
+  background: #d6d6d6;
+  box-shadow: none;
+}
+.finance-main-tabs.liquid-tabs button { flex: 1; padding: 0 15px; border-radius: 0; color: #8b8d8f; font-size: 12.5px; font-weight: 500; }
+.finance-main-tabs.liquid-tabs button:hover { color: #d1d1d1; background: rgba(255,255,255,.025); }
+.finance-main-tabs.liquid-tabs button.active { color: #f1f1f1; }
+.finance-list-toolbar {
+  height: 78px;
+  padding: 10px 22px;
+  gap: 14px;
+  background: #181818;
+  border-bottom-color: #2b2b2b;
+}
+.finance-month-picker { gap: 4px; }
+.finance-month-picker > button,
+.finance-month-toggle,
+.finance-view-switch { border-color: #343434 !important; background: #202020 !important; box-shadow: none !important; }
+.finance-month-picker > button:hover,
+.finance-month-toggle:hover { background: #292929 !important; }
+.finance-month-menu { border-color: #3a3a3a; background: #242424; box-shadow: 0 16px 38px rgba(0,0,0,.38); }
+.finance-period-total { margin-left: auto; padding: 0; border: 0; background: transparent; text-align: right; }
+.finance-period-total small { color: #858789; }
+.finance-period-total strong { color: #f1f1f1; font-size: 19px; }
+.liquid-money-table-shell { background: #111; }
+.liquid-money-table { border-collapse: collapse; }
+.liquid-money-table thead th { height: 38px; background: #181818; color: #8f9193; border-bottom: 1px solid #2b2b2b; font-size: 10.5px; font-weight: 550; letter-spacing: .025em; }
+.liquid-money-table td { border-bottom-color: #242424; }
+.finance-week-row td,
+.finance-service-row td { background: #1b1b1b !important; border-top: 1px solid #303030; border-bottom: 1px solid #303030; }
+.finance-week-row em { color: #777; font-style: normal; font-size: 9px; font-weight: 550; text-transform: uppercase; letter-spacing: .07em; }
+.finance-source-mark.company { background: #262626; box-shadow: inset 0 0 0 1px #363636; }
+.finance-recipient-badge { border-color: #3a3a3a !important; background: #232323 !important; color: #dedede !important; }
+.finance-record:hover td { background: #191919; }
+
+.finance-composer-wrap { max-width: 780px; }
+.finance-composer-context { min-height: 36px; margin: 0 4px 7px; display: flex; align-items: center; gap: 8px; }
+.finance-target-picker { position: relative; z-index: 8; }
+#finance-target-toggle {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #353535;
+  border-radius: 8px;
+  background: #202020;
+  color: #d7d7d7;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font: 500 12px/1 inherit;
+  cursor: pointer;
+}
+#finance-target-toggle:hover { background: #292929; }
+#finance-target-toggle > svg:last-child { width: 13px; height: 13px; margin-left: 2px; transform: rotate(90deg); transition: transform .15s ease; }
+.finance-target-picker.open #finance-target-toggle > svg:last-child { transform: rotate(-90deg); }
+.finance-target-picker svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.finance-target-menu {
+  position: absolute;
+  left: 0;
+  bottom: 38px;
+  width: 190px;
+  padding: 5px;
+  display: none;
+  border: 1px solid #3a3a3a;
+  border-radius: 10px;
+  background: #242424;
+  box-shadow: 0 14px 36px rgba(0,0,0,.42);
+}
+.finance-target-picker.open .finance-target-menu { display: grid; }
+.finance-target-menu button { height: 36px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; color: #d4d4d4; display: grid; grid-template-columns: 22px 1fr 16px; align-items: center; gap: 7px; text-align: left; cursor: pointer; }
+.finance-target-menu button:hover,
+.finance-target-menu button.active { background: #343434; color: #fff; }
+.finance-target-menu button > svg:last-child { width: 14px; height: 14px; }
+.finance-target-menu .liquid-company-mark.context,
+#finance-target-toggle .liquid-company-mark.context { width: 20px; height: 20px; margin: 0; border-radius: 6px; }
+.finance-recipient-context { margin-left: 0; }
+.finance-recipient-switch { padding: 2px; border-color: #333; border-radius: 8px; background: #202020; }
+.finance-recipient-switch button { height: 26px; padding: 0 10px; border-radius: 6px; font-size: 11px; }
+
+.finance-analytics { min-height: calc(100% - 78px); padding: 0; display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, .6fr); grid-template-rows: auto auto; align-content: start; gap: 0; background: #111; }
+.finance-analytics-panel { padding: 22px; border: 0; border-right: 1px solid #292929; border-bottom: 1px solid #292929; border-radius: 0; background: #111; }
+.finance-analytics-panel:nth-child(2) { border-right: 0; }
+.finance-analytics-panel > header > span { border-radius: 8px; background: #242424; color: #c2c2c2; }
+.finance-week-bars i { background: #292929; }
+.finance-week-bars i b { background: #a8abad; }
+.finance-category-list > div { min-height: 42px; border-bottom-color: #292929; }
+.finance-recipient-summary { grid-column: 1/-1; border: 0; border-radius: 0; background: #181818; }
+.finance-view-switch button.active { background: #343434 !important; color: #f1f1f1 !important; box-shadow: none !important; }
+.liquid-files-more { width: min(420px, 100%); height: 40px; margin: 4px auto 24px; display: block; border: 1px solid #343434; border-radius: 9px; background: #202020; color: #d3d3d3; font: 500 12px/1 inherit; cursor: pointer; }
+.liquid-files-more:hover { background: #292929; }
+.notes-liquid #liquid-note-list::before { background: #303233; box-shadow: none; }
+.notes-liquid .liquid-note-row > span { background: #a9abad; }
+.notes-liquid .liquid-note-row.active > span { box-shadow: none; }
+.notes-liquid .liquid-primary { background: #f0f0f0; color: #171717; box-shadow: none; }
+.notes-liquid .liquid-primary:hover { background: #fff; }
+.notes-liquid .note-version::before { background: #363839; box-shadow: none; }
 .liquid-image-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:10px}.liquid-image-card{min-width:0;overflow:hidden;padding:0;border:1px solid rgba(255,255,255,.065);border-radius:14px;background:rgba(255,255,255,.025);color:#cdd1d8;text-align:left;cursor:pointer;transition:border-color .15s ease,background .15s ease,transform .15s ease}.liquid-image-card:hover{transform:translateY(-1px);border-color:rgba(135,147,241,.26);background:rgba(255,255,255,.045)}.liquid-image-card img{display:block;width:100%;aspect-ratio:16/10;object-fit:cover;background:#171a20}.liquid-image-card span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:9px 10px;font-size:11px}
 .liquid-file-list{overflow:hidden;border:1px solid rgba(255,255,255,.065);border-radius:15px;background:rgba(255,255,255,.022)}.liquid-file-row{width:100%;height:58px;display:grid;grid-template-columns:34px minmax(0,1fr) 22px;gap:11px;align-items:center;padding:0 14px;border:0;border-bottom:1px solid rgba(255,255,255,.052);background:transparent;color:#a9b0bb;text-align:left;cursor:pointer}.liquid-file-row:last-child{border-bottom:0}.liquid-file-row:hover{background:rgba(255,255,255,.04)}.liquid-file-row>span{width:32px;height:32px;display:grid;place-items:center;border-radius:10px;background:rgba(113,126,225,.1);color:#a6afff}.liquid-file-row svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8}.liquid-file-row>div{min-width:0;display:grid;gap:3px}.liquid-file-row b,.liquid-file-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.liquid-file-row b{color:#dce0e6;font-size:12px}.liquid-file-row small{color:#737b88;font-size:10px}.liquid-file-row>svg{color:#6f7784}.liquid-file-row.copied>svg{color:#5dd28c}.liquid-file-row.copied small{color:#65c98d}
 
