@@ -33,6 +33,12 @@ const DOMAINS: Record<string, string> = {
   'литрес': 'litres.ru', 'кинопоиск': 'kinopoisk.ru', 'okko': 'okko.tv', 'иви': 'ivi.ru',
   'steam': 'steampowered.com', 'ozon банк': 'ozon.ru',
 };
+const DIRECT_LOGOS: { test: RegExp; uri: string }[] = [
+  {
+    test: /belka|белка/i,
+    uri: 'https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/00/f3/3c/00f33c50-919e-25b2-58a4-2316eca1a104/ReleaseBelkacarAppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/100x100bb.jpg',
+  },
+];
 
 const APP_ICONS = [
   { test: /belka|белк/i, source: require('../../assets/brands/belkacar.jpg') },
@@ -60,6 +66,7 @@ export function MerchantLogo({ merchant, size = 40 }: { merchant: string; size?:
   const [failed, setFailed] = useState(false);
   const bundled = APP_ICONS.find((entry) => entry.test.test(merchant));
   const domain = domainFor(merchant);
+  const directLogo = DIRECT_LOGOS.find((entry) => entry.test.test(merchant))?.uri;
   const radius = size / 2; // круглые иконки, как в банках
 
   if (bundled) {
@@ -72,11 +79,11 @@ export function MerchantLogo({ merchant, size = 40 }: { merchant: string; size?:
 
   // Unavatar ищет актуальный знак по домену сразу у нескольких провайдеров.
   // При отсутствии изображения показываем нейтральную иконку компании.
-  if (domain && !failed) {
+  if ((directLogo || domain) && !failed) {
     return (
       <View style={[styles.tile, { width: size, height: size, borderRadius: radius, backgroundColor: '#fff' }]}>
         <Image
-          source={{ uri: `https://unavatar.io/domain/${encodeURIComponent(domain)}?fallback=false&size=128` }}
+          source={{ uri: directLogo || `https://unavatar.io/domain/${encodeURIComponent(domain!)}?fallback=false&size=128` }}
           style={{ width: size * 0.86, height: size * 0.86 }}
           contentFit="contain"
           onError={() => setFailed(true)}

@@ -1,12 +1,7 @@
 import { one, query } from '../db.js';
+import { normalizeRecipient } from '../recipients.js';
 
 const DEBT_COLS = 'id, counterparty, amount, currency, direction, recipient, note, settled, settled_at, due_date, occurred_at, created_at';
-const recipient = (value) => {
-  const name = String(value || '').trim();
-  if (/^дан(?:я|и|иил|ил)?$/i.test(name)) return 'Дани';
-  if (/^(женя|евгений)$/i.test(name)) return 'Женя';
-  return 'Тима';
-};
 
 export default async function debtRoutes(app) {
   // Список долгов. По умолчанию активные (обратная совместимость со старым приложением).
@@ -38,7 +33,7 @@ export default async function debtRoutes(app) {
         Math.abs(Number(b.amount)),
         b.currency || 'RUB',
         b.direction === 'i_owe' ? 'i_owe' : 'owes_me',
-        recipient(b.recipient),
+        normalizeRecipient(b.recipient),
         b.note || null,
         b.due_date || null,
         b.occurred_at || null,
@@ -78,7 +73,7 @@ export default async function debtRoutes(app) {
         b.counterparty ?? null,
         b.amount != null ? Math.abs(Number(b.amount)) : null,
         b.direction === 'i_owe' || b.direction === 'owes_me' ? b.direction : null,
-        b.recipient == null ? null : recipient(b.recipient),
+        b.recipient == null ? null : normalizeRecipient(b.recipient),
         b.note ?? null,
         b.due_date === undefined ? null : (b.due_date || ''),
         settled,

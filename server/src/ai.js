@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { normalizeRecipient } from './recipients.js';
 
 const CATEGORIES = [
   'Продукты', 'Кафе и рестораны', 'Транспорт', 'Такси', 'Жильё', 'Связь и интернет',
@@ -134,13 +135,13 @@ const REIMBURSEMENT_PROMPT = `Ты разбираешь голосовые и т
 - merchant: магазин, сервис или заведение, если названо;
 - location: адрес, город или место, если названо отдельно;
 - company: кто должен компенсировать, по умолчанию "Компания";
-- recipient: кому компания должна вернуть деньги — только "Тима", "Дани" или "Женя". Явно названное имя важнее выбранного по умолчанию;
+- recipient: кому должны вернуть деньги — только "Тима", "Даня" или "Женя". Явно названное имя важнее выбранного по умолчанию;
 - occurred_at: дата и время расхода ISO 8601, если можно определить;
 - due_date: срок возврата YYYY-MM-DD, если назван;
 - note: остальные важные подробности.
 
 Поля для debt:
-- amount, counterparty, direction ("owes_me" или "i_owe"), occurred_at, due_date, note.
+- amount, counterparty, direction ("owes_me" или "i_owe"), recipient ("Тима", "Даня" или "Женя"), occurred_at, due_date, note.
 
 Не выдумывай неизвестные данные. Если пользователь говорит просто «компенсация 500 рублей за такси»,
 это reimbursement: amount=500, purpose="Такси", company="Компания".`;
@@ -159,14 +160,7 @@ export async function parseReimbursementInput({ text, image, preferredKind = 're
     image ? config.ai.visionModel : config.ai.chatModel,
   );
   const kind = parsed.kind === 'debt' ? 'debt' : 'reimbursement';
-  const parsedRecipient = String(parsed.recipient || '').trim();
-  const recipient = /дан(?:я|и|иил|ил)?/i.test(parsedRecipient)
-    ? 'Дани'
-    : /жен|евген/i.test(parsedRecipient)
-      ? 'Женя'
-      : /тим/i.test(parsedRecipient)
-        ? 'Тима'
-        : (['Дани', 'Женя'].includes(preferredRecipient) ? preferredRecipient : 'Тима');
+  const recipient = normalizeRecipient(parsed.recipient, normalizeRecipient(preferredRecipient));
   return {
     kind,
     amount: Math.abs(Number(parsed.amount) || 0) || null,
@@ -174,7 +168,7 @@ export async function parseReimbursementInput({ text, image, preferredKind = 're
     merchant: parsed.merchant || null,
     location: parsed.location || null,
     company: parsed.company || (kind === 'reimbursement' ? 'Компания' : null),
-    recipient: kind === 'reimbursement' ? recipient : null,
+    recipient,
     counterparty: parsed.counterparty || null,
     direction: parsed.direction === 'i_owe' ? 'i_owe' : 'owes_me',
     occurred_at: parsed.occurred_at || null,

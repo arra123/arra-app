@@ -1,10 +1,11 @@
 import { useFocusEffect } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -20,9 +21,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import ProfileScreen from '@/app/profile';
 import { DebtsModal, type Debt } from '@/components/debts-modal';
 import { MerchantLogo } from '@/components/merchant-logo';
-import { SlidingSegment } from '@/components/sliding-segment';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { VoiceRecorder } from '@/components/voice-recorder';
@@ -32,7 +33,7 @@ import { api } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
 
 type ReimbursementStatus = 'pending' | 'submitted' | 'reimbursed' | 'rejected';
-type Recipient = 'Тима' | 'Дани' | 'Женя';
+type Recipient = 'Тима' | 'Даня' | 'Женя';
 type Reimbursement = {
   id: string;
   amount: string;
@@ -73,28 +74,37 @@ const STATUS: Record<ReimbursementStatus, { label: string; color: string }> = {
   rejected: { label: 'Отклонено', color: '#EB6A6A' },
 };
 const fmt = (value: number) => Math.round(value).toLocaleString('ru-RU');
+const COMPANY_ICON = require('../../assets/images/company-reimbursement-2d-256.png');
 const RECIPIENT_KEY = 'noda-finance-recipient';
+const RECIPIENTS: Recipient[] = ['Тима', 'Даня', 'Женя'];
+const normalizeRecipient = (value?: string | null): Recipient => {
+  const text = String(value || '').toLowerCase();
+  if (text.includes('жен')) return 'Женя';
+  if (text.includes('дан')) return 'Даня';
+  return 'Тима';
+};
+const recipientForApi = (value: Recipient) => value === 'Даня' ? 'Дани' : value;
 const dateInput = (value?: string | null) => value ? value.slice(0, 10) : '';
 const dateLabel = (value?: string | null) => value
-  ? new Date(value).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' })
+  ? new Date(value).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
   : 'дата не указана';
-const timeLabel = (value?: string | null) => value
-  ? new Date(value).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-  : '';
-
-function weekRange(value: string) {
-  const date = new Date(value);
-  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
-  const end = new Date(start);
-  end.setDate(start.getDate() + 6);
-  const key = start.toISOString().slice(0, 10);
-  const sameMonth = start.getMonth() === end.getMonth();
-  const label = sameMonth
-    ? `${start.getDate()}–${end.getDate()} ${end.toLocaleDateString('ru-RU', { month: 'long' })}`
-    : `${start.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} – ${end.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}`;
-  return { key, label };
-}
+const monthKey = (value?: string | null) => {
+  const date = value ? new Date(value) : new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+};
+const monthTitle = (key: string) => {
+  const [year, month] = key.split('-').map(Number);
+  return new Date(year, month - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+};
+const moveMonth = (key: string, step: number) => {
+  const [year, month] = key.split('-').map(Number);
+  return monthKey(new Date(year, month - 1 + step, 1).toISOString());
+};
+type FinanceRecord = {
+  key: string; type: 'reimbursement' | 'debt'; id: string; amount: number; title: string;
+  merchant: string; recipient: Recipient; occurredAt: string; closed: boolean; direction: 'owes_me' | 'i_owe';
+  source: Reimbursement | Debt;
+};
 
 export default function MoneyScreen() {
   const theme = useTheme();
@@ -106,7 +116,10 @@ export default function MoneyScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showDebts, setShowDebts] = useState(false);
-  const [listMonth, setListMonth] = useState(() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1); });
+  const [editingDebtId, setEditingDebtId] = useState<string | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState(() => monthKey());
+  const [groupBy, setGroupBy] = useState<'week' | 'day'>('week');
+  const [showSettings, setShowSettings] = useState(false);
   const [editing, setEditing] = useState<Reimbursement | null>(null);
   const [draftReady, setDraftReady] = useState(false);
   const [lastSaved, setLastSaved] = useState<SavedEntry | null>(null);
@@ -155,7 +168,7 @@ export default function MoneyScreen() {
 
   useEffect(() => {
     SecureStore.getItemAsync(RECIPIENT_KEY).then((value) => {
-      if (value === 'Тима' || value === 'Дани' || value === 'Женя') setRecipient(value);
+      if (value) setRecipient(normalizeRecipient(value));
     }).catch(() => {});
   }, []);
 
@@ -191,32 +204,54 @@ export default function MoneyScreen() {
     setRefreshing(false);
   }
 
-  const activeItems = items.filter((item) => !['reimbursed', 'rejected'].includes(item.status));
-  const visibleItems = items
-    .filter((item) => showClosed === ['reimbursed', 'rejected'].includes(item.status))
-    .sort((a, b) => new Date(b.occurred_at || b.updated_at).getTime() - new Date(a.occurred_at || a.updated_at).getTime());
-  const monthItems = visibleItems.filter((item) => {
-    const date = new Date(item.occurred_at || item.updated_at);
-    return date.getFullYear() === listMonth.getFullYear() && date.getMonth() === listMonth.getMonth();
+  const financeRecords: FinanceRecord[] = [
+    ...items.map((item) => ({
+      key: `r-${item.id}`, type: 'reimbursement' as const, id: item.id, amount: Number(item.amount),
+      title: item.purpose, merchant: item.merchant || item.purpose, recipient: normalizeRecipient(item.recipient),
+      occurredAt: item.occurred_at, closed: ['reimbursed', 'rejected'].includes(item.status),
+      direction: 'owes_me' as const, source: item,
+    })),
+    ...debts.map((debt) => ({
+      key: `d-${debt.id}`, type: 'debt' as const, id: debt.id, amount: Number(debt.amount),
+      title: debt.note?.trim() || debt.counterparty, merchant: debt.note?.trim() || debt.counterparty,
+      recipient: normalizeRecipient(debt.recipient), occurredAt: debt.occurred_at || '', closed: debt.settled,
+      direction: debt.direction, source: debt,
+    })),
+  ];
+  const activeOwedRecords = financeRecords.filter((record) => {
+    if (record.closed || record.direction !== 'owes_me') return false;
+    return record.type === 'reimbursement' || /^(компания|company)$/i.test(String((record.source as Debt).counterparty || '').trim());
   });
-  const weeklyItems = useMemo(() => {
-    const groups = new Map<string, { key: string; label: string; items: Reimbursement[]; total: number }>();
-    for (const item of monthItems) {
-      const week = weekRange(item.occurred_at || item.updated_at);
-      const group = groups.get(week.key) || { ...week, items: [], total: 0 };
-      group.items.push(item);
-      group.total += Number(item.amount);
-      groups.set(week.key, group);
-    }
-    return [...groups.values()].sort((a, b) => b.key.localeCompare(a.key));
-  }, [monthItems]);
+  const activeItems = items.filter((item) => !['reimbursed', 'rejected'].includes(item.status));
   const activeDebts = debts.filter((debt) => !debt.settled);
-  const toReturn = activeItems.reduce((sum, item) => sum + Number(item.amount), 0);
-  const timaReturn = activeItems.filter((item) => (item.recipient || 'Тима') === 'Тима').reduce((sum, item) => sum + Number(item.amount), 0);
-  const daniReturn = activeItems.filter((item) => item.recipient === 'Дани').reduce((sum, item) => sum + Number(item.amount), 0);
-  const zhenyaReturn = activeItems.filter((item) => item.recipient === 'Женя').reduce((sum, item) => sum + Number(item.amount), 0);
-  const owedToMe = activeDebts.filter((d) => d.direction === 'owes_me').reduce((sum, d) => sum + Number(d.amount), 0);
-  const iOwe = activeDebts.filter((d) => d.direction === 'i_owe').reduce((sum, d) => sum + Number(d.amount), 0);
+  const outstanding = activeOwedRecords.reduce((sum, record) => sum + record.amount, 0);
+  const recipientTotals = RECIPIENTS.map((name) => ({ name, total: activeOwedRecords.filter((record) => record.recipient === name).reduce((sum, record) => sum + record.amount, 0) }));
+  const iOwe = activeDebts.filter((debt) => debt.direction === 'i_owe').reduce((sum, debt) => sum + Number(debt.amount), 0);
+  const visibleRecords = financeRecords
+    .filter((record) => (record.type === 'reimbursement' || /^(компания|company)$/i.test(String((record.source as Debt).counterparty || '').trim())) && record.direction === 'owes_me' && record.closed === showClosed && monthKey(record.occurredAt) === selectedMonth)
+    .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
+  const groupedRecords = visibleRecords.reduce<{ key: string; label: string; records: FinanceRecord[]; total: number }[]>((groups, record) => {
+    const date = new Date(record.occurredAt);
+    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    if (groupBy === 'week') {
+      const mondayOffset = (start.getDay() + 6) % 7;
+      start.setDate(start.getDate() - mondayOffset);
+    }
+    const key = start.toISOString().slice(0, 10);
+    let group = groups.find((entry) => entry.key === key);
+    if (!group) {
+      const end = new Date(start);
+      if (groupBy === 'week') end.setDate(end.getDate() + 6);
+      const label = groupBy === 'week'
+        ? `${start.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — ${end.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}`
+        : start.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+      group = { key, label, records: [], total: 0 };
+      groups.push(group);
+    }
+    group.records.push(record);
+    group.total += record.amount;
+    return groups;
+  }, []);
 
   function resetDraft(nextKind: EntryKind = kind) {
     setKind(nextKind);
@@ -248,7 +283,6 @@ export default function MoneyScreen() {
     setMerchant(parsed.merchant || '');
     setLocation(parsed.location || '');
     setCompany(parsed.company || 'Компания');
-    if (parsed.recipient === 'Тима' || parsed.recipient === 'Дани' || parsed.recipient === 'Женя') chooseRecipient(parsed.recipient);
     setCounterparty(parsed.counterparty || '');
     if (parsed.occurred_at) setOccurred(dateInput(parsed.occurred_at));
     setDue(dateInput(parsed.due_date));
@@ -273,7 +307,7 @@ export default function MoneyScreen() {
           text: cleaned || undefined,
           image,
           preferredKind: kind === 'reimbursement' ? 'reimbursement' : 'debt',
-          preferredRecipient: recipient,
+          preferredRecipient: recipientForApi(recipient),
         },
       });
       applyParsed(response.parsed, cleaned, nextSource);
@@ -344,14 +378,14 @@ export default function MoneyScreen() {
             amount: numericAmount,
             purpose: purpose.trim(), merchant: merchant.trim() || null, location: location.trim() || null,
             company: company.trim() || 'Компания', occurred_at: occurred || null, due_date: due || null,
-            recipient, note: note.trim() || null, source, raw_input: raw.trim() || null,
+            recipient: recipientForApi(recipient), note: note.trim() || null, source, raw_input: raw.trim() || null,
           },
         });
       } else {
         await api('/debts', {
           body: {
             amount: numericAmount, counterparty: counterparty.trim(), direction: kind,
-            occurred_at: occurred || null, due_date: due || null, note: note.trim() || null,
+            occurred_at: occurred || null, due_date: due || null, note: note.trim() || null, recipient: recipientForApi(recipient),
           },
         });
       }
@@ -373,15 +407,47 @@ export default function MoneyScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <View style={[styles.topArea, { paddingTop: 10, backgroundColor: theme.background }]}>
-        <SlidingSegment
-          value={section}
-          onChange={switchSection}
-          options={[
-            { value: 'add', label: 'Записать' },
-            { value: 'overview', label: 'Список', count: activeItems.length },
-          ]}
-        />
+      <View style={[styles.topArea, { paddingTop: insets.top + 10, backgroundColor: theme.background }]}>
+        <View style={styles.header}>
+          <ThemedText style={styles.title}>Возвраты</ThemedText>
+          <View style={styles.headerActions}>
+            <TouchableOpacity onPress={() => setShowSettings(true)} style={[styles.roundButton, { backgroundColor: theme.backgroundElement }]}>
+              <SymbolView name="gearshape.fill" tintColor={theme.text} size={18} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={[styles.sectionTabs, { backgroundColor: theme.backgroundSelected, borderColor: theme.separator }]}>
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: section === 'add' }}
+            onPress={() => switchSection('add')}
+            style={({ pressed }) => [
+              styles.sectionTab,
+              section === 'add' && { backgroundColor: theme.tint },
+              pressed && { opacity: 0.78 },
+            ]}>
+            <SymbolView name="waveform" tintColor={section === 'add' ? '#FFFFFF' : theme.textSecondary} size={16} />
+            <ThemedText type="smallBold" style={{ color: section === 'add' ? '#FFFFFF' : theme.textSecondary }}>Записать</ThemedText>
+          </Pressable>
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: section === 'overview' }}
+            onPress={() => switchSection('overview')}
+            style={({ pressed }) => [
+              styles.sectionTab,
+              section === 'overview' && { backgroundColor: theme.tint },
+              pressed && { opacity: 0.78 },
+            ]}>
+            <SymbolView name="list.bullet" tintColor={section === 'overview' ? '#FFFFFF' : theme.textSecondary} size={16} />
+            <ThemedText type="smallBold" style={{ color: section === 'overview' ? '#FFFFFF' : theme.textSecondary }}>Список</ThemedText>
+            {!!activeItems.length && (
+              <View style={[styles.sectionCount, { backgroundColor: section === 'overview' ? 'rgba(255,255,255,0.18)' : theme.backgroundElement }]}>
+                <ThemedText type="smallBold" style={{ color: section === 'overview' ? '#FFFFFF' : theme.textSecondary }}>{activeItems.length}</ThemedText>
+              </View>
+            )}
+          </Pressable>
+        </View>
       </View>
 
       {section === 'overview' ? (
@@ -391,73 +457,108 @@ export default function MoneyScreen() {
           showsVerticalScrollIndicator={false}
           keyboardDismissMode="interactive"
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={theme.tint} />}>
-            <View style={[styles.summary, { borderColor: theme.separator }]}>
-              <View style={styles.summaryMain}>
-                <View style={[styles.summaryIcon, { backgroundColor: theme.backgroundSelected }]}><SymbolView name="building.2" tintColor={theme.tint} size={20} /></View>
-                <View style={{ flex: 1 }}><ThemedText type="small" themeColor="textSecondary">Осталось вернуть</ThemedText><ThemedText style={styles.summaryValue}>{fmt(toReturn)} ₽</ThemedText></View>
-                <ThemedText type="small" themeColor="textSecondary">{activeItems.length}</ThemedText>
+            <View style={[styles.hero, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
+              <View style={styles.heroTop}>
+                <View style={styles.heroIcon}><Image source={COMPANY_ICON} style={styles.companyIcon} resizeMode="contain" /></View>
+                <View style={{ flex: 1 }}>
+                  <ThemedText type="small" themeColor="textSecondary">Остаток</ThemedText>
+                  <ThemedText type="smallBold" style={{ color: theme.tint }}>{activeOwedRecords.length} активных</ThemedText>
+                </View>
               </View>
-              <View style={styles.recipientLine}>
-                <ThemedText type="small" themeColor="textSecondary">Тима <ThemedText type="smallBold">{fmt(timaReturn)} ₽</ThemedText></ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">Даня <ThemedText type="smallBold">{fmt(daniReturn)} ₽</ThemedText></ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">Женя <ThemedText type="smallBold">{fmt(zhenyaReturn)} ₽</ThemedText></ThemedText>
+              <ThemedText style={[styles.heroValue, { color: theme.text }]}>{fmt(outstanding)} ₽</ThemedText>
+              <View style={styles.heroRecipients}>
+                {recipientTotals.map(({ name, total }) => (
+                  <View key={name} style={[styles.recipientTotal, { backgroundColor: theme.backgroundSelected }]}>
+                    <ThemedText type="small" themeColor="textSecondary">{name}</ThemedText>
+                    <ThemedText type="smallBold">{fmt(total)} ₽</ThemedText>
+                  </View>
+                ))}
               </View>
-              <TouchableOpacity onPress={() => setShowDebts(true)} style={[styles.debtLine, { borderTopColor: theme.separator }]}>
+            </View>
+
+            <View style={styles.statsRow}>
+              <MoneyStat label="Компания" value={outstanding} color={theme.success} sign="+" />
+              <MoneyStat label="Я должен" value={iOwe} color={theme.warning} sign="−" />
+              <TouchableOpacity onPress={() => setShowDebts(true)} style={[styles.allDebts, { backgroundColor: theme.backgroundElement }]}>
+                <SymbolView name="chevron.right" tintColor={theme.textSecondary} size={17} />
                 <ThemedText type="small" themeColor="textSecondary">Долги</ThemedText>
-                <ThemedText type="smallBold" style={{ color: theme.success }}>Мне +{fmt(owedToMe)} ₽</ThemedText>
-                <ThemedText type="smallBold" style={{ color: theme.warning }}>Я −{fmt(iOwe)} ₽</ThemedText>
-                <SymbolView name="chevron.right" tintColor={theme.textSecondary} size={13} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={[styles.periodBar, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
+              <TouchableOpacity onPress={() => setSelectedMonth(moveMonth(selectedMonth, -1))} style={styles.periodArrow}>
+                <SymbolView name="chevron.left" tintColor={theme.textSecondary} size={16} />
+              </TouchableOpacity>
+              <View style={{ flex: 1, alignItems: 'center' }}>
+                <ThemedText type="smallBold" style={{ textTransform: 'capitalize' }}>{monthTitle(selectedMonth)}</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">{visibleRecords.length} записей · {fmt(visibleRecords.reduce((sum, record) => sum + record.amount, 0))} ₽</ThemedText>
+              </View>
+              <TouchableOpacity onPress={() => setSelectedMonth(moveMonth(selectedMonth, 1))} style={styles.periodArrow}>
+                <SymbolView name="chevron.right" tintColor={theme.textSecondary} size={16} />
               </TouchableOpacity>
             </View>
 
             <View style={styles.listHeader}>
-              <SlidingSegment
-                compact
-                value={showClosed ? 'closed' : 'active'}
-                onChange={(value) => setShowClosed(value === 'closed')}
-                style={styles.statusSegment}
-                options={[
-                  { value: 'active', label: 'Активные' },
-                  { value: 'closed', label: 'Закрытые' },
-                ]}
-              />
-            </View>
-
-            <View style={[styles.periodBar, { borderColor: theme.separator }]}>
-              <TouchableOpacity accessibilityLabel="Предыдущий месяц" onPress={() => setListMonth(new Date(listMonth.getFullYear(), listMonth.getMonth() - 1, 1))} style={styles.periodButton}><SymbolView name="chevron.left" tintColor={theme.textSecondary} size={14} /></TouchableOpacity>
-              <ThemedText type="smallBold" style={styles.periodLabel}>{listMonth.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}</ThemedText>
-              <TouchableOpacity accessibilityLabel="Следующий месяц" onPress={() => setListMonth(new Date(listMonth.getFullYear(), listMonth.getMonth() + 1, 1))} style={styles.periodButton}><SymbolView name="chevron.right" tintColor={theme.textSecondary} size={14} /></TouchableOpacity>
+              <View style={[styles.smallSegment, { backgroundColor: theme.backgroundSelected, borderColor: theme.separator }]}>
+                <Pressable onPress={() => setShowClosed(false)} style={[styles.smallSegmentButton, !showClosed && { backgroundColor: theme.tint }]}>
+                  <ThemedText type="smallBold" style={{ color: !showClosed ? '#FFFFFF' : theme.textSecondary }}>Остаток</ThemedText>
+                </Pressable>
+                <Pressable onPress={() => setShowClosed(true)} style={[styles.smallSegmentButton, showClosed && { backgroundColor: theme.tint }]}>
+                  <ThemedText type="smallBold" style={{ color: showClosed ? '#FFFFFF' : theme.textSecondary }}>Возвращено</ThemedText>
+                </Pressable>
+              </View>
+              <View style={[styles.smallSegment, { backgroundColor: theme.backgroundSelected, borderColor: theme.separator }]}>
+                <Pressable onPress={() => setGroupBy('week')} style={[styles.smallSegmentButton, groupBy === 'week' && { backgroundColor: theme.backgroundElement }]}><ThemedText type="smallBold" themeColor={groupBy === 'week' ? 'text' : 'textSecondary'}>Недели</ThemedText></Pressable>
+                <Pressable onPress={() => setGroupBy('day')} style={[styles.smallSegmentButton, groupBy === 'day' && { backgroundColor: theme.backgroundElement }]}><ThemedText type="smallBold" themeColor={groupBy === 'day' ? 'text' : 'textSecondary'}>Дни</ThemedText></Pressable>
+              </View>
             </View>
 
             {loading ? (
               <ActivityIndicator color={theme.tint} style={{ marginTop: Spacing.four }} />
-            ) : monthItems.length === 0 ? (
+            ) : visibleRecords.length === 0 ? (
               <View style={[styles.empty, { borderColor: theme.separator }]}>
                 <SymbolView name="tray.fill" tintColor={theme.textSecondary} size={28} />
-                <ThemedText type="smallBold">{showClosed ? 'Закрытых компенсаций нет' : 'Нечего возвращать'}</ThemedText>
+                <ThemedText type="smallBold">{showClosed ? 'В этом месяце возвратов нет' : 'В этом месяце остатка нет'}</ThemedText>
               </View>
             ) : (
-              <View style={styles.weekList}>
-                {weeklyItems.map((week) => <View key={week.key} style={styles.weekGroup}>
-                  <View style={[styles.weekHeader, { borderBottomColor: theme.separator }]}><View><ThemedText type="smallBold">{week.label}</ThemedText><ThemedText type="small" themeColor="textSecondary">{week.items.length} записей</ThemedText></View><ThemedText type="smallBold">{fmt(week.total)} ₽</ThemedText></View>
-                  <View style={styles.list}>{week.items.map((item, index) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    activeOpacity={0.72}
-                    onPress={() => setEditing(item)}
-                    style={[styles.item, { backgroundColor: theme.backgroundElement }, index < visibleItems.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.separator }]}>
-                    {item.merchant
-                      ? <MerchantLogo merchant={item.merchant} size={40} />
-                      : <View style={[styles.itemIcon, { backgroundColor: theme.backgroundSelected }]}><SymbolView name="building.2" tintColor={theme.tint} size={17} /></View>}
-                    <View style={{ flex: 1, gap: 3 }}>
-                      <ThemedText type="smallBold" numberOfLines={1}>{item.purpose}</ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                        {[item.merchant, item.recipient === 'Дани' ? 'Даня' : (item.recipient || 'Тима'), `${dateLabel(item.occurred_at)} · ${timeLabel(item.occurred_at)}`].filter(Boolean).join(' · ')}
-                      </ThemedText>
+              <View style={styles.list}>
+                {groupedRecords.map((group) => (
+                  <View key={group.key} style={styles.financeGroup}>
+                    <View style={styles.financeGroupHeader}>
+                      <ThemedText type="smallBold" style={{ textTransform: 'capitalize' }}>{group.label}</ThemedText>
+                      <ThemedText type="smallBold" themeColor="textSecondary">{fmt(group.total)} ₽</ThemedText>
                     </View>
-                    <ThemedText style={styles.itemAmount}>{fmt(Number(item.amount))} ₽</ThemedText>
-                  </TouchableOpacity>
-                ))}</View></View>)}
+                    <View style={[styles.financeGroupBody, { backgroundColor: theme.backgroundElement }]}>
+                      {group.records.map((record, index) => (
+                        <TouchableOpacity
+                          key={record.key}
+                          activeOpacity={0.75}
+                          onPress={() => record.type === 'reimbursement' ? setEditing(record.source as Reimbursement) : (setEditingDebtId(record.id), setShowDebts(true))}
+                          style={[styles.item, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.separator }]}>
+                          <MerchantLogo merchant={record.merchant} size={40} />
+                          <View style={{ flex: 1, gap: 3 }}>
+                            <ThemedText type="smallBold" numberOfLines={1}>{record.title}</ThemedText>
+                            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{dateLabel(record.occurredAt)} · {record.recipient}</ThemedText>
+                          </View>
+                          <View style={{ alignItems: 'flex-end', gap: 5 }}>
+                            <ThemedText style={styles.itemAmount}>{fmt(record.amount)} ₽</ThemedText>
+                            <TouchableOpacity
+                              accessibilityLabel={record.closed ? 'Вернуть в остаток' : 'Отметить возвращённым'}
+                              onPress={async (event) => {
+                                event.stopPropagation();
+                                if (record.type === 'reimbursement') await api(`/reimbursements/${record.id}`, { method: 'PATCH', body: { status: record.closed ? 'pending' : 'reimbursed' } });
+                                else await api(`/debts/${record.id}`, { method: 'PATCH', body: { settled: !record.closed } });
+                                await load();
+                              }}
+                              style={[styles.checkButton, { borderColor: record.closed ? theme.tint : theme.separator, backgroundColor: record.closed ? `${theme.tint}22` : 'transparent' }]}>
+                              <SymbolView name="checkmark" tintColor={record.closed ? theme.tint : theme.textSecondary} size={14} />
+                            </TouchableOpacity>
+                          </View>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                ))}
               </View>
             )}
         </ScrollView>
@@ -518,7 +619,7 @@ export default function MoneyScreen() {
                     <View style={styles.formCardHeader}>
                       <View style={[styles.formIcon, kind !== 'reimbursement' && { backgroundColor: `${theme.tint}1F` }]}>
                         {kind === 'reimbursement'
-                          ? <SymbolView name="building.2" tintColor={theme.tint} size={19} />
+                          ? <Image source={COMPANY_ICON} style={styles.companyIcon} resizeMode="contain" />
                           : <SymbolView name="person.2.fill" tintColor={theme.tint} size={18} />}
                       </View>
                       <ThemedText type="smallBold" style={{ flex: 1 }}>
@@ -600,8 +701,12 @@ export default function MoneyScreen() {
                   <VoiceRecorder
                     disabled={parsing || saving}
                     onTranscript={(text) => {
-                      resetDraft('reimbursement');
-                      return parseInput(text, 'voice');
+                      if (draftReady) resetDraft(kind);
+                      setLastSaved(null);
+                      setParseError('');
+                      setSource('voice');
+                      setRaw(text);
+                      requestAnimationFrame(() => inputRef.current?.focus());
                     }}
                   />
                 )}
@@ -610,9 +715,28 @@ export default function MoneyScreen() {
           </View>
         )}
 
-      <DebtsModal visible={showDebts} onClose={() => setShowDebts(false)} onChanged={load} />
+      <DebtsModal visible={showDebts} initialDebtId={editingDebtId} onClose={() => { setShowDebts(false); setEditingDebtId(null); }} onChanged={load} />
       {!!editing && <ReimbursementEditor key={editing.id} item={editing} onClose={() => setEditing(null)} onChanged={async () => { setEditing(null); await load(); }} />}
+      <Modal visible={showSettings} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowSettings(false)}>
+        <ThemedView style={{ flex: 1 }}>
+          <View style={styles.modalHeader}>
+            <ThemedText style={styles.modalTitle}>Настройки</ThemedText>
+            <TouchableOpacity onPress={() => setShowSettings(false)}><SymbolView name="xmark.circle.fill" tintColor={theme.textSecondary} size={28} /></TouchableOpacity>
+          </View>
+          <ProfileScreen embedded />
+        </ThemedView>
+      </Modal>
     </ThemedView>
+  );
+}
+
+function MoneyStat({ label, value, color, sign }: { label: string; value: number; color: string; sign: string }) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.moneyStat, { backgroundColor: theme.backgroundElement }]}>
+      <ThemedText type="small" themeColor="textSecondary">{label}</ThemedText>
+      <ThemedText type="smallBold" style={{ color }}>{sign}{fmt(value)} ₽</ThemedText>
+    </View>
   );
 }
 
@@ -621,18 +745,25 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function RecipientSwitch({ value, onChange, compact = false }: { value: Recipient; onChange: (value: Recipient) => void; compact?: boolean }) {
+  const theme = useTheme();
+  const progress = useRef(new Animated.Value(Math.max(0, RECIPIENTS.indexOf(value)))).current;
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    Animated.spring(progress, { toValue: Math.max(0, RECIPIENTS.indexOf(value)), damping: 20, stiffness: 260, mass: 0.7, useNativeDriver: true }).start();
+  }, [progress, value]);
+  const segment = Math.max(0, (width - 6) / RECIPIENTS.length);
   return (
-    <SlidingSegment
-      compact
-      value={value}
-      onChange={onChange}
-      style={compact ? styles.recipientSwitchCompact : undefined}
-      options={[
-        { value: 'Тима', label: 'Тима' },
-        { value: 'Дани', label: 'Даня' },
-        { value: 'Женя', label: 'Женя' },
-      ]}
-    />
+    <View
+      accessibilityRole="tablist"
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+      style={[styles.recipientSwitch, compact && styles.recipientSwitchCompact, { backgroundColor: theme.backgroundSelected, borderColor: theme.separator }]}>
+      {width > 0 && <Animated.View style={[styles.recipientIndicator, { width: segment, backgroundColor: theme.tint, transform: [{ translateX: progress.interpolate({ inputRange: [0, 1, 2], outputRange: [0, segment, segment * 2] }) }] }]} />}
+      {RECIPIENTS.map((name) => (
+        <Pressable key={name} accessibilityRole="tab" accessibilityState={{ selected: value === name }} onPress={() => onChange(name)} style={({ pressed }) => [styles.recipientButton, pressed && { opacity: 0.72 }]}>
+          <ThemedText type="smallBold" style={{ color: value === name ? '#FFFFFF' : theme.textSecondary }}>{name}</ThemedText>
+        </Pressable>
+      ))}
+    </View>
   );
 }
 
@@ -643,7 +774,7 @@ function ReimbursementEditor({ item, onClose, onChanged }: { item: Reimbursement
   const [merchant, setMerchant] = useState(item.merchant || '');
   const [location, setLocation] = useState(item.location || '');
   const [company, setCompany] = useState(item.company || 'Компания');
-  const [recipient, setRecipient] = useState<Recipient>(item.recipient || 'Тима');
+  const [recipient, setRecipient] = useState<Recipient>(normalizeRecipient(item.recipient));
   const [occurred, setOccurred] = useState(dateInput(item.occurred_at));
   const [due, setDue] = useState(dateInput(item.due_date));
   const [note, setNote] = useState(item.note || '');
@@ -655,7 +786,7 @@ function ReimbursementEditor({ item, onClose, onChanged }: { item: Reimbursement
     setSaving(true);
     try {
       await api(`/reimbursements/${item.id}`, { method: 'PATCH', body: {
-        amount: Number(amount.replace(',', '.')), purpose, merchant, location, company, recipient,
+        amount: Number(amount.replace(',', '.')), purpose, merchant, location, company, recipient: recipientForApi(recipient),
         occurred_at: occurred || null, due_date: due || null, note, status,
       } });
       haptic.success(); onChanged();
@@ -716,27 +847,35 @@ const styles = StyleSheet.create({
   title: { fontSize: 34, lineHeight: 39, fontWeight: '800', letterSpacing: -1.1 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   roundButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  sectionTabs: { minHeight: 48, padding: 4, borderRadius: Radius.md, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', gap: 4 },
+  sectionTab: { flex: 1, minHeight: 40, paddingHorizontal: 12, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
+  sectionCount: { minWidth: 23, height: 23, paddingHorizontal: 6, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginLeft: 2 },
   body: { flex: 1 },
-  overviewContent: { flexGrow: 1, paddingHorizontal: Spacing.three, paddingTop: Spacing.two, gap: 12 },
-  summary: { overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, borderRadius: 16 },
-  summaryMain: { minHeight: 76, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 11 },
-  summaryIcon: { width: 38, height: 38, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  summaryValue: { marginTop: 2, fontSize: 24, lineHeight: 28, fontWeight: '700', letterSpacing: -0.7, fontVariant: ['tabular-nums'] },
-  recipientLine: { minHeight: 37, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  debtLine: { minHeight: 42, paddingHorizontal: 14, borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 11 },
-  listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end' },
-  statusSegment: { width: 184 },
-  periodBar: { minHeight: 42, borderWidth: StyleSheet.hairlineWidth, borderRadius: 12, flexDirection: 'row', alignItems: 'center' },
-  periodButton: { width: 42, height: 40, alignItems: 'center', justifyContent: 'center' },
-  periodLabel: { flex: 1, textAlign: 'center', textTransform: 'capitalize' },
-  empty: { alignItems: 'center', gap: 8, paddingVertical: Spacing.five, paddingHorizontal: Spacing.four, borderWidth: StyleSheet.hairlineWidth, borderRadius: 14 },
-  weekList: { gap: 12 },
-  weekGroup: { gap: 0 },
-  weekHeader: { minHeight: 48, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  list: { overflow: 'hidden' },
-  item: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 3, paddingVertical: 11 },
-  itemIcon: { width: 40, height: 40, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  itemAmount: { fontSize: 15, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  overviewContent: { flexGrow: 1, paddingHorizontal: Spacing.three, paddingTop: Spacing.two, gap: Spacing.three },
+  hero: { borderRadius: Radius.xl, padding: Spacing.four, minHeight: 190, justifyContent: 'flex-end', borderWidth: StyleSheet.hairlineWidth },
+  heroTop: { position: 'absolute', left: Spacing.four, top: Spacing.three, right: Spacing.four, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  heroIcon: { width: 34, height: 34, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  companyIcon: { width: '100%', height: '100%' },
+  heroValue: { fontSize: 38, lineHeight: 43, fontWeight: '800', letterSpacing: -1.5, fontVariant: ['tabular-nums'] },
+  heroRecipients: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  recipientTotal: { flex: 1, minHeight: 38, paddingHorizontal: 10, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  statsRow: { flexDirection: 'row', gap: Spacing.two },
+  moneyStat: { flex: 1, borderRadius: Radius.md, padding: 12, gap: 2 },
+  allDebts: { width: 64, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center', gap: 3 },
+  listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
+  periodBar: { minHeight: 68, borderRadius: Radius.lg, borderWidth: StyleSheet.hairlineWidth, padding: 8, flexDirection: 'row', alignItems: 'center' },
+  periodArrow: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  smallSegment: { flexDirection: 'row', padding: 3, borderRadius: 11, borderWidth: StyleSheet.hairlineWidth },
+  smallSegmentButton: { minHeight: 30, paddingHorizontal: 11, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  empty: { alignItems: 'center', gap: 8, paddingVertical: Spacing.five, paddingHorizontal: Spacing.four, borderWidth: StyleSheet.hairlineWidth, borderRadius: Radius.lg },
+  list: { gap: Spacing.three },
+  financeGroup: { gap: 7 },
+  financeGroupHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 4 },
+  financeGroupBody: { borderRadius: Radius.lg, overflow: 'hidden' },
+  item: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 13 },
+  itemIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  itemAmount: { fontSize: 17, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  checkButton: { width: 28, height: 28, borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
   conversation: { flex: 1 },
@@ -766,7 +905,10 @@ const styles = StyleSheet.create({
   noteInput: { minHeight: 80, textAlignVertical: 'top' },
   twoCols: { flexDirection: 'row', gap: Spacing.two },
   saveButton: { height: 54, borderRadius: Radius.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  recipientSwitchCompact: { width: 220, alignSelf: 'flex-start', marginBottom: 8 },
+  recipientSwitch: { height: 44, padding: 3, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', overflow: 'hidden' },
+  recipientSwitchCompact: { width: 228, height: 36, alignSelf: 'flex-start', marginBottom: 8 },
+  recipientIndicator: { position: 'absolute', left: 3, top: 3, bottom: 3, borderRadius: 11 },
+  recipientButton: { flex: 1, zIndex: 1, alignItems: 'center', justifyContent: 'center' },
   modalHeader: { minHeight: 58, paddingHorizontal: Spacing.three, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   modalTitle: { fontSize: 28, fontWeight: '800' },
   editorContent: { padding: Spacing.three, gap: Spacing.three, paddingBottom: Spacing.six },
