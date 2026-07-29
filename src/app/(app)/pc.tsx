@@ -149,7 +149,6 @@ export default function PcScreen() {
   const activeTermRef = useRef(activeTerm); activeTermRef.current = activeTerm;
   const pendingAttach = useRef(0);
   const [recentPicker, setRecentPicker] = useState(false);
-  const [recentCount, setRecentCount] = useState(1);
 
   // всплывающий выбор папки при открытии нового терминала
   const [picker, setPicker] = useState(false);

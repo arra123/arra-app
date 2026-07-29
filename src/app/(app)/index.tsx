@@ -192,7 +192,21 @@ export default function FinanceScreen() {
           <ThemedText type="smallBold" style={d.settled ? { color: theme.textSecondary, textDecorationLine: 'line-through' } : undefined}>
             {money(Number(d.amount))}
           </ThemedText>
-          <Glyph name="chevron.right" fallback="›" color={theme.separator} size={13} />
+          {/* Отметить возврат одним касанием — без свайпа. */}
+          <Pressable
+            onPress={() => settle(d)}
+            hitSlop={10}
+            accessibilityLabel={d.settled ? 'Вернуть в долги' : 'Уже вернули'}
+            style={({ pressed }) => [
+              styles.rowCheck,
+              {
+                borderColor: d.settled ? theme.success : theme.separator,
+                backgroundColor: d.settled ? theme.success : 'transparent',
+                opacity: pressed ? 0.6 : 1,
+              },
+            ]}>
+            <Glyph name="checkmark" fallback="✓" color={d.settled ? '#fff' : theme.separator} size={14} />
+          </Pressable>
         </Pressable>
       </ReanimatedSwipeable>
     );
@@ -473,6 +487,8 @@ function DebtEditor({
             mode="datetime"
             display={Platform.OS === 'ios' ? 'compact' : 'default'}
             locale="ru-RU"
+            themeVariant="light"
+            accentColor={theme.tint}
             onChange={(_, next) => { if (next) setWhen(next); }}
           />
         </View>
@@ -532,7 +548,7 @@ function AmountField({ value, onChange, autoFocus = false }: { value: string; on
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <View style={{ gap: 7 }}><ThemedText type="small" themeColor="textSecondary">{label}</ThemedText>{children}</View>;
+  return <View style={{ gap: Spacing.two }}><ThemedText type="small" themeColor="textSecondary">{label}</ThemedText>{children}</View>;
 }
 
 const styles = StyleSheet.create({
@@ -549,6 +565,7 @@ const styles = StyleSheet.create({
   personHead: { minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three },
   rowText: { flex: 1, gap: 3 },
   settled: { opacity: 0.5 },
+  rowCheck: { width: 28, height: 28, borderRadius: 14, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   swipeActions: { flexDirection: 'row' },
   swipeButton: { width: 62, alignItems: 'center', justifyContent: 'center' },
   empty: { alignItems: 'center', gap: Spacing.three, paddingVertical: 70 },

@@ -1497,10 +1497,15 @@ body[data-theme="dark"] input, body[data-theme="dark"] textarea, body[data-theme
   background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .12);
 }
 input:focus, textarea:focus, select:focus { border-color: transparent; box-shadow: 0 0 0 4px rgba(0, 122, 255, .2); }
-.seg { border-radius: var(--pill); padding: 2px; background: rgba(120, 120, 128, .12); }
-.seg button { border-radius: var(--pill); height: 30px; padding: 0 15px; font-weight: 500; color: var(--text-2); }
-.seg button.active { background: #fff; color: var(--text); box-shadow: 0 2px 8px -2px rgba(15, 20, 40, .25); }
-body[data-theme="dark"] .seg button.active { background: rgba(255, 255, 255, .18); }
+/* Дорожка заметно темнее карточек: раньше почти белый фон с белым бегунком
+   делал переключатель невидимым на светлых экранах. */
+.seg { border-radius: var(--pill); padding: 3px; background: #E2E5EC; border: 1px solid #CDD1DB; }
+.seg button { border-radius: var(--pill); height: 30px; padding: 0 15px; font-weight: 600; color: #5A6072; }
+.seg button:hover { color: var(--text); }
+.seg button.active { background: #fff; color: var(--text); border: 1px solid #C4C9D4; box-shadow: 0 2px 6px rgba(15, 20, 40, .18); }
+body[data-theme="dark"] .seg { background: #17171d; border-color: #34343d; }
+body[data-theme="dark"] .seg button { color: #9a97a4; }
+body[data-theme="dark"] .seg button.active { background: #2f2f39; color: #fff; border-color: #43424e; }
 .pill, .chip, .badge, .ttag { border-radius: var(--pill); }
 
 /* диалог */
@@ -2025,3 +2030,23 @@ body[data-theme="dark"] .tree-scope {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 24px 64px -32px rgba(0, 0, 0, .68) !important;
 }
 body[data-theme="dark"] .sync-v3 { background: transparent !important; }
+
+/* ===== Единая высота контролов =====
+   Раньше в одном ряду соседствовали элементы 28, 30, 32, 34, 36 и 38 px:
+   кнопки выглядели разнокалиберными и визуально наезжали друг на друга. */
+:root { --control-h: 36px; --control-h-sm: 32px; }
+
+.btn { height: var(--control-h); }
+.btn.sm { height: var(--control-h-sm); }
+.seg { height: var(--control-h); box-sizing: border-box; display: inline-flex; align-items: center; }
+.seg button { height: calc(var(--control-h) - 8px); box-sizing: border-box; }
+
+/* Шапки разделов: всё по центру одной линии, с одинаковым зазором */
+.term-launchbar { min-height: var(--control-h); align-items: center; gap: 8px; }
+.term-preset { height: var(--control-h); box-sizing: border-box; }
+.termtabs { min-height: var(--control-h); gap: 6px; }
+.termtabs .tt,
+.ttadd,
+.ws-mini { height: var(--control-h-sm); box-sizing: border-box; }
+.ttadd { width: var(--control-h-sm); }
+.ws-mini { width: var(--control-h-sm); }

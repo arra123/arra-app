@@ -214,7 +214,6 @@ export default function NotesScreen() {
     }
     const payload = { title: trimmedTitle, body, structured_body: structured, color: noteColor };
     const now = new Date().toISOString();
-    haptic.success();
 
     if (target === 'new') {
       const draft: Note = { id: `draft-${Date.now()}`, title: trimmedTitle, body, structured_body: structured, color: noteColor, updated_at: now, created_at: now };
@@ -331,10 +330,10 @@ export default function NotesScreen() {
             <AppleIconButton
               label="Назад к заметкам"
               systemImage="chevron.left"
-              onPress={() => void save()}
-              variant="glass"
-              tint={theme.text}
-              size={42}
+              onPress={() => save()}
+              variant="plain"
+              tint={theme.tint}
+              size={40}
             />
             <View style={styles.barRight}>
               <MenuView
@@ -354,14 +353,14 @@ export default function NotesScreen() {
                   if (event.nativeEvent.event === 'structure') void structureCurrent();
                   else if (event.nativeEvent.event === 'delete') void remove();
                 }}>
-                <AppleIconButton label="Ещё" systemImage="ellipsis" variant="glass" tint={theme.text} size={42} />
+                <AppleIconButton label="Ещё" systemImage="ellipsis" variant="plain" tint={theme.tint} size={40} />
               </MenuView>
               <AppleIconButton
                 label="Сохранить"
                 systemImage="checkmark"
-                onPress={() => void save()}
+                onPress={() => { haptic.success(); save(); }}
                 variant="prominent"
-                size={42}
+                size={40}
               />
             </View>
           </View>
@@ -423,7 +422,7 @@ export default function NotesScreen() {
               style={[styles.bodyInput, { color: theme.text }]}
             />
           </ScrollView>
-          <View style={[styles.editorTools, { paddingBottom: keyboard > 0 ? Spacing.two : Math.max(insets.bottom, Spacing.two), borderTopColor: theme.separator }]}>
+          <View style={[styles.editorTools, { paddingBottom: keyboard > 0 ? Spacing.two : Math.max(insets.bottom, Spacing.two), borderTopColor: theme.separator, backgroundColor: theme.backgroundElement }]}>
             <MenuView
               title="Формат"
               actions={[
@@ -449,7 +448,7 @@ export default function NotesScreen() {
               onPress={() => insertBodyTemplate('☐ ')}
               variant="plain"
               tint={theme.text}
-              size={42}
+              size={40}
             />
             <AppleIconButton
               label="Таблица"
@@ -466,9 +465,9 @@ export default function NotesScreen() {
               disabled={structuring || !bodyRef.current.trim()}
               variant="plain"
               tint={theme.tint}
-              size={42}
+              size={40}
             />
-            <HoldMic onResult={transcribe} disabled={transcribing} size={42} bottomOffset={58} />
+            <HoldMic onResult={transcribe} disabled={transcribing} size={40} bottomOffset={62} />
           </View>
         </Animated.View>
       </GestureDetector>
@@ -616,7 +615,7 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   editorBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.three, paddingBottom: Spacing.two },
-  barRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  barRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   editorContent: { flexGrow: 1, paddingHorizontal: Spacing.three, paddingBottom: Spacing.four, gap: Spacing.two },
   versionBar: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   categoryMenu: { alignSelf: 'flex-start', marginVertical: 2 },
@@ -628,9 +627,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     borderTopWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
   },
-  toolTextButton: { width: 42, height: 42, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
+  toolTextButton: { width: 40, height: 40, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
   toolText: { fontSize: 20, lineHeight: 24, fontWeight: '500' },
 });

@@ -340,10 +340,12 @@ export function Assistant() {
 
   // Свайп от левого края открывает список переписок.
   const edgeSwipe = Gesture.Pan()
-    .hitSlop({ left: 0, width: 32 })
-    .activeOffsetX([16, 9999])
+    .hitSlop({ left: 0, width: 34 })
+    .activeOffsetX([14, 9999])
     .failOffsetY([-24, 24])
-    .onEnd(() => { runOnJS(setDrawerOpen)(true); });
+    // Открываем на старте жеста: если ждать отпускания, панель выпрыгивает
+    // рывком уже после того, как палец убрали.
+    .onStart(() => { runOnJS(setDrawerOpen)(true); });
 
   const feedGesture = Gesture.Exclusive(edgeSwipe, threadSwipe);
 
@@ -355,6 +357,8 @@ export function Assistant() {
   return (
     <ThemedView style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
+        {/* Шапка как в референсе: круглая кнопка, по центру название чата
+            со стрелкой (тап — список чатов), круглая кнопка справа. */}
         <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
           <AppleIconButton
             label="Список чатов"
@@ -364,38 +368,41 @@ export function Assistant() {
             tint={theme.text}
             size={40}
           />
-          <View style={styles.headerTitle}>
-            <ThemedText style={styles.title} numberOfLines={1}>{activeThread.title || 'Помощник'}</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-              {activePreset.title} · чат {Math.max(1, threads.findIndex((t) => String(t.id) === String(threadId)) + 1)} из {Math.max(1, threads.length)}
-            </ThemedText>
-          </View>
-          <View style={styles.headerActions}>
-            <MenuView
-              title="Новый чат"
-              actions={PRESETS.map((preset) => ({
-                id: `new:${preset.id}`,
-                title: preset.title,
-                image: preset.icon,
-              }))}
-              onPressAction={(event) => {
-                const preset = event.nativeEvent.event.replace(/^new:/, '') as PresetId;
-                if (PRESETS.some((item) => item.id === preset)) void createThread(preset);
-              }}>
-              <AppleIconButton
-                label="Новый чат"
-                systemImage="plus"
-                variant="glass"
-                tint={theme.text}
-                size={40}
-              />
-            </MenuView>
+
+          <MenuView
+            title="Переписки"
+            actions={[
+              ...threads.slice(0, 12).map((thread) => ({
+                id: `thread:${thread.id}`,
+                title: thread.title || 'Новый чат',
+                image: (thread.preset === 'tech' ? 'desktopcomputer' : thread.preset === 'general' ? 'bubble.left.and.bubble.right.fill' : 'chart.pie.fill') as SFSymbol,
+                state: (String(thread.id) === String(threadId) ? 'on' : 'off') as 'on' | 'off',
+              })),
+              { id: 'all', title: 'Все чаты', image: 'list.bullet' as SFSymbol },
+            ]}
+            onPressAction={(event) => {
+              const action = event.nativeEvent.event;
+              if (action === 'all') { setDrawerOpen(true); return; }
+              const id = action.replace(/^thread:/, '');
+              if (!id || id === threadId) return;
+              haptic.select();
+              setThreadId(id);
+              setUndoForTurn(null);
+            }}
+            style={styles.headerTitle}>
+            <View style={styles.titleRow}>
+              <ThemedText style={styles.title} numberOfLines={1}>{activeThread.title || 'Помощник'}</ThemedText>
+              <SymbolView name="chevron.down" tintColor={theme.textSecondary} size={13} />
+            </View>
+          </MenuView>
+
           <MenuView
             title="Помощник"
             actions={[
+              { id: 'new', title: 'Новый чат', image: 'square.and.pencil' as SFSymbol },
               {
                 id: 'preset',
-                title: 'Пресет',
+                title: 'Режим',
                 image: 'slider.horizontal.3' as SFSymbol,
                 attributes: { disabled: !!activeThread.main },
                 subactions: PRESETS.map((preset) => ({
@@ -410,7 +417,8 @@ export function Assistant() {
             ]}
             onPressAction={(event) => {
               const action = event.nativeEvent.event;
-              if (action === 'clear') void clearChat();
+              if (action === 'new') void createThread('general');
+              else if (action === 'clear') void clearChat();
               else if (action === 'delete') void deleteThread();
               else if (action.startsWith('preset:')) void changePreset(action.replace('preset:', '') as PresetId);
             }}>
@@ -422,7 +430,6 @@ export function Assistant() {
               size={40}
             />
           </MenuView>
-          </View>
         </View>
 
         <GestureDetector gesture={feedGesture}>
@@ -498,12 +505,13 @@ export function Assistant() {
                 onPressAction={(event) => {
                   void addByImage(event.nativeEvent.event === 'camera');
                 }}>
+                {/* Без заливки: белый кружок внутри белой строки не читался. */}
                 <AppleIconButton
-                  label="Фото"
-                  systemImage="photo"
-                  variant="glass"
+                  label="Добавить"
+                  systemImage="plus"
+                  variant="plain"
                   tint={theme.text}
-                  size={42}
+                  size={40}
                 />
               </MenuView>
               <TextInput
@@ -518,14 +526,14 @@ export function Assistant() {
                 maxFontSizeMultiplier={1.18}
                 style={[styles.input, { color: theme.text }]}
               />
-              <HoldMic onResult={transcribe} disabled={sending} size={42} bottomOffset={60} />
+              <HoldMic onResult={transcribe} disabled={sending} size={40} bottomOffset={62} />
               <AppleIconButton
                 label="Отправить"
                 systemImage="arrow.up"
                 onPress={() => void send(input)}
                 disabled={!input.trim() || sending}
                 variant="prominent"
-                size={42}
+                size={40}
               />
             </View>
           </View>
@@ -547,9 +555,9 @@ export function Assistant() {
 
 const styles = StyleSheet.create({
   header: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.two, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
-  headerTitle: { flex: 1, alignItems: 'flex-start' },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  title: { fontSize: 30, fontWeight: '700', lineHeight: 36, letterSpacing: -0.8 },
+  headerTitle: { flex: 1, minWidth: 0 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, minHeight: 40 },
+  title: { fontSize: 17, fontWeight: '700', lineHeight: 22, letterSpacing: -0.2, maxWidth: '82%' },
   threadPicker: { alignSelf: 'flex-start', marginLeft: -8, maxWidth: 250 },
   feed: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.three, gap: Spacing.two, flexGrow: 1 },
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing.four, paddingVertical: Spacing.six, gap: Spacing.two },

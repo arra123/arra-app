@@ -33,7 +33,7 @@ function command(method, params = {}) {
     const timer = setTimeout(() => {
       pending.delete(id);
       reject(new Error(`CDP timeout: ${method}`));
-    }, 8000);
+    }, 30000);
     pending.set(id, {
       resolve: (value) => { clearTimeout(timer); resolve(value); },
       reject: (error) => { clearTimeout(timer); reject(error); },

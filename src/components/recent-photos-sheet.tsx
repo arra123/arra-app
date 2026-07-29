@@ -1,8 +1,9 @@
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import { Sheet } from '@/components/sheet';
 import { ThemedText } from '@/components/themed-text';
@@ -16,17 +17,18 @@ type Props = {
   visible: boolean;
   onClose: () => void;
   /** Выбранные фото по порядку нажатия — от первого к последнему. */
-  onSend: (photos: { id: string; uri: string }[]) => void;
+  onSend: (photos: Photo[]) => void;
   title?: string;
 };
 
 const LIMIT = 30;
+const COLUMNS = 3;
 
 /**
  * Выбор последних фото — сеткой настоящих превью.
  *
- * Раньше здесь крутили колесо «1 фото / 2 фото», и было не видно, что именно
- * уедет на компьютер.
+ * Выделять можно и тапом, и протаскиванием пальца по сетке: подряд идущие
+ * снимки набираются одним движением.
  */
 export function RecentPhotosSheet({ visible, onClose, onSend, title = 'Последние фото' }: Props) {
   const theme = useTheme();
@@ -35,8 +37,13 @@ export function RecentPhotosSheet({ visible, onClose, onSend, title = 'Посл�
   const [picked, setPicked] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [denied, setDenied] = useState(false);
+  const scrollY = useRef(0);
+  // Режим протаскивания: выделяем или снимаем — решает первая задетая ячейка.
+  const dragAdds = useRef(true);
+  const dragSeen = useRef(new Set<string>());
 
-  const cell = (width - Spacing.three * 2 - Spacing.two * 2) / 3;
+  const cell = (width - Spacing.three * 2 - Spacing.two * (COLUMNS - 1)) / COLUMNS;
+  const step = cell + Spacing.two;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,10 +70,35 @@ export function RecentPhotosSheet({ visible, onClose, onSend, title = 'Посл�
     load();
   }, [visible, load]);
 
-  function toggle(id: string) {
+  const toggle = useCallback((id: string) => {
     haptic.select();
     setPicked((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
-  }
+  }, []);
+
+  /** Ячейка под пальцем: сетка фиксированная, поэтому считаем по координатам. */
+  const applyAt = useCallback((x: number, y: number, first: boolean) => {
+    const column = Math.floor(x / step);
+    const row = Math.floor((y + scrollY.current) / step);
+    if (column < 0 || column >= COLUMNS || row < 0) return;
+    const index = row * COLUMNS + column;
+    const photo = photos[index];
+    if (!photo || dragSeen.current.has(photo.id)) return;
+    dragSeen.current.add(photo.id);
+    setPicked((current) => {
+      const has = current.includes(photo.id);
+      if (first) dragAdds.current = !has;
+      if (dragAdds.current) return has ? current : [...current, photo.id];
+      return has ? current.filter((item) => item !== photo.id) : current;
+    });
+    haptic.select();
+  }, [photos, step]);
+
+  const dragSelect = Gesture.Pan()
+    .minDistance(12)
+    .onBegin(() => { dragSeen.current = new Set(); })
+    .onStart((event) => { applyAt(event.x, event.y, true); })
+    .onUpdate((event) => { applyAt(event.x, event.y, false); })
+    .runOnJS(true);
 
   function send() {
     const chosen = picked
@@ -95,33 +127,49 @@ export function RecentPhotosSheet({ visible, onClose, onSend, title = 'Посл�
       ) : photos.length === 0 ? (
         <View style={styles.state}><ThemedText type="small" themeColor="textSecondary">Фото не нашлись</ThemedText></View>
       ) : (
-        <ScrollView style={styles.scroll} contentContainerStyle={styles.grid} showsVerticalScrollIndicator={false}>
-          {photos.map((photo) => {
-            const index = picked.indexOf(photo.id);
-            const on = index >= 0;
-            return (
-              <Pressable
-                key={photo.id}
-                onPress={() => toggle(photo.id)}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: on }}
-                style={[styles.cell, { width: cell, height: cell, borderColor: on ? theme.tint : 'transparent' }]}>
-                <Image source={{ uri: photo.uri }} style={styles.image} contentFit="cover" />
-                <View style={[styles.mark, { backgroundColor: on ? theme.tint : 'rgba(12,16,24,0.42)', borderColor: on ? theme.tint : 'rgba(255,255,255,0.7)' }]}>
-                  {on && <ThemedText style={styles.markText}>{index + 1}</ThemedText>}
-                </View>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+        <>
+          <ThemedText type="small" themeColor="textSecondary" style={styles.hint}>
+            Тапни или проведи пальцем по нескольким снимкам подряд
+          </ThemedText>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.grid}
+            showsVerticalScrollIndicator={false}
+            scrollEventThrottle={16}
+            onScroll={(event) => { scrollY.current = event.nativeEvent.contentOffset.y; }}>
+            <GestureDetector gesture={dragSelect}>
+              <View style={styles.gridInner}>
+                {photos.map((photo) => {
+                  const index = picked.indexOf(photo.id);
+                  const on = index >= 0;
+                  return (
+                    <Pressable
+                      key={photo.id}
+                      onPress={() => toggle(photo.id)}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: on }}
+                      style={[styles.cell, { width: cell, height: cell, borderColor: on ? theme.tint : 'transparent' }]}>
+                      <Image source={{ uri: photo.uri }} style={styles.image} contentFit="cover" />
+                      <View style={[styles.mark, { backgroundColor: on ? theme.tint : 'rgba(12,16,24,0.42)', borderColor: on ? theme.tint : 'rgba(255,255,255,0.7)' }]}>
+                        {on && <ThemedText style={styles.markText}>{index + 1}</ThemedText>}
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </GestureDetector>
+          </ScrollView>
+        </>
       )}
     </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { maxHeight: 420 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, padding: Spacing.three },
+  hint: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two },
+  scroll: { maxHeight: 400 },
+  grid: { padding: Spacing.three },
+  gridInner: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
   cell: { borderRadius: Radius.md, overflow: 'hidden', borderWidth: 2, backgroundColor: 'rgba(120,120,128,0.14)' },
   image: { width: '100%', height: '100%' },
   mark: {

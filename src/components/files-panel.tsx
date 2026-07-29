@@ -157,6 +157,27 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
+  /** Самое свежее фото уходит сразу — самый частый сценарий. */
+  async function sendLatestPhoto() {
+    if (uploading) return;
+    setUploading(true);
+    setUploadLabel('Ищу последнее фото…');
+    try {
+      const permission = await MediaLibrary.requestPermissionsAsync();
+      if (!permission.granted) { Alert.alert('Нужен доступ к фото'); return; }
+      const result = await MediaLibrary.getAssetsAsync({ first: 1, mediaType: 'photo', sortBy: [['creationTime', false]] });
+      const asset = result.assets?.[0];
+      if (!asset) { Alert.alert('Фото не нашлись'); return; }
+      const info = await MediaLibrary.getAssetInfoAsync(asset);
+      await upload(info?.localUri || asset.uri, asset.filename || 'photo.jpg', 'image/jpeg');
+    } catch (e: any) {
+      Alert.alert('Не удалось отправить', e?.message || '');
+    } finally {
+      setUploading(false);
+      setUploadLabel('');
+    }
+  }
+
   async function sendPickedPhotos(photos: { id: string; uri: string }[]) {
     if (uploading || !photos.length) return;
     setLastPicker(false);
@@ -215,15 +236,24 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
           </View>
         </GlassCard>
 
-        {/* Быстрый сценарий и системное меню источников. */}
+        {/* Три действия в одну линию: одно последнее фото, выбор нескольких, всё остальное. */}
         <View style={styles.captureRow}>
           <AppleButton
-            label="Последние фото"
-            systemImage="photo.stack.fill"
+            label="Последнее"
+            systemImage="photo"
+            variant="glass"
+            onPress={() => void sendLatestPhoto()}
+            disabled={uploading}
+            size="regular"
+            style={styles.captureWrap}
+          />
+          <AppleButton
+            label="Выбрать"
+            systemImage="square.grid.2x2"
             variant="glass"
             onPress={() => setLastPicker(true)}
             disabled={uploading}
-            full
+            size="regular"
             style={styles.captureWrap}
           />
           <MenuView
@@ -245,7 +275,7 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
               systemImage="plus"
               variant="prominent"
               disabled={uploading}
-              size={46}
+              size={44}
             />
           </MenuView>
         </View>
@@ -365,9 +395,9 @@ const styles = StyleSheet.create({
   statusCard: { padding: Spacing.three },
   statusTop: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
   deviceName: { flex: 1, minWidth: 0 },
-  captureRow: { flexDirection: 'row', gap: Spacing.two },
-  captureWrap: { flex: 1, minWidth: 0 },
-  addMenu: { width: 46, height: 46 },
+  captureRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  captureWrap: { flex: 1, minWidth: 0, paddingHorizontal: Spacing.two },
+  addMenu: { width: 44, height: 44 },
   noticeSlot: { height: 20, alignItems: 'center', justifyContent: 'center' },
   noticeContent: { height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.two },
   notice: { alignSelf: 'center', paddingHorizontal: Spacing.three, borderRadius: Radius.md },

@@ -270,8 +270,10 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
               width: size,
               height: size,
               borderRadius: size / 2,
-              backgroundColor: active ? (willCancel ? theme.danger : theme.tint) : theme.backgroundElement,
-              borderColor: theme.separator,
+              // В покое — только символ: залитый кружок сливался с белой строкой ввода.
+              backgroundColor: active ? (willCancel ? theme.danger : theme.tint) : 'transparent',
+              borderColor: active ? 'transparent' : theme.separator,
+              borderWidth: 0,
               opacity: disabled ? 0.5 : 1,
             },
             followStyle,

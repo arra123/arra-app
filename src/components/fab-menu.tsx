@@ -35,7 +35,7 @@ type Props = {
 };
 
 const ITEM_HEIGHT = 52;
-const ITEM_GAP = Spacing.two;
+const ITEM_GAP = 6;
 const SPRING = { damping: 18, stiffness: 240, mass: 0.7 };
 
 /**
@@ -85,7 +85,9 @@ export function FabMenu({ actions, label = 'Быстрые действия' }: 
     setTimeout(action.onPress, 140);
   }
 
-  const bottom = insets.bottom + BottomTabInset + 52;
+  // Плавающая панель iOS 26 занимает снизу заметно больше, чем safe-area:
+  // с прежним отступом кнопка почти лежала на меню.
+  const bottom = insets.bottom + BottomTabInset + 74;
 
   return (
     <>

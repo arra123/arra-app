@@ -106,9 +106,11 @@ export function Sheet({
     onClose();
   }, [onClose]);
 
-  // Тянем лист вниз за шапку. Вверх не пускаем — высота равна содержимому.
+  // Тянем лист вниз откуда угодно, а не только за шапку. Порог по вертикали
+  // и запрет на движение вверх оставляют внутренний скролл рабочим.
   const drag = Gesture.Pan()
-    .activeOffsetY([10, 9999])
+    .activeOffsetY([14, 9999])
+    .failOffsetY([-8, 0])
     .onUpdate((event) => {
       translateY.value = Math.max(0, event.translationY);
     })
@@ -145,7 +147,7 @@ export function Sheet({
             sheetStyle,
           ]}>
           <GestureDetector gesture={drag}>
-            <View>
+            <View style={styles.dragArea}>
               <View style={[styles.grabber, { backgroundColor: theme.separator }]} />
               <View style={[styles.head, { borderBottomColor: theme.separator }]}>
                 <Pressable onPress={requestClose} hitSlop={12} style={styles.side}>
@@ -167,9 +169,9 @@ export function Sheet({
                   </ThemedText>
                 </Pressable>
               </View>
+              {children}
             </View>
           </GestureDetector>
-          {children}
         </Animated.View>
       </View>
     </Modal>
@@ -178,6 +180,7 @@ export function Sheet({
 
 const styles = StyleSheet.create({
   root: { flex: 1, justifyContent: 'flex-end' },
+  dragArea: { flexShrink: 1 },
   backdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'rgba(16,20,28,0.34)' },
   sheet: {
     borderTopLeftRadius: Radius.xl,
