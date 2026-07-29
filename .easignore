@@ -1,0 +1,61 @@
+# Dependencies and generated output
+node_modules/
+.expo/
+dist/
+web-build/
+ios/
+android/
+tmp/
+pc-app/
+server/
+hub-api/
+design/
+noda-v2/
+scripts/
+dist-mobile-*/
+stickers/
+arra-sim.tar.gz
+/*.png
+pc-agent/
+.codex/
+.impeccable/
+.vscode/
+
+# Local QA browser profiles and captures
+.audit-*/
+.chrome-*/
+.playwright-mcp/
+*.log
+*.noda-part-*
+*.tsbuildinfo
+*.orig.*
+
+# Secrets and signing material are handled by EAS credentials, never archived
+.env
+.env.*
+credentials.json
+credentials/
+_codemagic_secrets/
+*.jks
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+
+# Repository-only agent/project metadata
+.git/
+.github/
+.agents/
+.claude/
+AGENTS.md
+CLAUDE.md
+PRODUCT.md
+SETUP_CODEMAGIC.md
+
+# Platform noise
+.DS_Store
+desktop.ini
+npm-debug.*
+yarn-debug.*
+yarn-error.*

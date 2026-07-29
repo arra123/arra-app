@@ -1,21 +1,112 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Arra</title>
-<script src="https://unpkg.com/@phosphor-icons/web@2.1.1"></script>
-<link rel="stylesheet" href="app.css" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1019" />
+  <meta name="description" content="Noda — проекты и рабочие инструменты Тимофея Пущина." />
+  <title>Noda</title>
+  <link rel="icon" type="image/png" href="brand/generated/noda.png" />
+  <link rel="stylesheet" href="app.css?v=24" />
 </head>
 <body>
-  <div class="frame">
-    <div id="screen"></div>
-    <nav id="tabbar" class="tabbar hidden">
-      <button class="tab" data-tab="finance"><i class="ph ph-chart-pie-slice ti"></i><span>Финансы</span></button>
-      <button class="tab" data-tab="files"><i class="ph ph-paper-plane-tilt ti"></i><span>Файлы</span></button>
-      <button class="tab" data-tab="profile"><i class="ph ph-user ti"></i><span>Профиль</span></button>
-    </nav>
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+  <div class="app-frame">
+    <header class="topbar">
+      <a class="brand" href="#projects" data-route="projects" aria-label="Noda">
+        <img src="brand/generated/noda.png" alt="" /><strong>Noda</strong>
+      </a>
+      <label class="global-search" id="searchWrap">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>
+        <input id="globalSearch" type="search" placeholder="Поиск" autocomplete="off" />
+        <kbd>Ctrl K</kbd>
+      </label>
+      <div class="top-actions">
+        <span class="connection-pill" id="connectionPill"><i></i><span>Не подключено</span></span>
+        <button class="round-button" id="authButton" aria-label="Войти" title="Войти">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <aside class="sidebar">
+      <nav class="main-nav" aria-label="Разделы">
+        <button class="nav-link is-active" data-route="projects"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg><span>Проекты</span></button>
+        <button class="nav-link" data-route="assistant"><svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-5.5 4v-4.7A2.5 2.5 0 0 1 4 13.8z"/></svg><span>Помощник</span></button>
+        <button class="nav-link" data-route="files"><svg viewBox="0 0 24 24"><path d="M3 7h7l2-3h9v16H3z"/></svg><span>Файлы</span></button>
+        <button class="nav-link" data-route="transfer"><svg viewBox="0 0 24 24"><path d="M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4"/></svg><span>Передача</span></button>
+        <button class="nav-link" data-route="remote"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg><span>Удалённый ПК</span></button>
+        <button class="nav-link" data-route="terminal"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m7 8 4 4-4 4M13 16h4"/></svg><span>Терминал</span></button>
+        <button class="nav-link" data-route="notes"><svg viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5z"/><path d="M15 3v5h4M8 12h8M8 16h6"/></svg><span>Заметки</span></button>
+        <button class="nav-link" data-route="returns"><svg viewBox="0 0 24 24"><path d="M4 7h11a5 5 0 0 1 0 10H8"/><path d="m8 3-4 4 4 4"/></svg><span>Возвраты</span></button>
+      </nav>
+      <div class="sidebar-account">
+        <span class="avatar">Т</span><span><strong id="accountName">Гость</strong><small id="accountState">Войти в Noda</small></span>
+        <button id="sidebarAuth" aria-label="Настройки аккаунта"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.9l.06.06-2.84 2.84-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1V21h-4v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.34l-.06.06-2.84-2.84.06-.06A1.7 1.7 0 0 0 4.1 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4H2.4v-4h.1A1.7 1.7 0 0 0 4.1 8.5a1.7 1.7 0 0 0-.34-1.9l-.06-.06L6.54 3.7l.06.06A1.7 1.7 0 0 0 8.5 4.1a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1V2.4h4v.1A1.7 1.7 0 0 0 15 4.1a1.7 1.7 0 0 0 1.9-.34l.06-.06 2.84 2.84-.06.06A1.7 1.7 0 0 0 19.4 8.5a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1 .4h.1v4H21a1.7 1.7 0 0 0-1.6 1.1Z"/></svg></button>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <section class="view is-active" data-view="projects">
+        <div class="project-controls glass-strip">
+          <div class="segmented" id="projectFilters"><button class="is-active" data-filter="all">Все</button><button data-filter="work">Рабочие</button><button data-filter="tima">Личные</button></div>
+          <span id="projectCount"></span>
+        </div>
+        <div class="project-grid" id="projectGrid"></div>
+        <div class="empty-view" id="projectEmpty" hidden>Ничего не найдено</div>
+      </section>
+
+      <section class="view view-assistant" data-view="assistant" hidden>
+        <div class="conversation" id="conversation"><div class="empty-conversation"><div class="noda-orb"><img src="brand/generated/noda.png" alt="" /></div><strong>Что сделать?</strong></div></div>
+        <form class="composer glass-control" id="assistantForm">
+          <button type="button" class="composer-icon" id="assistantAttach" aria-label="Прикрепить"><svg viewBox="0 0 24 24"><path d="m9 17 8.5-8.5a3 3 0 0 0-4.2-4.2L4.8 12.8a5 5 0 0 0 7.1 7.1l8-8"/></svg></button>
+          <textarea id="assistantInput" rows="1" placeholder="Сообщение"></textarea>
+          <button type="button" class="composer-icon mic-button" id="assistantMic" aria-label="Диктовать"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+          <button class="send-button" type="submit" aria-label="Отправить"><svg viewBox="0 0 24 24"><path d="m5 12 14-7-4 14-3-6z"/></svg></button>
+          <input id="assistantFile" type="file" accept="image/*" hidden />
+        </form>
+      </section>
+
+      <section class="view" data-view="files" hidden>
+        <div class="action-row"><label class="primary-action file-upload"><input id="fileUpload" type="file" multiple hidden /><svg viewBox="0 0 24 24"><path d="M12 16V4m-5 5 5-5 5 5M4 20h16"/></svg>Загрузить</label><select id="fileTarget" class="glass-select"><option value="">Все устройства</option></select><button class="quiet-action" id="refreshFiles">Обновить</button></div>
+        <div class="data-surface"><div class="data-head file-cols"><span>Файл</span><span>Устройство</span><span>Добавлен</span><span>Состояние</span><span></span></div><div id="filesList"></div></div>
+      </section>
+
+      <section class="view" data-view="transfer" hidden>
+        <div class="device-ribbon" id="syncDevices"></div>
+        <div class="transfer-layout">
+          <aside class="transfer-actions glass-panel"><button class="transfer-button upload" data-sync="push"><span class="action-mark">↑</span><span><strong>На сервер</strong><small>Сохранить текущую версию</small></span></button><button class="transfer-button download" data-sync="pull"><span class="action-mark">↓</span><span><strong>С сервера</strong><small>Получить актуальную версию</small></span></button><button class="quiet-action wide" data-sync="status">Проверить состояние</button></aside>
+          <section class="sync-stage glass-panel"><div class="sync-summary"><div><span id="syncStatusLabel">Готово</span><strong id="syncStatusTitle">Выбери устройство</strong></div><div class="sync-metrics"><span><small>Скорость</small><b id="syncSpeed">—</b></span><span><small>Осталось</small><b id="syncEta">—</b></span><span><small>Прогресс</small><b id="syncProgress">0%</b></span></div></div><div class="progress-track"><i id="syncProgressBar"></i></div><div class="sync-tree" id="syncTree"><div class="empty-inline">Здесь появятся проекты и файлы во время передачи</div></div></section>
+        </div>
+      </section>
+
+      <section class="view" data-view="remote" hidden>
+        <div class="remote-toolbar glass-strip"><select id="remoteDevice" class="glass-select"><option value="">Выбрать устройство</option></select><div class="segmented" id="screenList"></div><button class="primary-action" id="remoteConnect">Подключиться</button></div>
+        <div class="remote-canvas" id="remoteCanvas" tabindex="0"><div class="remote-empty"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg><span>Выбери компьютер</span></div><img id="remoteImage" alt="Удалённый экран" hidden draggable="false" /></div>
+      </section>
+
+      <section class="view" data-view="terminal" hidden>
+        <div class="terminal-toolbar glass-strip"><select id="terminalDevice" class="glass-select"><option value="">Выбрать устройство</option></select><button class="quiet-action" data-command="codex --yolo">Codex YOLO</button><button class="quiet-action" data-command="claude --dangerously-skip-permissions">Claude Skip</button></div>
+        <div class="terminal-window"><div class="terminal-output" id="terminalOutput"><span class="terminal-muted">Noda terminal · выбери устройство</span></div><form class="terminal-input" id="terminalForm"><span>›</span><input id="terminalCommand" autocomplete="off" spellcheck="false" placeholder="Команда" /></form></div>
+      </section>
+
+      <section class="view view-notes" data-view="notes" hidden>
+        <aside class="notes-rail"><button class="primary-action wide" id="newNote">Новая заметка</button><div id="notesList" class="notes-list"></div></aside>
+        <section class="note-editor" id="noteEditor"><div class="note-placeholder" id="notePlaceholder">Выбери заметку</div><div id="noteFields" hidden><div class="note-actions"><span id="noteSaveState">Сохранено</span><div><button class="quiet-action" id="structureNote">Версия ИИ</button><button class="danger-action" id="deleteNote">Удалить</button></div></div><input id="noteTitle" class="note-title" placeholder="Без названия" /><textarea id="noteBody" class="note-body" placeholder="Начни писать…"></textarea></div></section>
+      </section>
+
+      <section class="view" data-view="returns" hidden>
+        <div class="returns-toolbar glass-strip"><div class="segmented" id="debtPeriod"><button class="is-active" data-period="all">Всё время</button><button data-period="month">Месяц</button><button data-period="week">Неделя</button></div><div class="return-total"><span>К возврату</span><strong id="debtTotal">0 ₽</strong></div><button class="primary-action" id="newDebt">Новая запись</button></div>
+        <div class="returns-surface"><div class="data-head debt-cols"><span>Компания</span><span>За что</span><span>Кому</span><span>Дата</span><span>Сумма</span><span></span></div><div id="debtsList"></div></div>
+      </section>
+    </main>
   </div>
-  <script src="app.js"></script>
+
+  <aside class="drawer" id="projectDrawer" hidden><div class="drawer-scrim" data-close-drawer></div><div class="drawer-panel glass-panel"><button class="drawer-close" data-close-drawer aria-label="Закрыть">×</button><div id="drawerBody"></div></div></aside>
+  <div class="modal-layer" id="authModal" hidden><form class="modal-card glass-panel" id="authForm"><button class="modal-close" type="button" data-close-modal>×</button><img class="modal-logo" src="brand/generated/noda.png" alt="" /><h2>Войти в Noda</h2><label><span>Логин или email</span><input name="login" type="text" inputmode="text" autocomplete="username" placeholder="Логин" required /></label><label><span>Пароль</span><span class="password-field"><input name="password" type="password" autocomplete="current-password" required /><button type="button" id="togglePassword" aria-label="Показать пароль">Показать</button></span></label><p id="authError" class="form-error" hidden></p><button class="primary-action wide" id="authSubmit" type="submit">Войти</button></form></div>
+  <div class="modal-layer" id="debtModal" hidden><form class="modal-card glass-panel" id="debtForm"><button class="modal-close" type="button" data-close-modal>×</button><h2 id="debtModalTitle">Новая запись</h2><input name="id" type="hidden"/><label><span>Кто</span><input name="counterparty" required placeholder="Компания" /></label><label><span>За что</span><input name="note" required placeholder="Каршеринг" /></label><div class="form-row"><label><span>Кому</span><select name="recipient"><option>Тима</option><option>Даня</option><option>Женя</option></select></label><label><span>Сумма</span><input name="amount" type="number" min="1" required /></label></div><label><span>Дата и время</span><input name="occurred_at" type="datetime-local" required /></label><button class="primary-action wide" type="submit">Сохранить</button></form></div>
+  <div class="toast" id="toast" hidden></div>
+  <script src="projects.js?v=24"></script>
+  <script src="app.js?v=24"></script>
 </body>
 </html>

@@ -1,5 +1,32 @@
-import { chatWithTools, currentDateNote } from '../ai.js';
+import { chatText, chatWithTools, currentDateNote } from '../ai.js';
 import { one, query } from '../db.js';
+
+const PRESETS = {
+  finance: {
+    title: 'Финансы',
+    prompt: '',
+  },
+  general: {
+    title: 'Обычный разговор',
+    prompt: `Ты — личный помощник Тимофея. Отвечай по-русски, естественно и по делу.
+Это обычный разговор: не превращай вопросы в финансовые операции и ничего не записывай в приложение.
+Помогай думать, планировать, сравнивать варианты и разбираться в теме. Если для точного ответа не хватает
+актуальных данных, честно обозначь это. Не выдумывай факты и не будь канцелярским.`,
+  },
+  tech: {
+    title: 'Покупки и техника',
+    prompt: `Ты — помощник Тимофея по выбору компьютеров, техники и цифровых сервисов.
+Отвечай по-русски, конкретно и без рекламных штампов. Сначала учитывай задачу, бюджет, уже имеющуюся
+технику и срок покупки; уточняй только то, что действительно меняет рекомендацию. Сравнивай варианты
+по реальной пользе, ограничениям и цене владения. Не записывай финансовые операции. Если сведения о
+ценах или моделях могут устареть, прямо скажи, что их нужно проверить перед покупкой.`,
+  },
+};
+
+function normalizePreset(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return PRESETS[key] ? key : 'finance';
+}
 
 const CATEGORIES = [
   'Продукты', 'Кафе и рестораны', 'Кофе', 'Доставка', 'Алкоголь',
@@ -55,6 +82,9 @@ const PROMPT = `Ты — Arra, личный финансовый помощни�
 5. Несколько операций в одном сообщении — несколько вызовов add_transaction.
 6. Категория — из списка по сути товара; merchant — магазин/сервис (Озон, Пятёрочка, Netflix).
 7. Если данные не дают ответа — честно скажи и предложи действие. НЕ повторяй один и тот же ответ дважды.
+8. ДЕРЖИ КОНТЕКСТ ДИАЛОГА: помни, о чём шла речь выше, понимай «а вчера?», «добавь туда же», «нет, я про другое», уточняющие реплики и местоимения («он», «она», «это»). Не переспрашивай то, что уже сказано в переписке.
+9. Если запрос реально неоднозначный (две трактовки, непонятна сумма/кто кому должен) — задай ОДИН короткий уточняющий вопрос, а не угадывай криво. Если же всё понятно — действуй сразу, без лишних вопросов.
+10. Говори живо и по-человечески, как умный ассистент, а не как робот-бланк. Без канцелярита и шаблонных фраз.
 
 КАТЕГОРИЗАЦИЯ — выбирай САМУЮ КОНКРЕТНУЮ категорию, а не общую:
 - кофе/латте/капучино/Starbucks/кофейня → «Кофе» (НЕ «Кафе и рестораны»).
@@ -514,60 +544,155 @@ async function execTool(userId, name, args) {
   }
 }
 
+// Чат может быть «основным» (thread_id IS NULL — вся старая переписка) или отдельным.
+// Старые клиенты (iOS, ПК, версия «Пульт») thread не передают и работают с основным.
+const isMain = (value) => !value || value === 'main' || value === 'null';
+function threadWhere(thread, params) {
+  if (isMain(thread)) return 'thread_id IS NULL';
+  params.push(thread);
+  return `thread_id = $${params.length}`;
+}
+
 export default async function assistantRoutes(app) {
-  app.get('/ai/messages', { preHandler: app.auth }, async (request) => {
+  // Список чатов: основной идёт первым, остальные — по свежести.
+  app.get('/ai/threads', { preHandler: app.auth }, async (request) => {
+    const main = await one(
+      `SELECT COUNT(*)::int AS count, MAX(created_at) AS updated_at,
+              (SELECT content FROM chat_messages WHERE user_id=$1 AND thread_id IS NULL ORDER BY created_at DESC LIMIT 1) AS preview
+       FROM chat_messages WHERE user_id=$1 AND thread_id IS NULL`, [request.user.id]);
     const { rows } = await query(
-      'SELECT id, role, content, created_at FROM chat_messages WHERE user_id = $1 ORDER BY created_at ASC LIMIT 200',
-      [request.user.id],
-    );
+      `SELECT t.id, t.title, t.preset, t.created_at,
+              COALESCE(m.last_at, t.updated_at) AS updated_at,
+              COALESCE(m.count, 0)::int AS count, m.preview
+       FROM chat_threads t
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS count, MAX(created_at) AS last_at,
+                (SELECT content FROM chat_messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS preview
+         FROM chat_messages WHERE thread_id = t.id
+       ) m ON true
+       WHERE t.user_id = $1
+       ORDER BY updated_at DESC`, [request.user.id]);
+    return {
+      threads: [
+        { id: 'main', title: 'Основной', preset: 'finance', count: main?.count || 0, updated_at: main?.updated_at || null, preview: main?.preview || null, main: true },
+        ...rows,
+      ],
+    };
+  });
+
+  app.post('/ai/threads', { preHandler: app.auth }, async (request) => {
+    const preset = normalizePreset(request.body?.preset);
+    const title = String(request.body?.title || '').trim().slice(0, 80) || PRESETS[preset].title;
+    const thread = await one(
+      'INSERT INTO chat_threads (user_id, title, preset) VALUES ($1,$2,$3) RETURNING id, title, preset, created_at, updated_at',
+      [request.user.id, title, preset]);
+    return { thread: { ...thread, count: 0, preview: null } };
+  });
+
+  app.patch('/ai/threads/:id', { preHandler: app.auth }, async (request, reply) => {
+    const current = await one(
+      'SELECT id, title, preset FROM chat_threads WHERE id=$1 AND user_id=$2',
+      [request.params.id, request.user.id]);
+    if (!current) return reply.code(404).send({ error: 'Чат не найден' });
+    const title = request.body?.title === undefined
+      ? current.title
+      : String(request.body.title || '').trim().slice(0, 80);
+    if (!title) return reply.code(400).send({ error: 'Нужен title' });
+    const preset = request.body?.preset === undefined ? current.preset : normalizePreset(request.body.preset);
+    const thread = await one(
+      'UPDATE chat_threads SET title=$1, preset=$2, updated_at=now() WHERE id=$3 AND user_id=$4 RETURNING id, title, preset, updated_at',
+      [title, preset, request.params.id, request.user.id]);
+    return { thread };
+  });
+
+  app.delete('/ai/threads/:id', { preHandler: app.auth }, async (request) => {
+    await query('DELETE FROM chat_threads WHERE id=$1 AND user_id=$2', [request.params.id, request.user.id]);
+    return { ok: true };
+  });
+
+  app.get('/ai/messages', { preHandler: app.auth }, async (request) => {
+    const params = [request.user.id];
+    const where = threadWhere(request.query?.thread, params);
+    const { rows } = await query(
+      `SELECT id, role, content, created_at FROM chat_messages
+       WHERE user_id = $1 AND ${where} ORDER BY created_at ASC LIMIT 200`, params);
     return { messages: rows };
   });
 
   app.post('/ai/assistant', { preHandler: app.auth }, async (request, reply) => {
     const text = (request.body?.text || '').trim();
     if (!text) return reply.code(400).send({ error: 'Нужен text' });
+    const thread = isMain(request.body?.thread) ? null : String(request.body.thread);
+    let preset = 'finance';
+    if (thread) {
+      const chatThread = await one(
+        'SELECT preset FROM chat_threads WHERE id=$1 AND user_id=$2',
+        [thread, request.user.id]);
+      if (!chatThread) return reply.code(404).send({ error: 'Чат не найден' });
+      preset = normalizePreset(chatThread.preset);
+    }
 
-    await query('INSERT INTO chat_messages (user_id, role, content) VALUES ($1,$2,$3)', [request.user.id, 'user', text]);
+    await query('INSERT INTO chat_messages (user_id, role, content, thread_id) VALUES ($1,$2,$3,$4)',
+      [request.user.id, 'user', text, thread]);
+    if (thread) {
+      // Свежесозданному чату даём имя по первой фразе.
+      await query(
+        `UPDATE chat_threads SET updated_at = now(),
+           title = CASE WHEN title = 'Новый чат' THEN left($1, 60) ELSE title END
+         WHERE id = $2 AND user_id = $3`, [text, thread, request.user.id]);
+    }
 
+    const histParams = [request.user.id];
+    const histWhere = threadWhere(request.body?.thread, histParams);
     const { rows: hist } = await query(
-      'SELECT role, content FROM chat_messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT 16',
-      [request.user.id],
-    );
-    const context = await buildContext(request.user.id);
-    const messages = [
-      { role: 'system', content: `${PROMPT}\n\n${currentDateNote()}\n\n${context}` },
-      ...hist.reverse().map((h) => ({ role: h.role, content: h.content })),
-    ];
+      `SELECT role, content FROM chat_messages
+       WHERE user_id = $1 AND ${histWhere} ORDER BY created_at DESC LIMIT 40`, histParams);
+    const history = hist.reverse().map((h) => ({ role: h.role, content: h.content }));
 
     let final = '';
     try {
-      for (let i = 0; i < 12; i++) {
-        const msg = await chatWithTools(messages, TOOLS);
-        messages.push(msg);
-        if (msg.tool_calls?.length) {
-          for (const tc of msg.tool_calls) {
-            let args = {};
-            try { args = JSON.parse(tc.function.arguments || '{}'); } catch { /* ignore */ }
-            const result = await execTool(request.user.id, tc.function.name, args);
-            messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
+      if (preset !== 'finance') {
+        final = await chatText([
+          { role: 'system', content: `${PRESETS[preset].prompt}\n\n${currentDateNote()}` },
+          ...history,
+        ], undefined, preset === 'tech' ? 0.45 : 0.7);
+      } else {
+        const context = await buildContext(request.user.id);
+        const messages = [
+          { role: 'system', content: `${PROMPT}\n\n${currentDateNote()}\n\n${context}` },
+          ...history,
+        ];
+        for (let i = 0; i < 12; i++) {
+          const msg = await chatWithTools(messages, TOOLS);
+          messages.push(msg);
+          if (msg.tool_calls?.length) {
+            for (const tc of msg.tool_calls) {
+              let args = {};
+              try { args = JSON.parse(tc.function.arguments || '{}'); } catch { /* ignore */ }
+              const result = await execTool(request.user.id, tc.function.name, args);
+              messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
+            }
+            continue;
           }
-          continue;
+          final = msg.content || '';
+          break;
         }
-        final = msg.content || '';
-        break;
       }
     } catch (e) {
       final = 'Не получилось обработать: ' + e.message;
     }
     if (!final) final = 'Готово.';
 
-    await query('INSERT INTO chat_messages (user_id, role, content) VALUES ($1,$2,$3)', [request.user.id, 'assistant', final]);
+    await query('INSERT INTO chat_messages (user_id, role, content, thread_id) VALUES ($1,$2,$3,$4)',
+      [request.user.id, 'assistant', final, thread]);
     return { reply: final };
   });
 
-  // Очистить диалог
+  // Очистить диалог (по умолчанию — основной)
   app.delete('/ai/messages', { preHandler: app.auth }, async (request) => {
-    await query('DELETE FROM chat_messages WHERE user_id = $1', [request.user.id]);
+    const params = [request.user.id];
+    const where = threadWhere(request.query?.thread, params);
+    await query(`DELETE FROM chat_messages WHERE user_id = $1 AND ${where}`, params);
     return { ok: true };
   });
 

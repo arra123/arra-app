@@ -21,7 +21,8 @@ const app = Fastify({ logger: true, bodyLimit: 25 * 1024 * 1024 });
 
 await app.register(cors, { origin: true });
 await app.register(jwt, { secret: config.jwtSecret });
-await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024 } });
+// Файлы (в т.ч. видео с телефона) — до 1 ГБ; сохраняются стримом, память не раздувают
+await app.register(multipart, { limits: { fileSize: 1024 * 1024 * 1024 } });
 await app.register(websocket);
 
 // app.auth — хук для защищённых маршрутов

@@ -5,16 +5,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { STK } from './assets';
 import { ArchiveScreen } from './screens/archive';
+import { ChatScreen } from './screens/chat';
 import { PingPongScreen } from './screens/pingpong';
 import { TearsScreen } from './screens/tears';
 import { U, UG, UR, US } from './theme';
 import { Gradient, Sticker, T, tap } from './ui';
 
-type Tab = 'tears' | 'ping' | 'archive';
+type Tab = 'tears' | 'ping' | 'chat' | 'archive';
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: 'tears', label: 'Слёзы', icon: STK.sob },
   { key: 'ping', label: 'Пинг', icon: STK.pingpong },
+  { key: 'chat', label: 'Чат', icon: STK.chat },
   { key: 'archive', label: 'Архив', icon: STK.chart },
 ];
 
@@ -29,6 +31,7 @@ export default function UlyanaApp() {
       <View style={{ flex: 1 }}>
         {tab === 'tears' && <TearsScreen />}
         {tab === 'ping' && <PingPongScreen />}
+        {tab === 'chat' && <ChatScreen />}
         {tab === 'archive' && <ArchiveScreen />}
       </View>
 
@@ -75,6 +78,6 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   tabItem: { },
-  tabActive: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 18, paddingVertical: 11 },
-  tabInactive: { paddingHorizontal: 18, paddingVertical: 11, alignItems: 'center', justifyContent: 'center' },
+  tabActive: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 15, paddingVertical: 11 },
+  tabInactive: { paddingHorizontal: 14, paddingVertical: 11, alignItems: 'center', justifyContent: 'center' },
 });

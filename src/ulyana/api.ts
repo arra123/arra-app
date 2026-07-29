@@ -93,3 +93,25 @@ export async function listPingMatches() {
 export async function deletePingMatch(id: string) {
   await api(`/pingpong/${id}`, { method: 'DELETE' });
 }
+
+// ---------- ИИ-Ульяна ----------
+export async function aiDiagnose(input: {
+  intensity: number;
+  reason: string | null;
+  duration: number;
+  note?: string | null;
+  mood_before?: string | null;
+  mood_after?: string | null;
+  score?: number;
+}) {
+  return api<{ verdict: string | null; recommendation: string | null }>('/ulyana/diagnose', {
+    body: input,
+  });
+}
+
+export type ChatMsg = { role: 'user' | 'assistant'; content: string };
+
+export async function aiChat(messages: ChatMsg[]) {
+  const { reply } = await api<{ reply: string }>('/ulyana/chat', { body: { messages } });
+  return reply;
+}

@@ -61,6 +61,23 @@ notes*.png
 # не публиковать в открытый репозиторий
 CLAUDE.md
 AGENTS.md
+# хаб-API: приватные данные проектов и креды входа — НИКОГДА в git (репо публичный)
+hub-api/private.json
+hub-api/config.json
+live-hub.png
 server/scripts/*.cjs
 SETUP_CODEMAGIC.md
 .claude/
+
+# локальные QA-профили, сборки и временные диагностические файлы
+.audit-*/
+.chrome-*/
+tmp/
+pc-app/dist/
+pc-app/tmp/
+pc-app/sync/__pycache__/
+dist-mobile-*/
+*.noda-part-*
+
+# Личные референс-фото для генерации стикеров (не коммитим)
+stickers/

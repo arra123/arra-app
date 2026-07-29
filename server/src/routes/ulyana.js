@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
+import { ulyanaChat, ulyanaDiagnose } from '../ai.js';
 import { config } from '../config.js';
 import { one, query } from '../db.js';
 
@@ -127,6 +128,28 @@ export default async function ulyanaRoutes(app) {
     // «Литры слёз» — шуточная оценка: 8 мл на единицу интенсивности
     const liters = Math.round(((s?.intensity_sum || 0) * 8) / 1000 * 100) / 100;
     return { stats: { ...s, liters, top_reason: top?.reason || null, top_reason_n: top?.n || 0 } };
+  });
+
+  // ---------- ИИ-Ульяна ----------
+
+  // Шуточный ИИ-диагноз по данным о плаче (в характере Ульяны)
+  app.post('/ulyana/diagnose', { preHandler: app.auth }, async (request, reply) => {
+    try {
+      const out = await ulyanaDiagnose(request.body || {});
+      return out;
+    } catch (e) {
+      return reply.code(502).send({ error: 'ИИ недоступен', detail: String(e?.message || e) });
+    }
+  });
+
+  // Чат с Ульяной. Тело: { messages: [{role,content}] }
+  app.post('/ulyana/chat', { preHandler: app.auth }, async (request, reply) => {
+    try {
+      const replyText = await ulyanaChat(request.body?.messages || []);
+      return { reply: replyText };
+    } catch (e) {
+      return reply.code(502).send({ error: 'ИИ недоступен', detail: String(e?.message || e) });
+    }
   });
 
   // ---------- Пинг-Контроль ----------

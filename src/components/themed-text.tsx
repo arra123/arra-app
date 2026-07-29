@@ -18,7 +18,13 @@ function interFamily(weight: unknown): string {
   return 'Inter_400Regular';
 }
 
-export function ThemedText({ style, type = 'default', themeColor, ...rest }: ThemedTextProps) {
+export function ThemedText({
+  style,
+  type = 'default',
+  themeColor,
+  maxFontSizeMultiplier = 1.18,
+  ...rest
+}: ThemedTextProps) {
   const theme = useTheme();
 
   const flat = (StyleSheet.flatten([
@@ -37,6 +43,7 @@ export function ThemedText({ style, type = 'default', themeColor, ...rest }: The
 
   return (
     <Text
+      maxFontSizeMultiplier={maxFontSizeMultiplier}
       style={[{ color: theme[themeColor ?? 'text'] }, flat, { fontFamily: family, fontWeight: undefined }]}
       {...rest}
     />

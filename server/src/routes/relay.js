@@ -1,4 +1,5 @@
 import { query } from '../db.js';
+import { compactDeviceRows } from '../devices.js';
 import { addClient, onlineTokenIds, relayToAgents, removeClient } from '../ws.js';
 
 /**
@@ -58,11 +59,12 @@ export default async function relayRoutes(app) {
 
 async function sendOnlineDevices(userId, socket) {
   const { rows } = await query(
-    'SELECT id, name FROM pc_tokens WHERE user_id = $1 ORDER BY created_at DESC',
+    `SELECT id, name, role, hostname, device_key, last_seen, created_at
+     FROM pc_tokens WHERE user_id = $1 ORDER BY created_at DESC`,
     [userId],
   );
   const online = onlineTokenIds(userId);
-  const devices = rows.map((t) => ({ id: t.id, name: t.name, online: online.includes(t.id) }));
+  const devices = compactDeviceRows(rows, online);
   try {
     socket.send(JSON.stringify({ type: 'devices', devices }));
   } catch {}

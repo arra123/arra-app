@@ -88,7 +88,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#101216',
     borderRadius: Radius.md,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.07)',
+    borderColor: 'rgba(120,120,128,0.12)',
   },
   mid: { flex: 1, gap: 2 },
   delAction: {

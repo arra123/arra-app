@@ -1,21 +1,33 @@
-import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
+import { MenuView } from '@expo/ui/community/menu';
 import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
+import { useFocusEffect } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Animated,
   Keyboard,
   Platform,
   ScrollView,
   StyleSheet,
   TextInput,
-  TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Reanimated, {
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { SFSymbol } from 'sf-symbols-typescript';
 
+import { AppleButton, AppleIconButton } from '@/components/apple-button';
+import { ChatDrawer } from '@/components/chat-drawer';
+import { HoldMic } from '@/components/hold-mic';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Radius, Spacing } from '@/constants/theme';
@@ -24,21 +36,39 @@ import { api, API_URL, getToken } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
 
 type Msg = { id: string; role: 'user' | 'assistant'; content: string; created_at?: string };
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+type PresetId = 'finance' | 'general' | 'tech';
+type Thread = {
+  id: string;
+  title: string;
+  preset: PresetId;
+  count?: number;
+  preview?: string | null;
+  main?: boolean;
+};
+
+const PRESETS: { id: PresetId; title: string; hint: string; icon: SFSymbol }[] = [
+  { id: 'finance', title: 'Финансы', hint: 'Записи, долги и возвраты', icon: 'chart.pie.fill' },
+  { id: 'general', title: 'Обычный разговор', hint: 'Без финансового режима', icon: 'bubble.left.and.bubble.right.fill' },
+  { id: 'tech', title: 'Покупки и техника', hint: 'Компьютеры и выбор устройств', icon: 'desktopcomputer' },
+];
+
+const presetInfo = (id?: string) => PRESETS.find((preset) => preset.id === id) || PRESETS[0];
 const hhmm = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '');
 
 export function Assistant() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
   const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [threadId, setThreadId] = useState('main');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const feedX = useSharedValue(0);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [recSecs, setRecSecs] = useState(0);
-  const recTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [undoForTurn, setUndoForTurn] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
-  const pulse = useRef(new Animated.Value(1)).current;
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const inputRef = useRef<TextInput>(null);
 
   const [kbHeight, setKbHeight] = useState(0);
 
@@ -46,45 +76,136 @@ export function Assistant() {
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated }));
   }, []);
 
+  useFocusEffect(
+    useCallback(() => {
+      inputRef.current?.blur();
+      Keyboard.dismiss();
+      return () => { inputRef.current?.blur(); Keyboard.dismiss(); };
+    }, []),
+  );
+
   // Единый механизм подъёма над клавиатурой: слушаем высоту клавиатуры и поднимаем
   // только док. БЕЗ KeyboardAvoidingView — иначе два механизма дёргали поле «туда-сюда».
   useEffect(() => {
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const show = Keyboard.addListener(showEvt, (e) => { setKbHeight(e.endCoordinates?.height || 0); scrollEnd(false); });
-    const hide = Keyboard.addListener(hideEvt, () => setKbHeight(0));
+    const show = Keyboard.addListener(showEvt, (e) => {
+      Keyboard.scheduleLayoutAnimation(e);
+      setKbHeight(e.endCoordinates?.height || 0);
+      scrollEnd(false);
+    });
+    const hide = Keyboard.addListener(hideEvt, (e) => {
+      Keyboard.scheduleLayoutAnimation(e);
+      setKbHeight(0);
+    });
     return () => { show.remove(); hide.remove(); };
   }, [scrollEnd]);
 
-  useEffect(() => {
-    if (!recording) return;
-    const anim = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.35, duration: 600, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
-      ]),
-    );
-    anim.start();
-    return () => anim.stop();
-  }, [recording, pulse]);
+  const activeThread = threads.find((thread) => String(thread.id) === String(threadId))
+    || { id: 'main', title: 'Основной', preset: 'finance' as PresetId, main: true };
+  const activePreset = presetInfo(activeThread.preset);
+
+  const loadThreads = useCallback(async () => {
+    try {
+      const r = await api<{ threads: Thread[] }>('/ai/threads');
+      const next: Thread[] = r.threads?.length ? r.threads : [{ id: 'main', title: 'Основной', preset: 'finance', main: true }];
+      setThreads(next);
+      setThreadId((current) => next.some((thread) => String(thread.id) === String(current)) ? current : 'main');
+    } catch {
+      setThreads([{ id: 'main', title: 'Основной', preset: 'finance', main: true }]);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     try {
-      const r = await api<{ messages: Msg[] }>('/ai/messages');
+      const r = await api<{ messages: Msg[] }>(`/ai/messages?thread=${encodeURIComponent(threadId)}`);
       setMsgs(r.messages);
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [threadId]);
 
+  useEffect(() => { loadThreads(); }, [loadThreads]);
   useEffect(() => { load(); }, [load]);
+
+  async function createThread(preset: PresetId) {
+    try {
+      const r = await api<{ thread: Thread }>('/ai/threads', { body: { preset } });
+      setThreads((current) => [r.thread, ...current]);
+      setThreadId(r.thread.id);
+      setMsgs([]);
+      setUndoForTurn(null);
+      haptic.success();
+      requestAnimationFrame(() => inputRef.current?.focus());
+    } catch (e: any) {
+      Alert.alert('Не получилось создать чат', e?.message || '');
+    }
+  }
+
+  async function changePreset(preset: PresetId) {
+    if (activeThread.main || activeThread.preset === preset) return;
+    try {
+      const r = await api<{ thread: Thread }>(`/ai/threads/${activeThread.id}`, {
+        method: 'PATCH',
+        body: { preset },
+      });
+      setThreads((current) => current.map((thread) => thread.id === activeThread.id ? { ...thread, ...r.thread } : thread));
+      setUndoForTurn(null);
+      haptic.tap();
+    } catch (e: any) {
+      Alert.alert('Не получилось сменить режим', e?.message || '');
+    }
+  }
+
+  /** Удаление конкретного чата — из списка переписок (свайпом). */
+  async function deleteThreadById(id: string) {
+    Alert.alert('Удалить этот чат?', 'Переписка удалится на всех устройствах.', [
+      { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Удалить',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await api(`/ai/threads/${id}`, { method: 'DELETE' });
+            if (String(id) === String(threadId)) { setThreadId('main'); setMsgs([]); setUndoForTurn(null); }
+            await loadThreads();
+          } catch (e: any) {
+            Alert.alert('Не получилось', e?.message || '');
+          }
+        },
+      },
+    ]);
+  }
+
+  async function deleteThread() {
+    if (activeThread.main) return;
+    Alert.alert('Удалить этот чат?', 'Переписка удалится на всех устройствах.', [
+      { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Удалить',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await api(`/ai/threads/${activeThread.id}`, { method: 'DELETE' });
+            setThreadId('main');
+            setMsgs([]);
+            setUndoForTurn(null);
+            await loadThreads();
+          } catch (e: any) {
+            Alert.alert('Не получилось', e?.message || '');
+          }
+        },
+      },
+    ]);
+  }
 
   async function undoLast() {
     try {
       const r = await api<{ ok: boolean; label?: string }>('/ai/undo', { method: 'POST' });
       if (r.ok) {
+        setUndoForTurn(null);
         await load();
-        Alert.alert('Отменено', r.label ? `Удалено: ${r.label}` : 'Последняя запись удалена');
+        haptic.success();
       } else {
         Alert.alert('Нечего отменять', 'Помощник пока ничего не записывал.');
       }
@@ -99,11 +220,15 @@ export function Assistant() {
     haptic.tap();
     Keyboard.dismiss();
     setInput('');
-    setMsgs((p) => [...p, { id: 'tmp-' + p.length, role: 'user', content: t }]);
+    const turnId = `turn-${Date.now()}`;
+    setUndoForTurn(null);
+    setMsgs((p) => [...p, { id: turnId, role: 'user', content: t }]);
     setSending(true);
     try {
-      await api('/ai/assistant', { body: { text: t } });
+      await api('/ai/assistant', { body: { text: t, thread: threadId } });
       await load();
+      await loadThreads();
+      setUndoForTurn(turnId);
       haptic.success();
     } catch (e: any) {
       haptic.error();
@@ -113,26 +238,8 @@ export function Assistant() {
     }
   }
 
-  async function startVoice() {
-    if (sending || recording) return;
-    const perm = await requestRecordingPermissionsAsync();
-    if (!perm.granted) return Alert.alert('Нужен доступ к микрофону');
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: true });
-    await recorder.prepareToRecordAsync();
-    recorder.record();
-    haptic.press();
-    setRecSecs(0);
-    setRecording(true);
-    recTimer.current = setInterval(() => setRecSecs((s) => s + 1), 1000);
-  }
-  async function stopVoice(doSend: boolean) {
-    if (!recording) return;
-    haptic.tap();
-    if (recTimer.current) clearInterval(recTimer.current);
-    setRecording(false);
-    try { await recorder.stop(); } catch { /* ignore */ }
-    const uri = recorder.uri;
-    if (!doSend || !uri || recSecs < 1) return;
+  /** Готовую запись отправляем на распознавание и подставляем текст в поле. */
+  async function transcribe(uri: string) {
     setSending(true);
     try {
       const token = await getToken();
@@ -143,7 +250,10 @@ export function Assistant() {
       if (res.status >= 400) throw new Error('Ошибка ' + res.status);
       const data = JSON.parse(res.body || '{}');
       setSending(false);
-      if (data.text) setInput((prev) => (prev.trim() ? prev.trim() + ' ' : '') + data.text);
+      if (data.text) {
+        setInput((prev) => (prev.trim() ? prev.trim() + ' ' : '') + data.text);
+        requestAnimationFrame(() => inputRef.current?.focus());
+      }
     } catch (e: any) {
       setSending(false);
       Alert.alert('Не распознал голос', e?.message || '');
@@ -152,6 +262,10 @@ export function Assistant() {
 
   async function addByImage(fromCamera: boolean) {
     if (sending) return;
+    if (activePreset.id !== 'finance') {
+      Alert.alert('Скриншоты — в финансовом чате', 'Создай чат с пресетом «Финансы», чтобы записывать операции по изображению.');
+      return;
+    }
     const ImagePicker = await import('expo-image-picker');
     if (fromCamera) {
       const p = await ImagePicker.requestCameraPermissionsAsync();
@@ -176,24 +290,143 @@ export function Assistant() {
       setSending(false);
     }
   }
-  const pickImageSource = () =>
-    Alert.alert('Скриншот', 'Откуда взять?', [
-      { text: 'Камера', onPress: () => addByImage(true) },
-      { text: 'Галерея', onPress: () => addByImage(false) },
+  async function clearChat() {
+    Alert.alert('Очистить чат?', 'Сообщения удалятся на всех устройствах.', [
       { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Очистить',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await api(`/ai/messages?thread=${encodeURIComponent(threadId)}`, { method: 'DELETE' });
+            setMsgs([]);
+            setUndoForTurn(null);
+            haptic.success();
+          } catch (e: any) {
+            Alert.alert('Не получилось', e?.message || '');
+          }
+        },
+      },
     ]);
+  }
+
+  const lastAssistantIndex = msgs.map((message) => message.role).lastIndexOf('assistant');
+
+  // ----- Переключение чатов свайпом -----
+  function goThread(direction: 1 | -1) {
+    const index = threads.findIndex((thread) => String(thread.id) === String(threadId));
+    const next = threads[index + direction];
+    if (!next) {
+      // Дальше чатов нет — «пружиним» обратно, чтобы жест не выглядел проглоченным.
+      feedX.value = withSpring(0, { damping: 20, stiffness: 220 });
+      return;
+    }
+    haptic.select();
+    setThreadId(String(next.id));
+    setUndoForTurn(null);
+    feedX.value = direction === 1 ? screenWidth * 0.32 : -screenWidth * 0.32;
+    feedX.value = withSpring(0, { damping: 22, stiffness: 210 });
+  }
+
+  const threadSwipe = Gesture.Pan()
+    .activeOffsetX([-30, 30])
+    .failOffsetY([-24, 24])
+    .onUpdate((event) => { feedX.value = event.translationX * 0.32; })
+    .onEnd((event) => {
+      if (event.translationX < -70 || event.velocityX < -700) runOnJS(goThread)(1);
+      else if (event.translationX > 70 || event.velocityX > 700) runOnJS(goThread)(-1);
+      else feedX.value = withSpring(0, { damping: 20, stiffness: 220 });
+    });
+
+  // Свайп от левого края открывает список переписок.
+  const edgeSwipe = Gesture.Pan()
+    .hitSlop({ left: 0, width: 32 })
+    .activeOffsetX([16, 9999])
+    .failOffsetY([-24, 24])
+    .onEnd(() => { runOnJS(setDrawerOpen)(true); });
+
+  const feedGesture = Gesture.Exclusive(edgeSwipe, threadSwipe);
+
+  const feedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: feedX.value }],
+    opacity: interpolate(Math.abs(feedX.value), [0, screenWidth * 0.3], [1, 0.45], 'clamp'),
+  }));
 
   return (
     <ThemedView style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
         <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
-          <ThemedText style={styles.title}>Помощник</ThemedText>
-          <TouchableOpacity onPress={undoLast} hitSlop={8} style={[styles.undoBtn, { borderColor: theme.separator }]}>
-            <SymbolView name="arrow.uturn.backward" tintColor={theme.textSecondary} size={14} />
-            <ThemedText type="small" themeColor="textSecondary">Отменить</ThemedText>
-          </TouchableOpacity>
+          <AppleIconButton
+            label="Список чатов"
+            systemImage="line.3.horizontal"
+            onPress={() => { haptic.tap(); setDrawerOpen(true); }}
+            variant="glass"
+            tint={theme.text}
+            size={40}
+          />
+          <View style={styles.headerTitle}>
+            <ThemedText style={styles.title} numberOfLines={1}>{activeThread.title || 'Помощник'}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+              {activePreset.title} · чат {Math.max(1, threads.findIndex((t) => String(t.id) === String(threadId)) + 1)} из {Math.max(1, threads.length)}
+            </ThemedText>
+          </View>
+          <View style={styles.headerActions}>
+            <MenuView
+              title="Новый чат"
+              actions={PRESETS.map((preset) => ({
+                id: `new:${preset.id}`,
+                title: preset.title,
+                image: preset.icon,
+              }))}
+              onPressAction={(event) => {
+                const preset = event.nativeEvent.event.replace(/^new:/, '') as PresetId;
+                if (PRESETS.some((item) => item.id === preset)) void createThread(preset);
+              }}>
+              <AppleIconButton
+                label="Новый чат"
+                systemImage="plus"
+                variant="glass"
+                tint={theme.text}
+                size={40}
+              />
+            </MenuView>
+          <MenuView
+            title="Помощник"
+            actions={[
+              {
+                id: 'preset',
+                title: 'Пресет',
+                image: 'slider.horizontal.3' as SFSymbol,
+                attributes: { disabled: !!activeThread.main },
+                subactions: PRESETS.map((preset) => ({
+                  id: `preset:${preset.id}`,
+                  title: preset.title,
+                  image: preset.icon,
+                  state: activePreset.id === preset.id ? 'on' : 'off',
+                })),
+              },
+              { id: 'clear', title: 'Очистить чат', image: 'trash' as SFSymbol, attributes: { destructive: true } },
+              ...(activeThread.main ? [] : [{ id: 'delete', title: 'Удалить чат', image: 'trash.slash' as SFSymbol, attributes: { destructive: true } }]),
+            ]}
+            onPressAction={(event) => {
+              const action = event.nativeEvent.event;
+              if (action === 'clear') void clearChat();
+              else if (action === 'delete') void deleteThread();
+              else if (action.startsWith('preset:')) void changePreset(action.replace('preset:', '') as PresetId);
+            }}>
+            <AppleIconButton
+              label="Ещё"
+              systemImage="ellipsis"
+              variant="glass"
+              tint={theme.text}
+              size={40}
+            />
+          </MenuView>
+          </View>
         </View>
 
+        <GestureDetector gesture={feedGesture}>
+        <Reanimated.View style={[{ flex: 1 }, feedStyle]}>
         <ScrollView
           ref={scrollRef}
           style={{ flex: 1 }}
@@ -204,10 +437,18 @@ export function Assistant() {
           onContentSizeChange={() => scrollEnd(false)}>
           {msgs.length === 0 ? (
             <View style={styles.emptyWrap}>
-              <SymbolView name="bubble.left.and.bubble.right" tintColor={theme.separator} size={44} />
+              <SymbolView name="sparkles" tintColor={theme.tint} size={38} />
+              <ThemedText style={styles.emptyTitle}>Что нужно сделать?</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
+                {activePreset.id === 'finance'
+                  ? 'Например: «запиши 500 на такси» или «сколько мне должны».'
+                  : activePreset.id === 'tech'
+                    ? 'Расскажи, что выбираешь, для каких задач и какой примерно бюджет.'
+                    : 'Можно обсудить идею, решение, план или просто поговорить.'}
+              </ThemedText>
             </View>
           ) : (
-            msgs.map((m) =>
+            msgs.map((m, index) =>
               m.role === 'user' ? (
                 <View key={m.id} style={styles.userRow}>
                   <View style={[styles.userBubble, { backgroundColor: theme.tint }]}>
@@ -221,6 +462,17 @@ export function Assistant() {
                     <ThemedText>{m.content}</ThemedText>
                   </View>
                   {!!hhmm(m.created_at) && <ThemedText type="small" themeColor="textSecondary" style={styles.time}>{hhmm(m.created_at)}</ThemedText>}
+                  {index === lastAssistantIndex && undoForTurn && activePreset.id === 'finance' ? (
+                    <AppleButton
+                      label="Отменить действие"
+                      systemImage="arrow.uturn.backward"
+                      onPress={() => void undoLast()}
+                      variant="plain"
+                      role="destructive"
+                      size="small"
+                      style={styles.inlineUndo}
+                    />
+                  ) : null}
                 </View>
               ),
             )
@@ -231,28 +483,31 @@ export function Assistant() {
             </View>
           )}
         </ScrollView>
+        </Reanimated.View>
+        </GestureDetector>
 
         <View style={[styles.dock, { paddingBottom: (kbHeight > 0 ? kbHeight : insets.bottom) + Spacing.two }]}>
-          {recording ? (
-            <View style={[styles.bar, { backgroundColor: theme.backgroundElement }]}>
-              {/* Кнопка «готово» там же, где была кнопка микрофона — слева начал, слева и закончил */}
-              <TouchableOpacity onPress={() => stopVoice(true)} activeOpacity={0.85}>
-                <View style={[styles.micBig, { backgroundColor: theme.tint }]}><SymbolView name="checkmark" tintColor="#fff" size={22} /></View>
-              </TouchableOpacity>
-              <Animated.View style={[styles.recDot, { backgroundColor: theme.danger, transform: [{ scale: pulse }] }]} />
-              <ThemedText style={{ flex: 1, color: theme.text, fontWeight: '600' }}>Слушаю… {mmss(recSecs)}</ThemedText>
-              <TouchableOpacity onPress={() => stopVoice(false)} hitSlop={8} style={styles.mini}>
-                <ThemedText type="smallBold" themeColor="textSecondary">Отмена</ThemedText>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={[styles.bar, { backgroundColor: theme.backgroundElement }]}>
-              <TouchableOpacity onPress={startVoice} activeOpacity={0.85}>
-                <View style={[styles.micBig, { backgroundColor: theme.tint }]}>
-                  <SymbolView name="mic.fill" tintColor="#fff" size={22} />
-                </View>
-              </TouchableOpacity>
+          <View style={styles.composer}>
+            <View style={[styles.bar, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
+              <MenuView
+                title="Добавить изображение"
+                actions={[
+                  { id: 'camera', title: 'Снять фото', image: 'camera.fill' },
+                  { id: 'gallery', title: 'Выбрать из галереи', image: 'photo.on.rectangle' },
+                ]}
+                onPressAction={(event) => {
+                  void addByImage(event.nativeEvent.event === 'camera');
+                }}>
+                <AppleIconButton
+                  label="Фото"
+                  systemImage="photo"
+                  variant="glass"
+                  tint={theme.text}
+                  size={42}
+                />
+              </MenuView>
               <TextInput
+                ref={inputRef}
                 placeholder="Сообщение"
                 placeholderTextColor={theme.textSecondary}
                 value={input}
@@ -260,43 +515,55 @@ export function Assistant() {
                 onSubmitEditing={() => send(input)}
                 returnKeyType="send"
                 multiline
+                maxFontSizeMultiplier={1.18}
                 style={[styles.input, { color: theme.text }]}
               />
-              <TouchableOpacity onPress={pickImageSource} hitSlop={10} style={styles.mini}>
-                <SymbolView name="camera.fill" tintColor={theme.textSecondary} size={24} />
-              </TouchableOpacity>
-              {input.trim() ? (
-                <TouchableOpacity onPress={() => send(input)} disabled={sending} activeOpacity={0.8}>
-                  <View style={[styles.send, { backgroundColor: theme.tint }]}>
-                    {sending ? <ActivityIndicator color="#fff" size="small" /> : <SymbolView name="arrow.up" tintColor="#fff" size={22} />}
-                  </View>
-                </TouchableOpacity>
-              ) : null}
+              <HoldMic onResult={transcribe} disabled={sending} size={42} bottomOffset={60} />
+              <AppleIconButton
+                label="Отправить"
+                systemImage="arrow.up"
+                onPress={() => void send(input)}
+                disabled={!input.trim() || sending}
+                variant="prominent"
+                size={42}
+              />
             </View>
-          )}
+          </View>
         </View>
       </View>
+
+      <ChatDrawer
+        visible={drawerOpen}
+        threads={threads}
+        activeId={threadId}
+        onClose={() => setDrawerOpen(false)}
+        onPick={(id) => { setDrawerOpen(false); setThreadId(id); setUndoForTurn(null); }}
+        onCreate={() => { setDrawerOpen(false); void createThread('general'); }}
+        onDelete={(thread) => { setDrawerOpen(false); void deleteThreadById(String(thread.id)); }}
+      />
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  header: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.two, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { fontSize: 34, fontWeight: '800', lineHeight: 40 },
-  undoBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth },
+  header: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.two, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  headerTitle: { flex: 1, alignItems: 'flex-start' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  title: { fontSize: 30, fontWeight: '700', lineHeight: 36, letterSpacing: -0.8 },
+  threadPicker: { alignSelf: 'flex-start', marginLeft: -8, maxWidth: 250 },
   feed: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.three, gap: Spacing.two, flexGrow: 1 },
-  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.six },
+  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: Spacing.four, paddingVertical: Spacing.six, gap: Spacing.two },
+  emptyTitle: { fontSize: 20, lineHeight: 26, fontWeight: '700', marginTop: Spacing.two },
+  emptyText: { textAlign: 'center', maxWidth: 300 },
   time: { marginTop: 2, marginHorizontal: 6, fontSize: 11 },
   userRow: { alignItems: 'flex-end' },
   userBubble: { maxWidth: '85%', paddingVertical: Spacing.two, paddingHorizontal: Spacing.three, borderRadius: Radius.lg, borderBottomRightRadius: 6 },
-  aiRow: { alignItems: 'flex-start' },
+  aiRow: { alignItems: 'flex-start', gap: 2 },
   aiBubble: { maxWidth: '90%', padding: Spacing.three, borderRadius: Radius.lg, borderBottomLeftRadius: 6, borderWidth: StyleSheet.hairlineWidth },
+  inlineUndo: { alignSelf: 'flex-start', marginTop: 2 },
   typingRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.two, paddingHorizontal: 4 },
-  dock: { paddingHorizontal: Spacing.three, paddingTop: Spacing.one },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingLeft: 6, paddingRight: 6, paddingVertical: 5, minHeight: 52, borderRadius: 26, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.1)' },
-  input: { flex: 1, fontSize: 16, paddingVertical: Spacing.two, maxHeight: 100 },
-  mini: { padding: 6 },
-  micBig: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  send: { width: 40, height: 40, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
-  recDot: { width: 16, height: 16, borderRadius: 8, marginLeft: Spacing.two },
+  dock: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two },
+  composer: { flexDirection: 'row', alignItems: 'flex-end' },
+  bar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 5, paddingVertical: 4, minHeight: 52, borderRadius: 26, borderWidth: 1 },
+  input: { flex: 1, minWidth: 0, fontSize: 16, paddingHorizontal: 4, paddingVertical: 7, maxHeight: 100 },
 });

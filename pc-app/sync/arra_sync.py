@@ -19,6 +19,7 @@ import os
 import platform
 import shlex
 import shutil
+import sqlite3
 import sys
 import base64
 import threading
@@ -41,6 +42,8 @@ from sync_common import (
     REMOTE_PROJECTS,
     SKIP_DIRS,
     SKIP_DIR_PREFIXES,
+    SKIP_DIR_SUFFIXES,
+    SKIP_FILE_MARKERS,
     SKIP_FILES,
     connect,
     ensure_dir,
@@ -55,6 +58,7 @@ REMOTE_STATE = "/home/tima/sync/noda-state.json"
 REMOTE_INDEX_ROOT = "/home/tima/sync/.noda-index"
 DEVICE_NAME = os.environ.get("NODA_DEVICE_NAME") or platform.node() or "Компьютер"
 DEVICE_ROLE = os.environ.get("NODA_DEVICE_ROLE") or "computer"
+MAX_FILE_ATTEMPTS = 3
 
 SCOPES = (
     {"id": "projects", "label": "Проекты", "local": LOCAL_PROJECTS, "remote": REMOTE_PROJECTS},
@@ -176,8 +180,34 @@ def remote_matches_local_prefix(sftp, local_path, remote_path, remote_size, wind
         return False
 
 
+def prepare_append_offsets(sftp, scopes):
+    """Определить фактический объём дописываемых активных сессий для статуса.
+
+    Без этого карточка показывала полный размер JSONL (сотни мегабайт), хотя
+    push отправляет только хвост после уже сохранённой серверной части.
+    """
+    for scope in scopes:
+        for rel in scope.get("uploadList", ()):
+            if not is_append_only_session(scope, rel):
+                continue
+            local = scope["localMap"].get(rel)
+            remote = scope["remoteMap"].get(rel)
+            if not local or not remote or not (0 < int(remote[0]) < int(local[0])):
+                continue
+            remote_path = f"{scope['remote']}/{rel}"
+            local_path = scope["local"] / Path(rel.replace("/", os.sep))
+            if remote_matches_local_prefix(sftp, local_path, remote_path, int(remote[0])):
+                scope.setdefault("appendOffsets", {})[rel] = int(remote[0])
+
+
 def upload_fixed_prefix(sftp, local_path, remote_stream, start, end, progress_callback):
     """Передаёт зафиксированный диапазон, даже если исходный JSONL дописывается."""
+    # Без pipelining Paramiko ждёт подтверждение каждого чанка. На больших JSONL
+    # это превращало нормальный 20–30 МБ/с канал в десятки КБ/с.
+    try:
+        remote_stream.set_pipelined(True)
+    except Exception:
+        pass
     sent = int(start)
     origin = sent
     remaining = max(0, int(end) - sent)
@@ -347,10 +377,12 @@ import base64, json, os, sys, time, zlib
 base = sys.argv[1]
 skip_dirs = set(json.loads(sys.argv[2]))
 skip_prefixes = tuple(json.loads(sys.argv[3]))
-skip_files = set(json.loads(sys.argv[4]))
-include_roots = set(json.loads(sys.argv[5]))
-cache_path = sys.argv[6]
-state_path = sys.argv[7]
+skip_suffixes = tuple(json.loads(sys.argv[4]))
+skip_files = set(json.loads(sys.argv[5]))
+skip_file_markers = tuple(json.loads(sys.argv[6]))
+include_roots = set(json.loads(sys.argv[7]))
+cache_path = sys.argv[8]
+state_path = sys.argv[9]
 blob = None
 try:
     cache_mtime = os.path.getmtime(cache_path)
@@ -371,8 +403,17 @@ if not blob:
                 try:
                     if folder == base and include_roots and entry.name not in include_roots: continue
                     if entry.is_dir(follow_symlinks=False):
-                        if entry.name not in skip_dirs and not entry.name.startswith(skip_prefixes): stack.append(entry.path)
-                    elif entry.is_file(follow_symlinks=False) and entry.name not in skip_files:
+                        if (
+                            entry.name not in skip_dirs and
+                            not entry.name.startswith(skip_prefixes) and
+                            not entry.name.endswith(skip_suffixes)
+                        ):
+                            stack.append(entry.path)
+                    elif (
+                        entry.is_file(follow_symlinks=False) and
+                        entry.name not in skip_files and
+                        not any(marker in entry.name for marker in skip_file_markers)
+                    ):
                         st = entry.stat()
                         rel = os.path.relpath(entry.path, base).replace(os.sep, "/")
                         files[rel] = [int(st.st_size), int(st.st_mtime)]
@@ -386,12 +427,14 @@ if not blob:
     except Exception: pass
 print(base64.b64encode(blob).decode("ascii"))
 '''
-    cache_path = f"/home/tima/sync/.noda-index/{scope_id}-v2.z"
-    cmd = "python3 -c {script} {base} {dirs} {prefixes} {files} {include} {cache} {state}".format(
+    cache_path = f"/home/tima/sync/.noda-index/{scope_id}-v4.z"
+    cmd = "python3 -c {script} {base} {dirs} {prefixes} {suffixes} {files} {markers} {include} {cache} {state}".format(
         script=shlex.quote(script), base=shlex.quote(remote_base),
         dirs=shlex.quote(json.dumps(sorted(SKIP_DIRS | set(extra_skip_dirs or ())))),
         prefixes=shlex.quote(json.dumps(sorted(SKIP_DIR_PREFIXES))),
+        suffixes=shlex.quote(json.dumps(sorted(SKIP_DIR_SUFFIXES))),
         files=shlex.quote(json.dumps(sorted(SKIP_FILES | set(extra_skip_files or ())))),
+        markers=shlex.quote(json.dumps(sorted(SKIP_FILE_MARKERS))),
         include=shlex.quote(json.dumps(sorted(set(include_roots or ())))),
         cache=shlex.quote(cache_path), state=shlex.quote(REMOTE_STATE),
     )
@@ -407,13 +450,67 @@ print(base64.b64encode(blob).decode("ascii"))
     return files
 
 
+# Признаки того, что соединение с сервером умерло: дальше повторять бессмысленно —
+# нужно переподключиться, иначе каждый следующий файл падает с той же ошибкой.
+DROP_MARKERS = (
+    "socket is closed", "server connection dropped", "eof during", "broken pipe",
+    "connection reset", "10054", "not connected", "channel closed", "administratively prohibited",
+    "no existing session", "socket exception",
+)
+
+
+def looks_dropped(text):
+    low = str(text).lower()
+    return any(mark in low for mark in DROP_MARKERS)
+
+
+def source_changed_since(path, before):
+    if before is None:
+        return not Path(path).exists()
+    try:
+        after = Path(path).stat()
+        return (
+            int(after.st_size) != int(before.st_size) or
+            int(after.st_mtime_ns) != int(before.st_mtime_ns)
+        )
+    except OSError:
+        return True
+
+
+def remote_free_bytes(client, path="/home/tima/sync"):
+    """Свободное место на серверном разделе или None, если df недоступен."""
+    try:
+        _stdin, stdout, _stderr = client.exec_command(
+            f"df -Pk {shlex.quote(path)} | tail -1",
+            timeout=30,
+        )
+        fields = stdout.read().decode("utf-8", "replace").strip().split()
+        if stdout.channel.recv_exit_status() != 0 or len(fields) < 4:
+            return None
+        return int(fields[3]) * 1024
+    except Exception:
+        return None
+
+
+# Активные диалоги нужны на каждом устройстве и синхронизируются как
+# append-only JSONL. Архивные диалоги остаются локальными: они занимают
+# гигабайты и уже не участвуют в текущей работе.
+DEFAULT_SKIPPED_SCOPES = {"codex-archive"}
+SKIP_SCOPES = set(DEFAULT_SKIPPED_SCOPES)
+
+
+def active_scopes():
+    return [scope for scope in SCOPES if scope["id"] not in SKIP_SCOPES]
+
+
 def scan_everything(mode="status"):
     started = time.time()
     emit({"type": "phase", "msg": "Подключаюсь к серверу…", "detail": "Проверяю защищённое соединение"})
     client, sftp = connect()
     result = []
     try:
-        maps = {scope["id"]: {} for scope in SCOPES}
+        scopes = active_scopes()
+        maps = {scope["id"]: {} for scope in scopes}
 
         def remote_task(scope):
             label = scope["label"]
@@ -430,21 +527,24 @@ def scan_everything(mode="status"):
                 emit({"type": "scan", "side": "local", "scope": _label, "files": files,
                       "dirs": dirs, "done": done, "elapsed": int(time.time() - started),
                       "msg": f"Сканирую этот компьютер · {_label}"})
-            return scan_local(scope["local"], mode == "push", label, progress=local_progress,
+            # Статус должен показывать ровно то, что реально сможет отправить push.
+            # Иначе крупные архивы и машинные .log/.tmp попадали в карточку
+            # «Отправить» (например, 3.8 ГБ), хотя сама отправка их затем пропускала.
+            return scan_local(scope["local"], mode != "pull", label, progress=local_progress,
                               extra_skip_dirs=scope.get("skipDirs"), extra_skip_files=scope.get("skipFiles"),
                               include_roots=scope.get("includeRoots"),
                               allow_large=scope["id"] in {"codex-sessions", "codex-archive"})
 
-        with ThreadPoolExecutor(max_workers=min(12, len(SCOPES) * 2)) as pool:
+        with ThreadPoolExecutor(max_workers=min(12, max(len(scopes), 1) * 2)) as pool:
             futures = {}
-            for scope in SCOPES:
+            for scope in scopes:
                 futures[pool.submit(remote_task, scope)] = (scope["id"], "remote")
                 futures[pool.submit(local_task, scope)] = (scope["id"], "local")
             for future in as_completed(futures):
                 sid, side = futures[future]
                 maps[sid][side] = future.result()
 
-        for scope in SCOPES:
+        for scope in scopes:
             local = maps[scope["id"]]["local"]
             remote = maps[scope["id"]]["remote"]
             upload, download, conflicts = classify(local, remote)
@@ -516,9 +616,10 @@ def build_status(scopes, started, server_state=None):
             row["remoteFiles"] += 1
             row["remoteLatest"] = max(row["remoteLatest"], int(meta[1] or 0))
         for rel in uploads:
-            bucket(scope, rel, "upload", local[rel][0])
+            upload_size = max(0, int(local[rel][0]) - int(scope.get("appendOffsets", {}).get(rel, 0)))
+            bucket(scope, rel, "upload", upload_size)
             issue = local_file_issue(scope["local"] / Path(rel.replace("/", os.sep)))
-            add_change(scope, rel, "upload", local[rel][0], local[rel][1], issue)
+            add_change(scope, rel, "upload", upload_size, local[rel][1], issue)
         for rel in downloads:
             bucket(scope, rel, "download", remote[rel][0])
             local_target = scope["local"] / Path(rel.replace("/", os.sep))
@@ -550,6 +651,8 @@ def build_status(scopes, started, server_state=None):
         "localFiles": local_files, "remoteFiles": remote_files,
         "upload": upload_n, "download": download_n, "conflicts": conflict_n, "blocked": blocked_n,
         "projects": rows, "scopes": scope_rows,
+        "excludedScopes": sorted(SKIP_SCOPES),
+        "codexHistoryPolicy": "active-only",
         "serverState": server_state or {"devices": {}},
         "elapsed": int(time.time() - started),
     })
@@ -571,6 +674,174 @@ def backup_remote_file(sftp, remote_path, scope_id, rel, stamp):
     target = backup_path(scope_id, rel, stamp)
     target.parent.mkdir(parents=True, exist_ok=True)
     sftp.get(remote_path, str(target))
+
+
+def _codex_epoch(value, fallback):
+    if not value:
+        return int(fallback)
+    try:
+        from datetime import datetime
+        return int(datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return int(fallback)
+
+
+def _codex_clean_title(message):
+    text = str(message or "").strip()
+    marker = "## My request for Codex:"
+    if marker in text:
+        text = text.split(marker, 1)[1].strip()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    text = " ".join(lines)
+    return text[:240]
+
+
+def _codex_session_record(path, archived):
+    """Собрать строку state_5.sqlite из уже скачанного rollout JSONL.
+
+    Codex Desktop не подхватывает новые rollout-файлы после того, как его
+    внутренний backfill однажды завершился. Поэтому одной синхронизации папки
+    sessions недостаточно: чат физически есть, но в боковой панели его нет.
+    """
+    meta = {}
+    context = {}
+    first_message = ""
+    with open(path, "r", encoding="utf-8", errors="replace") as stream:
+        for index, line in enumerate(stream):
+            if index > 250 or (meta and context and first_message):
+                break
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            payload = row.get("payload") if isinstance(row, dict) else None
+            if row.get("type") == "session_meta" and isinstance(payload, dict) and not meta:
+                meta = payload
+            elif row.get("type") == "turn_context" and isinstance(payload, dict) and not context:
+                context = payload
+            elif (
+                row.get("type") == "event_msg" and isinstance(payload, dict) and
+                payload.get("type") == "user_message" and not first_message
+            ):
+                first_message = str(payload.get("message") or "").strip()
+
+    info = path.stat()
+    updated = int(info.st_mtime)
+    created = _codex_epoch(meta.get("timestamp"), updated)
+    session_id = str(meta.get("id") or meta.get("session_id") or path.stem[-36:])
+    source = meta.get("source") or "vscode"
+    if not isinstance(source, str):
+        source = json.dumps(source, ensure_ascii=False, separators=(",", ":"))
+    sandbox = context.get("sandbox_policy") or {"type": "disabled"}
+    if not isinstance(sandbox, str):
+        sandbox = json.dumps(sandbox, ensure_ascii=False, separators=(",", ":"))
+    cwd = str(meta.get("cwd") or context.get("cwd") or "")
+    rollout_path = str(path.resolve())
+    if os.name == "nt":
+        if cwd and not cwd.startswith("\\\\?\\"):
+            cwd = "\\\\?\\" + cwd
+        if not rollout_path.startswith("\\\\?\\"):
+            rollout_path = "\\\\?\\" + rollout_path
+    title = _codex_clean_title(first_message)
+    return {
+        "id": session_id,
+        "rollout_path": rollout_path,
+        "created_at": created,
+        "updated_at": updated,
+        "source": source,
+        "model_provider": str(meta.get("model_provider") or "openai"),
+        "cwd": cwd,
+        "title": title,
+        "sandbox_policy": sandbox,
+        "approval_mode": str(context.get("approval_policy") or "never"),
+        "tokens_used": 0,
+        "has_user_event": 0,
+        "archived": 1 if archived else 0,
+        "archived_at": updated if archived else None,
+        "git_sha": None,
+        "git_branch": None,
+        "git_origin_url": None,
+        "cli_version": str(meta.get("cli_version") or ""),
+        "first_user_message": first_message,
+        "agent_nickname": meta.get("agent_nickname"),
+        "agent_role": meta.get("agent_role"),
+        "memory_mode": "enabled",
+        "model": context.get("model"),
+        "reasoning_effort": context.get("effort"),
+        "agent_path": meta.get("agent_path"),
+        "created_at_ms": created * 1000,
+        "updated_at_ms": updated * 1000,
+        "thread_source": meta.get("thread_source"),
+        "preview": first_message[:12000],
+        "recency_at": updated,
+        "recency_at_ms": updated * 1000,
+        "history_mode": str(meta.get("history_mode") or "legacy"),
+    }
+
+
+def repair_codex_thread_index():
+    """Зарегистрировать скачанные сессии в локальном индексе Codex."""
+    state_db = LOCAL_CODEX / "state_5.sqlite"
+    if not state_db.exists():
+        return 0
+    connection = sqlite3.connect(str(state_db), timeout=30)
+    try:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='threads'"
+        ).fetchone()
+        if not table:
+            return 0
+        known = {row[0] for row in connection.execute("SELECT id FROM threads")}
+        missing = []
+        roots = (
+            (LOCAL_CODEX / "sessions", False),
+            (LOCAL_CODEX / "archived_sessions", True),
+        )
+        for root, archived in roots:
+            if not root.exists():
+                continue
+            for session_path in root.rglob("*.jsonl"):
+                session_id = session_path.stem[-36:]
+                if session_id not in known:
+                    missing.append(_codex_session_record(session_path, archived))
+        if not missing:
+            return 0
+
+        backup_dir = LOCAL_CODEX / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / ("noda-thread-index-" + time.strftime("%Y%m%d-%H%M%S") + ".sqlite")
+        backup = sqlite3.connect(str(backup_path))
+        try:
+            connection.backup(backup)
+        finally:
+            backup.close()
+
+        available = {row[1] for row in connection.execute("PRAGMA table_info(threads)")}
+        columns = [key for key in missing[0] if key in available]
+        placeholders = ",".join("?" for _ in columns)
+        statement = f"INSERT OR IGNORE INTO threads ({','.join(columns)}) VALUES ({placeholders})"
+        connection.execute("BEGIN IMMEDIATE")
+        for record in missing:
+            connection.execute(statement, [record[column] for column in columns])
+        connection.commit()
+        imported = sum(
+            1 for record in missing
+            if connection.execute("SELECT 1 FROM threads WHERE id = ?", (record["id"],)).fetchone()
+        )
+        emit({
+            "type": "codex_index",
+            "imported": imported,
+            "msg": f"Codex · восстановлено задач: {imported}",
+        })
+        return imported
+    except Exception:
+        try:
+            connection.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        connection.close()
 
 
 def transfer(mode, only, dry_run=False):
@@ -627,6 +898,7 @@ def transfer(mode, only, dry_run=False):
             plan["bytes"] += int(size or 0)
         emit({"type": "plan", "direction": mode, "files": total, "bytes": total_bytes,
               "only": only or "", "conflicts": len(conflicts),
+              "excludedScopes": sorted(SKIP_SCOPES),
               "projects": sorted(project_plan.values(), key=lambda p: p["label"].casefold())})
         for scope, rel in conflicts[:100]:
             emit({"type": "fileerror", "file": f"{scope['label']} · {rel}",
@@ -639,12 +911,43 @@ def transfer(mode, only, dry_run=False):
                   "elapsed": int(time.time() - started)})
             return
 
+        if total > 0 and mode in ("push", "sync"):
+            push_bytes = sum(int(size or 0) for direction, _scope, _rel, size in operations if direction == "push")
+            free_bytes = remote_free_bytes(client)
+            required_bytes = push_bytes + 512 * 1024 * 1024
+            emit({
+                "type": "storage", "freeBytes": free_bytes,
+                "requiredBytes": required_bytes, "plannedUploadBytes": push_bytes,
+            })
+            if free_bytes is not None and free_bytes < required_bytes:
+                emit({
+                    "type": "error",
+                    "code": "remote-storage-full",
+                    "error": (
+                        "На сервере недостаточно места для передачи: "
+                        f"свободно {free_bytes / (1024 ** 3):.1f} ГБ, "
+                        f"нужно не менее {required_bytes / (1024 ** 3):.1f} ГБ. "
+                        "Файлы не повреждены; освободите место и запустите передачу снова."
+                    ),
+                })
+                return
+
         if total == 0:
+            restored_tasks = 0
+            index_errors = 0
+            if mode in ("pull", "sync"):
+                try:
+                    restored_tasks = repair_codex_thread_index()
+                except Exception as ex:
+                    index_errors = 1
+                    emit({"type": "fileerror", "file": "Codex · список задач",
+                          "error": "не удалось обновить индекс: " + str(ex)[:160]})
             if mode in ("push", "pull"):
-                record_server_state(sftp, mode, 0, 0, 0)
+                record_server_state(sftp, mode, 0, 0, index_errors)
                 write_remote_indexes(sftp, scopes)
-            emit({"type": "done", "direction": mode, "transferred": 0, "errors": 0,
+            emit({"type": "done", "direction": mode, "transferred": 0, "errors": index_errors,
                   "bytes": 0, "skipped": len(conflicts), "msg": "Уже актуально",
+                  "restoredTasks": restored_tasks,
                   "elapsed": int(time.time() - started)})
             return
 
@@ -654,7 +957,12 @@ def transfer(mode, only, dry_run=False):
         for index, (direction, scope, rel, _size) in enumerate(operations, 1):
             local_path = scope["local"] / Path(rel.replace("/", os.sep))
             issue = ""
-            if direction == "push" or local_path.exists():
+            # Файл мог законно исчезнуть после сканирования (например, Expo
+            # очищает tmp/export-ios). Это не блокировка и не повод отменять
+            # всю очередь: цикл передачи ниже отметит его как пропущенный.
+            if direction == "push" and not local_path.exists():
+                issue = ""
+            elif direction == "push" or local_path.exists():
                 issue = local_file_issue(local_path, require_exclusive=(direction == "pull"))
             if issue:
                 blocked.append({
@@ -677,6 +985,7 @@ def transfer(mode, only, dry_run=False):
         project_done_bytes = {key: 0 for key in project_plan}
         successful = []
         recent_emit = [0.0]
+        skipped_sources = 0
         for direction, scope, rel, size in operations:
             local_path = scope["local"] / Path(rel.replace("/", os.sep))
             remote_path = f"{scope['remote']}/{rel}"
@@ -684,9 +993,12 @@ def transfer(mode, only, dry_run=False):
             label = project_label(key)
             plan = project_plan[key]
             ok = False
+            source_skipped = False
+            skip_reason = ""
             last_error = ""
             expected_mtime = 0
             success_size = int(size)
+            before = None
 
             def progress_callback(transferred, file_total):
                 now = time.time()
@@ -707,9 +1019,14 @@ def transfer(mode, only, dry_run=False):
                     "projectTotalBytes": plan["bytes"], "state": "copying",
                 })
 
-            for attempt in range(4):
+            for attempt in range(MAX_FILE_ATTEMPTS):
+                before = None
                 try:
                     if direction == "push":
+                        if not local_path.exists():
+                            source_skipped = True
+                            skip_reason = "файл исчез после сканирования — очередь продолжена"
+                            break
                         issue = local_file_issue(local_path, require_exclusive=False)
                         if issue:
                             raise RuntimeError(issue)
@@ -799,11 +1116,62 @@ def transfer(mode, only, dry_run=False):
                     break
                 except Exception as ex:
                     last_error = str(ex)
+                    if direction == "push" and not local_path.exists():
+                        source_skipped = True
+                        skip_reason = "файл исчез во время отправки — очередь продолжена"
+                        break
+                    if (
+                        direction == "push" and
+                        source_changed_since(local_path, before) and
+                        attempt + 1 >= MAX_FILE_ATTEMPTS
+                    ):
+                        source_skipped = True
+                        skip_reason = "файл менялся во время отправки — будет проверен при следующем запуске"
+                        break
                     emit({"type": "retry", "direction": direction, "project": label,
-                          "file": rel, "attempt": attempt + 1, "error": last_error[:160]})
-                    if attempt < 3:
+                          "file": rel, "attempt": attempt + 1, "maxAttempts": MAX_FILE_ATTEMPTS,
+                          "error": last_error[:160]})
+                    if looks_dropped(last_error):
+                        # соединение оборвалось — поднимаем новое, иначе посыплются все файлы подряд
+                        emit({"type": "phase", "msg": "Связь оборвалась, переподключаюсь…",
+                              "detail": last_error[:120]})
+                        try: sftp.close()
+                        except Exception: pass
+                        try: client.close()
+                        except Exception: pass
+                        try:
+                            client, sftp = connect()
+                            emit({"type": "phase", "msg": "Соединение восстановлено",
+                                  "detail": "Продолжаю передачу"})
+                        except Exception as reconnect_error:
+                            emit({"type": "error", "error": f"Сервер недоступен: {reconnect_error}"})
+                            raise
+                    if attempt + 1 < MAX_FILE_ATTEMPTS:
                         time.sleep(0.6 * (attempt + 1))
             done += 1
+            if source_skipped:
+                skipped_sources += 1
+                total_bytes = max(0, total_bytes - int(size or 0))
+                plan["bytes"] = max(0, plan["bytes"] - int(size or 0))
+                project_done_files[key] += 1
+                emit({
+                    "type": "file_skipped", "direction": direction,
+                    "project": label, "projectKey": key, "file": rel,
+                    "reason": skip_reason,
+                })
+                speed = int(done_bytes / max(time.time() - t0, 0.001))
+                eta = int((total_bytes - done_bytes) / speed) if speed else None
+                emit({
+                    "type": "progress", "direction": direction, "scope": scope["label"],
+                    "project": label, "projectKey": key,
+                    "done": done, "total": total, "bytes": done_bytes,
+                    "totalBytes": total_bytes, "file": rel, "fileBytes": 0,
+                    "fileTotal": 0, "speed": speed, "eta": eta,
+                    "projectDone": project_done_files[key], "projectTotal": plan["files"],
+                    "projectBytes": project_done_bytes[key], "projectTotalBytes": plan["bytes"],
+                    "state": "skipped",
+                })
+                continue
             if ok:
                 done_bytes += size
                 project_done_files[key] += 1
@@ -845,12 +1213,20 @@ def transfer(mode, only, dry_run=False):
                   "verified": verified, "errors": verify_errors, "file": rel})
 
         errors += verify_errors
+        restored_tasks = 0
+        if mode in ("pull", "sync"):
+            try:
+                restored_tasks = repair_codex_thread_index()
+            except Exception as ex:
+                errors += 1
+                emit({"type": "fileerror", "file": "Codex · список задач",
+                      "error": "не удалось обновить индекс: " + str(ex)[:160]})
         if mode in ("push", "pull"):
             record_server_state(sftp, mode, verified, done_bytes, errors)
             write_remote_indexes(sftp, scopes)
         emit({"type": "done", "direction": mode, "transferred": verified,
-              "errors": errors, "bytes": done_bytes, "skipped": len(conflicts),
-              "verified": verified, "planned": total,
+              "errors": errors, "bytes": done_bytes, "skipped": len(conflicts) + skipped_sources,
+              "verified": verified, "planned": total, "restoredTasks": restored_tasks,
               "elapsed": int(time.time() - started)})
     finally:
         try:
@@ -865,6 +1241,16 @@ def main():
     mode = args[0] if args else "status"
     only = None
     dry_run = "--dry-run" in args
+    if "--skip-scope" in args:
+        idx = args.index("--skip-scope")
+        if idx + 1 < len(args):
+            SKIP_SCOPES.update(part.strip() for part in args[idx + 1].split(",") if part.strip())
+    if "--only-scope" in args:
+        idx = args.index("--only-scope")
+        if idx + 1 < len(args):
+            keep = {part.strip() for part in args[idx + 1].split(",") if part.strip()}
+            SKIP_SCOPES.clear()
+            SKIP_SCOPES.update(scope["id"] for scope in SCOPES if scope["id"] not in keep)
     if "--only" in args:
         idx = args.index("--only")
         if idx + 1 < len(args):
@@ -873,6 +1259,7 @@ def main():
         if mode == "status":
             client, sftp, scopes, started = scan_everything()
             try:
+                prepare_append_offsets(sftp, scopes)
                 build_status(scopes, started, read_server_state(sftp))
             finally:
                 sftp.close()

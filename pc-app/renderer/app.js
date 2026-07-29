@@ -69,15 +69,12 @@ async function confirmDelete(p, name) {
   else toast('Не удалось удалить', (r && r.error) || '', 'warn');
 }
 
-const NAVICON = {
-  fin: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 10h18"/></svg>',
-  chat: '<svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
-  files: '<svg viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></svg>',
-  notes: '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
-  term: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>',
-  sync: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-7.5-4M3 12a9 9 0 0 1 9-9 9 9 0 0 1 7.5 4"/><path d="M21 3v5h-5M3 21v-5h5"/></svg>',
-  remote: '<svg viewBox="0 0 24 24"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8 21h8M12 16.5V21M7 10l3-3m-3 3h4M17 10l-3 3m3-3h-4"/></svg>',
-};
+// Иконки разделов — те же плитки, что в веб-версии (сгенерированы Codex)
+const NAVICON = Object.fromEntries(
+  [['fin', 'finance'], ['chat', 'assistant'], ['files', 'files'], ['notes', 'notes'],
+   ['term', 'terminal'], ['sync', 'transfer'], ['remote', 'remote']]
+    .map(([key, file]) => [key, `<span class="glyph"><img src="assets/tabs/${file}.png" alt=""></span>`]),
+);
 const SVG = {
   tag: '<svg viewBox="0 0 24 24"><path d="M20 12V7a2 2 0 0 0-2-2h-5L3 15l6 6 11-9z"/><circle cx="15.5" cy="8.5" r="1.2"/></svg>',
   bag: '<svg viewBox="0 0 24 24"><path d="M6 8h12l-1 12H7z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>',
@@ -101,8 +98,10 @@ const remoteDesktop = {
 };
 
 function deviceRole(device, currentId, currentRole, deviceCount) {
+  if (['laptop', 'pc', 'server'].includes(device.role)) return device.role;
   if (device.id === currentId) return currentRole || 'pc';
   const name = String(device.name || '').toLowerCase();
+  if (/сервер|server|rack|host/.test(name)) return 'server';
   if (/ноут|laptop|book|mobile/.test(name)) return 'laptop';
   if (/стацион|desktop|\bпк\b|computer/.test(name)) return 'pc';
   if (deviceCount === 2) return currentRole === 'laptop' ? 'pc' : 'laptop';
@@ -305,6 +304,12 @@ function ensureXterm(termId, cwd) {
       window.arra.clipRead().then((t) => { if (t) window.arra.ptyInput(t, termId); }).catch(() => {});
       return false;
     }
+    // Windows-поведение для Codex/Claude: Ctrl+Backspace удаляет слово слева.
+    // В терминальных приложениях это стандартный управляющий символ Ctrl+W.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && k === 'backspace') {
+      window.arra.ptyInput('\x17', termId);
+      return false;
+    }
     return true;
   });
   xts[termId] = { term, fit, opened: false, started: false, cwd: cwd || '' };
@@ -380,12 +385,14 @@ function renderTermTabs() {
       const t = termTabLabel(id);
       return `<button class="ttab ${id === activeLocal ? 'on' : ''} ${phone ? 'phone' : ''}" data-id="${id}" title="${esc(t.path)}">${phone ? '📱 ' : TERM_TAB_ICON}<span class="tname">${esc(t.name)}</span>${localTerms.length > 1 ? ` <span class="tclose" data-close="${id}">✕</span>` : ''}</button>`;
     }).join('') + `<button class="ttadd" id="ttadd" title="Новый терминал">＋</button>`
+    + `<button class="ttadd" id="termzen" title="Терминал на весь экран (Esc — выйти)">${document.body.classList.contains('term-zen') ? '⤡' : '⤢'}</button>`
     + `<span class="ttag"><span class="dot on"></span>общий c телефоном</span>`;
   bar.querySelectorAll('.ttab').forEach((b) => (b.onclick = (e) => {
     if (e.target.dataset.close) { closeLocalTerm(e.target.dataset.close); return; }
     switchLocalTerm(b.dataset.id);
   }));
   document.getElementById('ttadd').onclick = () => addTermQuick();
+  document.getElementById('termzen').onclick = () => toggleTermZen();
   document.getElementById('treetoggle').onclick = () => {
     panelCollapsed = !panelCollapsed;
     document.querySelector('.workspace').classList.toggle('ws-collapsed', panelCollapsed);
@@ -393,6 +400,18 @@ function renderTermTabs() {
     setTimeout(() => fitLocal(activeLocal), 170);
   };
 }
+/** Терминал во весь экран: прячем боковые панели и лаунчбар. Esc — выйти. */
+function toggleTermZen(force) {
+  const on = force != null ? force : !document.body.classList.contains('term-zen');
+  document.body.classList.toggle('term-zen', on);
+  renderTermTabs();
+  requestAnimationFrame(() => fitLocal(activeLocal));
+  setTimeout(() => fitLocal(activeLocal), 180);
+}
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && document.body.classList.contains('term-zen')) toggleTermZen(false);
+});
+
 function switchLocalTerm(id) { activeLocal = id; renderTermTabs(); mountActiveTerm(); }
 // Новый терминал в папке (по умолчанию — корень кода), без диалога
 function addTermQuick(cwd) {
@@ -429,6 +448,7 @@ function closeLocalTerm(id) {
 
 // ---- titlebar ----
 document.getElementById('min').onclick = () => window.arra.winMin();
+document.getElementById('max').onclick = () => window.arra.winMax();
 document.getElementById('close').onclick = () => window.arra.winClose();
 let updateUiState = '';
 let updateUiLabel = 'Проверить обновление';
@@ -447,23 +467,24 @@ async function triggerUpdateCheck() {
   try { await window.arra.updateCheck(); }
   catch { setUpdateButton('', 'Проверить обновление'); }
 }
-// ---- цветовая палитра: светлая / серая (как VS Code Dark Modern) ----
+// Десктоп использует тот же светлый визуальный язык, что и основная веб-версия.
+// Старую локально сохранённую тёмную тему больше не восстанавливаем.
 const XTERM_THEMES = {
   light: { background: '#0E1014', foreground: '#D4D7DE', cursor: '#7C86F0', selectionBackground: 'rgba(124,134,240,0.35)' },
   dark:  { background: '#1F1F1F', foreground: '#CCCCCC', cursor: '#AEB3C2', selectionBackground: 'rgba(124,134,240,0.35)' },
 };
 function curTheme() { return document.body.dataset.theme === 'dark' ? 'dark' : 'light'; }
-function applyTheme(t) {
-  if (t === 'dark') document.body.dataset.theme = 'dark';
-  else delete document.body.dataset.theme;
-  try { localStorage.setItem('arra-theme', t); } catch {}
+function applyTheme() {
+  delete document.body.dataset.theme;
+  try { localStorage.setItem('arra-theme', 'light'); } catch {}
   // перекрасить уже открытые терминалы
   for (const id in xts) { try { xts[id].term.options.theme = XTERM_THEMES[curTheme()]; } catch {} }
   const b = document.getElementById('themebtn');
-  if (b) b.title = curTheme() === 'dark' ? 'Тема: серая (VS Code) — нажми для светлой' : 'Тема: светлая — нажми для серой (VS Code)';
+  if (b) b.title = 'Тема Noda';
 }
-document.getElementById('themebtn').onclick = () => applyTheme(curTheme() === 'dark' ? 'light' : 'dark');
-try { applyTheme(localStorage.getItem('arra-theme') || 'light'); } catch { applyTheme('light'); }
+const themeButton = document.getElementById('themebtn');
+if (themeButton) themeButton.remove();
+applyTheme();
 // Гамбургер — скрыть/показать левый сайдбар (как в VS Code). Терминал переподгоняем под новую ширину.
 document.getElementById('navtoggle').onclick = () => {
   document.body.classList.toggle('nav-collapsed');
@@ -475,8 +496,10 @@ function renderLogin() {
   nav.classList.add('hidden');
   app.innerHTML = `
     <div class="center">
-      <h1>Подключить компьютер</h1>
-      <div class="card gap">
+      <div class="card gap login-card">
+        <span class="login-mark"><img src="../icon.png" alt=""></span>
+        <h1>Noda</h1>
+        <p class="login-sub">Финансы, заметки и компьютер — в одном месте</p>
         <label class="field"><span>Логин</span><input id="login" type="text" autocomplete="username" /></label>
         <label class="field"><span>Пароль</span><input id="password" type="password" autocomplete="current-password" /></label>
         <label class="field"><span>Имя компьютера</span><input id="device" type="text" placeholder="Определится автоматически" /></label>
@@ -504,21 +527,25 @@ async function doLogin() {
 async function renderNav() {
   nav.classList.remove('hidden');
   const items = [
-    ['term', 'Терминал', NAVICON.term],
+    ['fin', 'Финансы', NAVICON.fin],
+    ['chat', 'Помощник', NAVICON.chat],
+    ['notes', 'Заметки', NAVICON.notes],
     ['files', 'Файлы', NAVICON.files],
     ['sync', 'Передача', NAVICON.sync],
     ['remote', 'Удалённый ПК', NAVICON.remote],
-    ['chat', 'Помощник', NAVICON.chat],
-    ['notes', 'Заметки', NAVICON.notes],
-    ['fin', 'Финансы', NAVICON.fin],
+    ['term', 'Терминал', NAVICON.term],
   ];
   let st = state.presence.status || {};
   let appVer = '';
   try { st = await window.arra.getStatus(); } catch {}
   try { appVer = await window.arra.appVersion(); } catch {}
   const currentRole = st.deviceProfile?.role;
+  nav.style.setProperty('--active-index', String(Math.max(0, items.findIndex(([key]) => key === state.section))));
   nav.innerHTML =
-    `<div class="side-sec">Рабочее место</div>` +
+    `<div class="side-brand">
+      <img src="assets/noda.png" alt="">
+      <div><b>Noda</b><small>рабочий контур</small></div>
+    </div>` +
     items.map(([k, label, ic]) => `<button data-s="${k}" class="navitem ${state.section === k ? 'active' : ''}">${ic}<span>${label}</span></button>`).join('') +
     `<div class="side-spacer"></div>` +
     `<button class="side-update ${esc(updateUiState)}" id="side-update" type="button"><span>↻</span><b>${esc(updateUiLabel)}</b><small>${esc(appVer || '')}</small></button>` +
@@ -536,6 +563,9 @@ function route() {
   if (state.section !== 'remote' && remoteDesktop.running) stopRemoteDesktop();
   document.body.classList.toggle('term-mode', state.section === 'term');
   document.body.classList.toggle('chat-mode', state.section === 'chat');
+  document.body.classList.toggle('notes-mode', state.section === 'notes');
+  document.body.classList.toggle('remote-mode', state.section === 'remote');
+  document.body.classList.toggle('sync-mode', state.section === 'sync');
   if (state.section === 'fin') renderFin();
   else if (state.section === 'chat') renderChat();
   else if (state.section === 'term') renderTerminal();
@@ -739,6 +769,21 @@ function updateRemoteDeviceUi() {
     if (value && devices.some((item) => item.id === value)) select.value = value;
   }
   const current = selectedRemoteDevice();
+  const hint = document.getElementById('remote-stage-hint');
+  const canvas = document.getElementById('remote-canvas');
+  const stage = document.getElementById('remote-stage');
+  if (hint) hint.hidden = !!remoteDesktop.frame;
+  if (hint && !remoteDesktop.frame) {
+    hint.innerHTML = `<i class="remote-empty-icon">${syncDeviceGlyph(current?.role === 'laptop' ? 'laptop' : 'pc')}</i>
+      <b>${current ? (current.online ? 'Готов к подключению' : 'Устройство сейчас не в сети') : 'Другой компьютер не найден'}</b>
+      <span>${current ? (current.online ? 'Подключись — экран появится здесь. Мышь, клавиатура и прокрутка работают прямо в окне.' : 'Открой Noda на этом устройстве. Подключение станет доступно автоматически, когда оно появится в сети.') : 'Открой Noda на другом устройстве и войди под тем же аккаунтом.'}</span>`;
+  }
+  if (canvas) canvas.classList.toggle('has-frame', !!remoteDesktop.frame);
+  if (stage) {
+    stage.classList.toggle('device-online', !!current?.online);
+    stage.classList.toggle('device-offline', !current?.online);
+    stage.classList.toggle('streaming', !!remoteDesktop.frame);
+  }
   const status = document.getElementById('remote-status');
   const action = document.getElementById('remote-connect');
   if (status) {
@@ -746,32 +791,50 @@ function updateRemoteDeviceUi() {
     status.textContent = remoteDesktop.error || (remoteDesktop.running
       ? (frameAge != null && frameAge > 4 ? `Жду кадры · ${frameAge} с` : 'Удалённое управление активно')
       : (current?.online ? 'Готов к подключению' : 'Устройство не в сети'));
-    status.className = remoteDesktop.error ? 'remote-status bad' : 'remote-status';
+    status.className = remoteDesktop.error ? 'sub bad' : 'sub';
   }
   if (action) {
     action.textContent = remoteDesktop.running ? 'Отключиться' : 'Подключиться';
     action.disabled = !remoteDesktop.running && !current?.online;
+    action.className = remoteDesktop.running ? 'btn ghost sm' : 'btn sm';
   }
 }
 
 function renderRemoteDesktop() {
   const device = selectedRemoteDevice();
+  const devices = availableRemoteDevices();
   if (!remoteDesktop.deviceId && device) remoteDesktop.deviceId = device.id;
-  app.innerHTML = `<div class="remote-page">
-    <header class="remote-head"><div><h1>Удалённый ПК</h1><p>Полный доступ к другому компьютеру через защищённый канал Noda.</p></div>
-      <div class="remote-device-controls"><select id="remote-device" aria-label="Компьютер"></select><button class="btn" id="remote-connect">Подключиться</button></div></header>
-    <div class="remote-meta"><span id="remote-status">Готов к подключению</span><div id="remote-monitors" class="remote-monitors"></div><span class="remote-help">Кликни по экрану и печатай · колесо — прокрутка · правый клик поддерживается</span></div>
-    <div class="remote-stage" id="remote-stage"><canvas id="remote-canvas" tabindex="0"></canvas><div id="remote-stage-hint" class="remote-stage-hint"><b>${device ? 'Экран появится здесь' : 'Другой компьютер пока не найден'}</b><span>${device ? 'Noda на втором устройстве должна быть открыта и находиться в сети.' : 'Установи Noda на ПК и войди под тем же аккаунтом.'}</span></div></div>
-  </div>`;
-  const select = document.getElementById('remote-device');
-  select.onchange = async () => {
+  const label = (item) => (item.role === 'laptop' ? 'Ноутбук' : item.role === 'phone' ? 'Телефон' : 'Компьютер') + (item.online ? '' : ' · не в сети');
+  app.innerHTML = `
+    <div class="page-head">
+      <h1>Удалённый ПК</h1>
+      <div class="sub" id="remote-status">Готов к подключению</div>
+      <div class="grow"></div>
+      <div class="seg" id="remote-devices">
+        ${devices.length ? devices.map((item) => `<button data-device="${esc(item.id)}" class="${String(item.id) === String(remoteDesktop.deviceId) ? 'active' : ''}">${esc(label(item))}</button>`).join('')
+          : '<button class="active">устройств нет</button>'}
+      </div>
+      <div id="remote-monitors" class="remote-monitors"></div>
+      <button class="btn sm" id="remote-connect">Подключиться</button>
+    </div>
+    <div class="remote-stage full ${device?.online ? 'device-online' : 'device-offline'}" id="remote-stage">
+      <canvas id="remote-canvas" tabindex="0"></canvas>
+      <div id="remote-stage-hint" class="remote-stage-hint">
+        <i class="remote-empty-icon">${syncDeviceGlyph(device?.role === 'laptop' ? 'laptop' : 'pc')}</i>
+        <b>${device ? (device.online ? 'Готов к подключению' : 'Устройство сейчас не в сети') : 'Другой компьютер не найден'}</b>
+        <span>${device ? (device.online ? 'Подключись — экран появится здесь. Мышь, клавиатура и прокрутка работают прямо в окне.' : 'Открой Noda на этом устройстве. Подключение станет доступно автоматически, когда оно появится в сети.') : 'Открой Noda на другом устройстве и войди под тем же аккаунтом.'}</span>
+      </div>
+    </div>`;
+
+  app.querySelectorAll('#remote-devices [data-device]').forEach((button) => button.onclick = async () => {
+    if (String(button.dataset.device) === String(remoteDesktop.deviceId)) return;
     if (remoteDesktop.running) await stopRemoteDesktop();
-    remoteDesktop.deviceId = select.value;
+    remoteDesktop.deviceId = button.dataset.device;
     remoteDesktop.screens = [];
     remoteDesktop.activeScreen = null;
     remoteDesktop.error = '';
-    updateRemoteDeviceUi(); renderRemoteScreenButtons();
-  };
+    renderRemoteDesktop();
+  });
   document.getElementById('remote-connect').onclick = () => remoteDesktop.running ? stopRemoteDesktop() : startRemoteDesktop();
   wireRemoteCanvas();
   renderRemoteScreenButtons();
@@ -794,163 +857,306 @@ function dayLabel(iso) {
   if (diff === 1) return 'Вчера';
   return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 }
+/** Иконка записи: логотип бренда, если узнали, иначе цветная плитка по смыслу траты. */
+function financeDebtIcon(debt, purposeText) {
+  const value = `${debt?.counterparty || ''} ${purposeText || ''}`.toLowerCase();
+  const brands = [
+    [/белка|belka/, 'belkacar'], [/сити\s?драйв|city\s?drive|citydrive/, 'citydrive'],
+    [/делимоб/, 'delimobil'], [/яндекс\s?драйв/, 'yandexdrive'],
+    [/озон|ozon/, 'ozon'], [/wildberries|вайлдбер/, 'wildberries'],
+    [/openai|chat\s?gpt/, 'openai'], [/яндекс\s?еда/, 'yandexeda'],
+    [/самокат/, 'samokat'], [/вкусвилл/, 'vkusvill'], [/пятёрочка|пятерочка/, 'pyaterochka'],
+    [/магнит/, 'magnit'], [/перекрёсток|перекресток/, 'perekrestok'],
+  ];
+  const brand = brands.find(([pattern]) => pattern.test(value));
+  if (/каршер/.test(value) && !brand) {
+    return '<div class="finance-brand-stack"><img src="assets/merchants/citydrive.ico" alt=""><img src="assets/merchants/delimobil.png" alt=""><img src="assets/merchants/belkacar.png" alt=""></div>';
+  }
+  if (brand) return `<div class="finance-brand-icon"><img src="assets/merchants/${brand[1]}.png" alt="" onerror="this.parentElement.style.display='none'"></div>`;
+
+  // цвет и глиф по смыслу — как в веб-версии
+  const kinds = [
+    [/каршер|такси|парков|бензин|заправ/, '#5AC8FA', '<path d="M5 16h14M6.5 16V11l1.6-4h7.8l1.6 4v5"/><circle cx="8" cy="17.5" r="1.5"/><circle cx="16" cy="17.5" r="1.5"/>'],
+    [/достав|курьер|посылк/, '#AF52DE', '<path d="M3 7h11v10H3zM14 10h4l3 3v4h-7z"/><circle cx="7" cy="19" r="2"/><circle cx="18" cy="19" r="2"/>'],
+    [/ингредиент|напит|кофе|еда|продукт|обед|кафе/, '#FF9500', '<path d="M5 3v8M9 3v8M5 7h4M7 11v10M16 3v18M16 3c4 2 4 8 0 10"/>'],
+    [/печат|фото|бумаг|канцел/, '#30B0C7', '<rect x="6" y="3" width="12" height="6" rx="1"/><rect x="4" y="9" width="16" height="7" rx="2"/><rect x="7" y="14" width="10" height="7" rx="1"/>'],
+    [/подпис|сервис|облак|api|тариф/, '#5E5CE6', '<path d="M7 17a4 4 0 0 1 0-8 5 5 0 0 1 9.6-1.4A3.5 3.5 0 0 1 17.5 17z"/>'],
+    [/баланс|пополн|перевод|карта|счёт|счет/, '#34C759', '<rect x="2.5" y="5.5" width="19" height="13" rx="3"/><path d="M2.5 10h19M6 15h3"/>'],
+    [/аптек|лекарст|бад|витамин|здоров/, '#FF3B30', '<path d="M12 5v14M5 12h14"/>'],
+  ];
+  const found = kinds.find(([pattern]) => pattern.test(value));
+  const [, color, path] = found || [null, '#8E939E', '<path d="M4 7h16v12H4zM8 4h8v3M8 11h8M8 15h5"/>'];
+  return `<div class="finance-picto" style="--picto:${color}"><svg viewBox="0 0 24 24">${path}</svg></div>`;
+}
+
+// ================= ФИНАНСЫ (тот же вид, что в веб-версии) =================
+
+const FIN_PEOPLE = ['Тима', 'Даня', 'Женя'];
+const FIN_CARS = [
+  { name: 'Ситидрайв', icon: 'citydrive' },
+  { name: 'Делимобиль', icon: 'delimobil' },
+  { name: 'БелкаКар', icon: 'belkacar' },
+  { name: 'Яндекс Драйв', icon: 'yandexdrive' },
+];
+const finPerson = (d) => (String(d.note || '').match(/\[(Тима|Даня|Женя)\]/) || [])[1] || 'Тима';
+const normalizeFinanceText = (value) => String(value || '')
+  .replace(/(^|[\s(])зон(?=$|[\s).,])/giu, '$1Ozon')
+  .replace(/(^|[\s(])zone(?=$|[\s).,])/giu, '$1Ozon')
+  .replace(/пополнение баланса озон/giu, 'Пополнение баланса Ozon');
+const finPurpose = (d) => normalizeFinanceText(String(d.note || '').replace(/\[(Тима|Даня|Женя)\]\s*/g, '')).trim();
+const finDate = (d) => new Date(d.occurred_at || d.created_at || Date.now());
+const finPlural = (n, one, few, many) => {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+};
+const finStartOfDay = (v) => { const x = new Date(v); x.setHours(0, 0, 0, 0); return x; };
+const finStartOfWeek = (v) => { const x = finStartOfDay(v); x.setDate(x.getDate() - ((x.getDay() || 7) - 1)); return x; };
+const finSum = (list) => list.reduce((acc, d) => acc + Number(d.amount || 0), 0);
+
+function finRange() {
+  const anchor = state.finAnchor || new Date();
+  if (state.finPeriod === 'month') {
+    const from = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+    return { from, to: new Date(from.getFullYear(), from.getMonth() + 1, 1) };
+  }
+  const from = finStartOfWeek(anchor);
+  const to = new Date(from); to.setDate(from.getDate() + 7);
+  return { from, to };
+}
+
+function finPeriodTitle() {
+  const { from, to } = finRange();
+  if (state.finPeriod === 'month') {
+    const label = new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' }).format(from);
+    return label.charAt(0).toUpperCase() + label.slice(1);
+  }
+  const last = new Date(to.getTime() - 86400000);
+  const same = from.getMonth() === last.getMonth();
+  const left = new Intl.DateTimeFormat('ru-RU', same ? { day: 'numeric' } : { day: 'numeric', month: 'short' }).format(from);
+  const right = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(last);
+  return `${left} — ${right}`;
+}
+
+function finDayTitle(value) {
+  const date = finStartOfDay(value);
+  const today = finStartOfDay(new Date());
+  const diff = Math.round((today - date) / 86400000);
+  if (diff === 0) return 'Сегодня';
+  if (diff === 1) return 'Вчера';
+  const withYear = date.getFullYear() !== today.getFullYear();
+  return new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', ...(withYear ? { year: 'numeric' } : {}) }).format(date);
+}
+
 async function renderFin() {
-  if (!state.monthDate) { const n = new Date(); state.monthDate = new Date(n.getFullYear(), n.getMonth(), 1); }
-  app.innerHTML = `<div class="page-head"><h1>Финансы</h1></div><div class="empty">Загрузка…</div>`;
-  let s, t, d;
-  try {
-    [s, t, d] = await Promise.all([
-      api('GET', `/stats/summary?month=${monthStr()}`),
-      api('GET', `/transactions?month=${monthStr()}&limit=500`),
-      api('GET', '/debts'),
-    ]);
-  } catch (e) { app.innerHTML = `<div class="page-head"><h1>Финансы</h1></div><div class="empty">${esc(e.message)}</div>`; return; }
+  app.innerHTML = '<div class="empty">Загружаю…</div>';
+  let result;
+  try { result = await api('GET', '/debts?all=true'); }
+  catch (e) { app.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const all = result.debts || [];
+  state.debtList = all.filter((d) => d.direction !== 'i_owe');
+  state.myDebts = all.filter((d) => d.direction === 'i_owe' && !d.settled);
+  state.finView = state.finView || localStorage.getItem('noda_pc_fin_view') || 'period';
+  finDraw();
+}
 
-  const now = new Date();
-  const isCur = state.monthDate.getFullYear() === now.getFullYear() && state.monthDate.getMonth() === now.getMonth();
-  const mLabel = state.monthDate.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
-  const owedMe = (d.debts || []).filter((x) => x.direction === 'owes_me').reduce((a, x) => a + Number(x.amount), 0);
-  const iOwe = (d.debts || []).filter((x) => x.direction === 'i_owe').reduce((a, x) => a + Number(x.amount), 0);
-  if (!state.finTab) state.finTab = 'tx';
-  const tab = state.finTab;
+function finDraw() {
+  const allRows = state.debtList.slice().sort((a, b) => finDate(b) - finDate(a));
+  const returned = allRows.filter((d) => d.settled);
+  const unpaid = state.debtList.filter((d) => !d.settled);
+  const total = finSum(unpaid);
+  const people = state.finView === 'people';
+  const oldest = unpaid.length ? new Date(Math.min(...unpaid.map((d) => finDate(d)))) : null;
 
-  let html = `
+  const days = new Map();
+  for (const d of allRows) {
+    const key = finStartOfDay(finDate(d)).getTime();
+    if (!days.has(key)) days.set(key, []);
+    days.get(key).push(d);
+  }
+
+  app.innerHTML = `
     <div class="page-head">
-      <h1>Финансы</h1><div class="grow"></div>
-      <button class="btn sm" id="addtx" style="margin-right:10px">＋ Операция</button>
-      <div class="monthbar"><button id="mprev">‹</button><span class="m">${mLabel}</span><button id="mnext" ${isCur ? 'disabled' : ''}>›</button></div>
+      <h1>Финансы</h1>
+      <div class="grow"></div>
+      <button class="btn ghost sm" id="fin-car">Каршеринг</button>
+      <button class="btn ghost sm" id="fin-add">＋ Запись</button>
     </div>
-    <div class="fin-top">
-      <div class="card hero">
-        <div class="lbl">Потрачено за месяц</div>
-        <div class="big">${fmt(s.summary.expense)} ₽</div>
-        <div class="hero-pills">
-          <span class="pill red">↗ расход ${fmt(s.summary.expense)} ₽</span>
-          <span class="pill green">↙ доход ${fmt(s.summary.income)} ₽</span>
+
+    <div class="summary">
+      <div>
+        <b>${fmt(total)} ₽</b>
+        <span>${unpaid.length
+          ? `ждёт возврата · ${unpaid.length} ${finPlural(unpaid.length, 'запись', 'записи', 'записей')}${oldest ? ` · самая давняя от ${new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(oldest)}` : ''}`
+          : 'все возвраты закрыты'}</span>
+      </div>
+      <div class="summary-right">
+        <div class="seg">
+          <button data-view="period" class="${people ? '' : 'active'}">По датам</button>
+          <button data-view="people" class="${people ? 'active' : ''}">Кто должен</button>
         </div>
       </div>
-      <div class="card gap">
-        <div class="row"><div class="tile" style="color:var(--green);background:var(--green-soft)">${SVG.user}</div><div class="grow"><div class="lbl">Мне должны</div><div class="b" style="font-size:18px">${fmt(owedMe)} ₽</div></div></div>
-        <div class="row"><div class="tile" style="color:var(--yellow);background:rgba(201,154,0,0.12)">${SVG.user}</div><div class="grow"><div class="lbl">Я должен</div><div class="b" style="font-size:18px">${fmt(iOwe)} ₽</div></div></div>
-      </div>
     </div>
-    <div class="cols-2">`;
 
-  if (s.byCategory?.length) {
-    const max = Math.max(1, ...s.byCategory.map((c) => c.total));
-    html += `<div><h2>По категориям</h2><div class="card gap">` + s.byCategory.slice(0, 8).map((c) => `
-      <div class="row">${categoryIcon(c.category)}<div class="grow">
-        <div class="row"><span class="b">${esc(c.category)}</span><span class="b right">${fmt(c.total)} ₽</span></div>
-        <div class="track" style="margin-top:6px"><i style="width:${Math.max(6, (c.total / max) * 100)}%"></i></div>
-      </div></div>`).join('') + `</div></div>`;
+    ${people ? finPeopleList(unpaid) : `
+      ${days.size ? [...days.entries()].map(([key, rows]) => finDayGroup(key, rows)).join('')
+        : '<div class="empty">Записей пока нет<br><small>Добавь первый ожидаемый возврат</small></div>'}
+      ${returned.length ? `<div class="fin-note">За всё время вернули ${fmt(finSum(returned))} ₽</div>` : ''}`}
+  `;
+
+  document.getElementById('fin-add').onclick = () => openDebtModal(null);
+  document.getElementById('fin-car').onclick = openCarModal;
+  app.querySelectorAll('[data-view]').forEach((b) => b.onclick = () => {
+    state.finView = b.dataset.view;
+    localStorage.setItem('noda_pc_fin_view', state.finView);
+    finDraw();
+  });
+  app.querySelectorAll('[data-person-toggle]').forEach((b) => b.onclick = (event) => {
+    if (event.target.closest('[data-settle]') || event.target.closest('[data-entry]')) return;
+    b.closest('.person').classList.toggle('open');
+  });
+  app.querySelectorAll('[data-entry]').forEach((row) => row.onclick = (event) => {
+    if (event.target.closest('[data-settle]')) return;
+    openDebtModal(state.debtList.concat(state.myDebts || []).find((d) => d.id === row.dataset.entry));
+  });
+  app.querySelectorAll('[data-settle]').forEach((b) => b.onclick = async (event) => {
+    event.stopPropagation();
+    const d = state.debtList.find((x) => x.id === b.dataset.settle);
+    if (!d) return;
+    b.classList.toggle('on');
+    try { await api('PATCH', '/debts/' + d.id, { settled: !d.settled }); await renderFin(); }
+    catch (e) { toast('Не сохранилось', e.message, 'warn'); }
+  });
+}
+
+function finDayGroup(key, rows) {
+  const daySum = finSum(rows.filter((d) => !d.settled));
+  return `<section class="fin-group">
+      <div class="fin-group-head">${esc(finDayTitle(Number(key)))} · ${daySum ? fmt(daySum) + ' ₽' : 'закрыто'}</div>
+      <div class="card fin-card">${rows.map(finRow).join('')}</div>
+    </section>`;
+}
+
+function finRow(d) {
+  const purpose = finPurpose(d);
+  const counterparty = normalizeFinanceText(d.counterparty);
+  const named = counterparty && !/компан/i.test(counterparty);
+  const title = named ? counterparty : (purpose || 'Без названия');
+  const owes = counterparty || 'Компания';
+  const subtitle = named ? purpose : '';
+  const who = finPerson(d);
+  const when = finDate(d).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  return `
+    <div class="fin-row${d.settled ? ' settled' : ''}" data-entry="${d.id}">
+      ${financeDebtIcon(d, purpose)}
+      <div class="fin-main">
+        <b>${esc(title)}</b>
+        <small>должен ${esc(owes)}${subtitle ? ' · ' + esc(subtitle) : ''}${who !== 'Тима' ? ' · платил ' + esc(who) : ''} · ${esc(when)}</small>
+      </div>
+      <strong class="fin-amount">${fmt(d.amount)} ₽</strong>
+      <button class="fin-check${d.settled ? ' on' : ''}" data-settle="${d.id}" title="Вернули">✓</button>
+    </div>`;
+}
+
+function finPeopleList(unpaid) {
+  const mine = state.myDebts || [];
+  const owed = finGroupBy(unpaid);
+  if (!unpaid.length && !mine.length) return '<div class="empty">Все долги закрыты</div>';
+  return `${owed}${mine.length ? `<div class="fin-group-head" style="margin-top:18px">Я должен · ${fmt(finSum(mine))} ₽</div>${finGroupBy(mine)}` : ''}`;
+}
+
+function finGroupBy(list) {
+  if (!list.length) return '';
+  const groups = new Map();
+  for (const d of list) {
+    const key = (d.counterparty || 'Без имени').trim();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(d);
   }
-  if (s.byMerchant?.length) {
-    const max = Math.max(1, ...s.byMerchant.map((c) => c.total));
-    html += `<div><h2>По магазинам</h2><div class="card gap">` + s.byMerchant.slice(0, 8).map((c) => `
-      <div class="row">${merchantLogo(c.merchant)}<div class="grow">
-        <div class="row"><span class="b">${esc(c.merchant)}</span><span class="b right">${fmt(c.total)} ₽</span></div>
-        <div class="track" style="margin-top:6px"><i style="width:${Math.max(6, (c.total / max) * 100)}%"></i></div>
-      </div></div>`).join('') + `</div></div>`;
-  }
-  html += `</div>`;
+  const rows = [...groups.entries()]
+    .map(([name, items]) => ({ name, items: items.sort((a, b) => finDate(b) - finDate(a)), total: finSum(items) }))
+    .sort((a, b) => b.total - a.total);
+  return `<div class="people">${rows.map((row) => {
+    const last = finDate(row.items[0]);
+    return `
+      <div class="person">
+        <button class="person-head" data-person-toggle="${esc(row.name)}">
+          ${financeDebtIcon(row.items[0], finPurpose(row.items[0]))}
+          <span class="fin-main"><b>${esc(row.name)}</b><small>${row.items.length} ${finPlural(row.items.length, 'запись', 'записи', 'записей')} · последняя ${new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(last)}</small></span>
+          <span class="fin-amount">${fmt(row.total)} ₽</span>
+          <span class="caret">›</span>
+        </button>
+        <div class="person-body"><div>${row.items.map(finRow).join('')}</div></div>
+      </div>`;
+  }).join('')}</div>`;
+}
 
-  html += `<div class="seg fin-seg" id="finseg">
-    <button data-tab="tx" class="${tab === 'tx' ? 'active' : ''}">Операции <b class="cnt">${t.transactions.length}</b></button>
-    <button data-tab="debt" class="${tab === 'debt' ? 'active' : ''}">Долги <b class="cnt">${(d.debts || []).length}</b></button>
-  </div>`;
-
-  html += `<div class="fin-panel" data-panel="tx" ${tab === 'tx' ? '' : 'hidden'}>`;
-  if (!t.transactions.length) html += `<div class="empty">За ${mLabel} операций нет. Запиши через «Помощник» — текстом или голосом.</div>`;
-  else {
-    html += `<div class="card" style="padding:8px">`;
-    let lastDay = '';
-    for (const x of t.transactions) {
-      const dl = dayLabel(x.occurred_at);
-      if (dl !== lastDay) { html += `<div class="daygroup">${dl}</div>`; lastDay = dl; }
-      const time = new Date(x.occurred_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-      const sub = [x.merchant, x.category].filter(Boolean).join(' · ');
-      html += `<div class="txrow tx-edit" data-id="${x.id}" style="cursor:pointer">${x.merchant ? merchantLogo(x.merchant) : categoryIcon(x.category)}
-        <div class="grow"><div class="b ellip">${esc(x.title || x.category)}</div><div class="lbl">${esc(sub)} · ${time}</div></div>
-        <span class="amount ${x.type === 'income' ? 'inc' : 'exp'}">${x.type === 'income' ? '+' : '−'}${fmt(x.amount)} ₽</span>
-        <button class="copybtn tx-del" data-id="${x.id}">✕</button></div>`;
-    }
-    html += `</div>`;
-  }
-
-  html += `</div>`;
-
-  html += `<div class="fin-panel" data-panel="debt" ${tab === 'debt' ? '' : 'hidden'}>`;
-  if (!(d.debts || []).length) html += `<div class="empty">Долгов пока нет. Скажи помощнику: «дал Егору 500».</div>`;
-  else {
-    html += `<div class="card" style="padding:8px">`;
-    for (const db of d.debts) {
-      const col = db.direction === 'owes_me' ? 'var(--green)' : 'var(--yellow)';
-      const sub = db.settled ? 'погашен' : (db.direction === 'owes_me' ? 'должен мне' : 'я должен');
-      html += `<div class="txrow debt-edit" data-id="${db.id}" style="cursor:pointer${db.settled ? ';opacity:0.55' : ''}">${merchantLogo(db.counterparty)}
-        <div class="grow"><div class="b">${esc(db.counterparty)}</div><div class="lbl">${sub}${db.note ? ' · ' + esc(db.note) : ''}</div></div>
-        <span class="b" style="color:${col}${db.settled ? ';text-decoration:line-through' : ''}">${db.direction === 'owes_me' ? '+' : '−'}${fmt(db.amount)} ₽</span>
-        <button class="copybtn debt-del" data-id="${db.id}">✕</button></div>`;
-    }
-    html += `</div>`;
-  }
-  html += `</div>`;
-
-  app.innerHTML = html;
-  state.txList = t.transactions || [];
-  state.debtList = d.debts || [];
-  document.getElementById('mprev').onclick = () => { state.monthDate = new Date(state.monthDate.getFullYear(), state.monthDate.getMonth() - 1, 1); renderFin(); };
-  const mnext = document.getElementById('mnext'); if (mnext && !isCur) mnext.onclick = () => { state.monthDate = new Date(state.monthDate.getFullYear(), state.monthDate.getMonth() + 1, 1); renderFin(); };
-  document.getElementById('addtx').onclick = () => openTxModal(null);
-  app.querySelectorAll('.tx-edit').forEach((row) => (row.onclick = () => {
-    const tx = (state.txList || []).find((x) => x.id === row.dataset.id);
-    if (tx) openTxModal(tx);
-  }));
-  app.querySelectorAll('.tx-del').forEach((b) => (b.onclick = async (e) => { e.stopPropagation(); try { await api('DELETE', '/transactions/' + b.dataset.id); renderFin(); } catch {} }));
-  app.querySelectorAll('.debt-edit').forEach((row) => (row.onclick = () => {
-    const db = (state.debtList || []).find((x) => x.id === row.dataset.id);
-    if (db) openDebtModal(db);
-  }));
-  app.querySelectorAll('.debt-del').forEach((b) => (b.onclick = async (e) => { e.stopPropagation(); try { await api('DELETE', '/debts/' + b.dataset.id); renderFin(); } catch {} }));
-  // Переключение вкладок Операции / Долги / Аналитика (без перезагрузки)
-  app.querySelectorAll('#finseg button').forEach((b) => (b.onclick = () => {
-    state.finTab = b.dataset.tab;
-    app.querySelectorAll('#finseg button').forEach((x) => x.classList.toggle('active', x === b));
-    app.querySelectorAll('.fin-panel').forEach((p) => (p.hidden = p.dataset.panel !== state.finTab));
-  }));
+/** Быстрый каршеринг: сервис + сумма, остальное подставляется само. */
+function openCarModal() {
+  let v = document.getElementById('carmodal');
+  if (!v) { v = document.createElement('div'); v.id = 'carmodal'; v.className = 'editmodal'; document.body.appendChild(v); }
+  let picked = localStorage.getItem('noda_last_car') || FIN_CARS[0].name;
+  v.innerHTML = `
+    <div class="editcard" style="max-width:420px">
+      <div class="row"><div class="b grow">Каршеринг</div><button class="ws-mini" id="carclose">✕</button></div>
+      <div class="car-picker">
+        ${FIN_CARS.map((car) => `<button class="car-pick${car.name === picked ? ' active' : ''}" data-car="${esc(car.name)}">
+          <img src="assets/merchants/${car.icon}.png" alt="" onerror="this.style.visibility='hidden'">${esc(car.name)}</button>`).join('')}
+      </div>
+      <label class="field" style="margin-top:14px"><span>Сумма, ₽</span><input id="caramount" type="number" placeholder="480" autofocus /></label>
+      <button class="btn full" id="carsave" style="margin-top:16px">Записать</button>
+    </div>`;
+  const close = () => v.remove();
+  v.onclick = (e) => { if (e.target === v) close(); };
+  document.getElementById('carclose').onclick = close;
+  v.querySelectorAll('[data-car]').forEach((b) => b.onclick = () => {
+    picked = b.dataset.car;
+    v.querySelectorAll('[data-car]').forEach((x) => x.classList.toggle('active', x === b));
+    document.getElementById('caramount').focus();
+  });
+  const save = async () => {
+    const amount = Number(document.getElementById('caramount').value);
+    if (!amount) { toast('Впиши сумму', '', 'warn'); return; }
+    localStorage.setItem('noda_last_car', picked);
+    try {
+      await api('POST', '/debts', { counterparty: picked, note: '[Тима] Каршеринг', amount, direction: 'owes_me', occurred_at: new Date().toISOString() });
+      close();
+      toast('Записано', `${picked} · ${fmt(amount)} ₽`, 'ok');
+      state.finAnchor = new Date();
+      await renderFin();
+    } catch (e) { toast('Не сохранилось', e.message, 'warn'); }
+  };
+  document.getElementById('carsave').onclick = save;
+  document.getElementById('caramount').onkeydown = (e) => { if (e.key === 'Enter') save(); };
 }
 
 // Карточка долга: детали + погасить/вернуть/удалить
 function openDebtModal(db) {
-  const col = db.direction === 'owes_me' ? 'var(--green)' : 'var(--yellow)';
-  const dir = db.direction === 'owes_me' ? 'должен мне' : 'я должен';
-  const fmtD = (iso) => { try { return iso ? new Date(iso).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'; } catch { return '—'; } };
   let v = document.getElementById('txmodal');
   if (!v) { v = document.createElement('div'); v.id = 'txmodal'; v.className = 'editmodal'; document.body.appendChild(v); }
+  const pick = (String(db?.note || '').match(/\[(Тима|Даня|Женя)\]/) || [])[1] || 'Тима';
+  const note = String(db?.note || '').replace(/\[(Тима|Даня|Женя)\]\s*/g, '').trim();
+  const d = new Date(db?.occurred_at || db?.created_at || Date.now()); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   v.innerHTML = `
     <div class="editcard" style="max-width:440px">
-      <div class="row"><div class="b grow">Долг</div><button class="ws-mini" id="dbclose">✕</button></div>
-      <div class="row" style="margin:14px 0;gap:12px">
-        ${merchantLogo(db.counterparty, 44)}
-        <div class="grow"><div class="b" style="font-size:18px">${esc(db.counterparty)}</div><div class="lbl">${dir}${db.settled ? ' · погашен' : ''}</div></div>
-        <div class="b" style="color:${col};font-size:20px">${db.direction === 'owes_me' ? '+' : '−'}${fmt(db.amount)} ₽</div>
-      </div>
-      <div class="gap" style="background:var(--surface-2);border-radius:12px;padding:12px">
-        <div class="row"><span class="lbl grow">Когда возник</span><span class="b">${fmtD(db.occurred_at)}</span></div>
-        <div class="row"><span class="lbl grow">Срок возврата</span><span class="b">${fmtD(db.due_date)}</span></div>
-        ${db.note ? `<div class="row"><span class="lbl grow">Заметка</span><span class="b">${esc(db.note)}</span></div>` : ''}
-      </div>
-      ${db.settled
-        ? `<button class="btn ghost full" id="dbunsettle" style="margin-top:16px">Вернуть в долги (не погашен)</button>`
-        : `<button class="btn full" id="dbsettle" style="margin-top:16px;background:var(--green);box-shadow:none">✓ Погасить долг</button>`}
-      <button class="btn ghost sm full" id="dbdel" style="margin-top:8px;color:var(--red)">Удалить</button>
+      <div class="row"><div class="b grow">${db ? 'Изменить запись' : 'Новая запись'}</div><button class="ws-mini" id="dbclose">✕</button></div>
+      <div class="seg" id="dbperson" style="width:100%;margin:14px 0">${['Тима','Даня','Женя'].map((x) => `<button data-person="${x}" class="${pick === x ? 'active' : ''}" style="flex:1">${x}</button>`).join('')}</div>
+      <label class="field"><span>Кто</span><input id="dbcounterparty" value="${esc(db?.counterparty || 'Компания')}" /></label>
+      <label class="field" style="margin-top:10px"><span>За что</span><input id="dbnote" value="${esc(note)}" /></label>
+      <label class="field" style="margin-top:10px"><span>Сумма, ₽</span><input id="dbamount" type="number" value="${esc(db?.amount || '')}" /></label>
+      <label class="field" style="margin-top:10px"><span>Когда</span><input id="dbwhen" type="datetime-local" value="${d.toISOString().slice(0,16)}" /></label>
+      <button class="btn full" id="dbsave" style="margin-top:16px">Сохранить</button>
+      ${db ? `<button class="btn ghost full" id="dbsettle" style="margin-top:8px">${db.settled ? 'Вернуть в активные' : '✓ Отметить возвращённым'}</button><button class="btn ghost sm full" id="dbdel" style="margin-top:8px;color:var(--red)">Удалить</button>` : ''}
     </div>`;
   const close = () => v.remove();
   v.onclick = (e) => { if (e.target === v) close(); };
   document.getElementById('dbclose').onclick = close;
-  const set = async (settled) => { try { await api('PATCH', '/debts/' + db.id, { settled }); close(); renderFin(); } catch (e) { alert(e.message); } };
-  const s1 = document.getElementById('dbsettle'); if (s1) s1.onclick = () => set(true);
-  const s2 = document.getElementById('dbunsettle'); if (s2) s2.onclick = () => set(false);
-  document.getElementById('dbdel').onclick = async () => { try { await api('DELETE', '/debts/' + db.id); close(); renderFin(); } catch {} };
+  let who = pick;
+  v.querySelectorAll('#dbperson button').forEach((b) => b.onclick = () => { who = b.dataset.person; v.querySelectorAll('#dbperson button').forEach((x) => x.classList.toggle('active', x === b)); });
+  document.getElementById('dbsave').onclick = async () => { const counterparty = document.getElementById('dbcounterparty').value.trim(), amount = Number(document.getElementById('dbamount').value), occurred = document.getElementById('dbwhen').value; if (!counterparty || !amount || !occurred) return; const body = { counterparty, amount, direction: db?.direction || 'owes_me', note: `[${who}] ${document.getElementById('dbnote').value.trim()}`.trim(), occurred_at: new Date(occurred).toISOString() }; try { await api(db ? 'PATCH' : 'POST', db ? '/debts/' + db.id : '/debts', body); close(); renderFin(); } catch (e) { toast('Не сохранилось', e.message, 'warn'); } };
+  const settle = document.getElementById('dbsettle'); if (settle) settle.onclick = async () => { await api('PATCH', '/debts/' + db.id, { settled: !db.settled }); close(); renderFin(); };
+  const del = document.getElementById('dbdel'); if (del) del.onclick = async () => { try { await api('DELETE', '/debts/' + db.id); close(); renderFin(); } catch {} };
 }
 
 // Добавить/изменить операцию вручную (на ПК — полноценное редактирование, как просили)
@@ -968,6 +1174,7 @@ const DOMAINS = {
   'альфа': 'alfabank.ru', 'альфабанк': 'alfabank.ru', 'втб': 'vtb.ru',
   'мтс': 'mts.ru', 'билайн': 'beeline.ru', 'мегафон': 'megafon.ru', 'теле2': 'tele2.ru',
   'netflix': 'netflix.com', 'spotify': 'spotify.com', 'youtube': 'youtube.com',
+  'openai': 'openai.com', 'chatgpt': 'openai.com', 'chat gpt': 'openai.com',
   'apple': 'apple.com', 'icloud': 'apple.com', 'google': 'google.com',
   'aliexpress': 'aliexpress.ru', 'али': 'aliexpress.ru',
   'белка': 'belkacar.ru', 'belkacar': 'belkacar.ru', 'белкакар': 'belkacar.ru',
@@ -1099,6 +1306,11 @@ const CHAT_QUICK = [
   { t: '📊 Сколько потратил', v: 'Сколько я потратил в этом месяце?', send: true },
   { t: '💰 Мои долги', v: 'Покажи мои долги', send: true },
 ];
+const CHAT_PRESETS = {
+  finance: { title: 'Финансы', icon: '₽', empty: 'Напиши: «купил на Ozon кофе 250», «дал Егору 500» или «сколько мне должны»', placeholder: 'Запиши расход, долг или задай вопрос' },
+  general: { title: 'Обычный разговор', icon: '✦', empty: 'Можно обсудить идею, решение, план или просто поговорить.', placeholder: 'О чём поговорим?' },
+  tech: { title: 'Покупки и техника', icon: '⌘', empty: 'Расскажи, что выбираешь, для каких задач и какой примерно бюджет.', placeholder: 'Например: какой компьютер купить дальше?' },
+};
 function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -1107,38 +1319,154 @@ function blobToBase64(blob) {
     r.readAsDataURL(blob);
   });
 }
+// ================= ПОМОЩНИК (чаты слева, как в веб-версии) =================
+
+let chatThreads = [];
+let chatThreadId = localStorage.getItem('noda_pc_thread') || 'main';
+
 async function renderChat() {
-  app.innerHTML = `<div class="page-head"><h1>Помощник</h1></div><div class="chat" id="chat"><div class="empty">Загрузка…</div></div>
-    <div class="quickrow" id="quickrow">${CHAT_QUICK.map((q, i) => `<button class="chip" data-i="${i}">${q.t}</button>`).join('')}</div>
-    <div class="composer">
-      <button class="micbtn" id="cmic" title="Записать голосом">${MICSVG}</button>
-      <input id="cinput" placeholder="Спроси или запиши: «купил на озоне кофе 250»" />
-      <button class="send" id="csend">${SVG.arrow}</button>
+  app.innerHTML = `
+    <div class="page-head">
+      <h1>Помощник</h1>
+      <span class="chat-active-preset" id="chat-active-preset">Финансы</span>
+      <div class="grow"></div>
+      <button class="btn ghost sm" id="chat-clear">Очистить чат</button>
+    </div>
+    <div class="chat-split">
+      <aside class="chat-side">
+        <div class="chat-new-wrap">
+          <button class="btn sm" id="chat-new">＋ Новый чат</button>
+          <div class="chat-new-menu" id="chat-new-menu" hidden>
+            ${Object.entries(CHAT_PRESETS).map(([id, preset]) => `<button data-new-preset="${id}"><i>${preset.icon}</i><span><b>${preset.title}</b><small>${preset.empty}</small></span></button>`).join('')}
+          </div>
+        </div>
+        <div class="chat-list" id="chat-list"><div class="empty">…</div></div>
+      </aside>
+      <section class="chat-main">
+        <div class="chat" id="chat"><div class="empty">Загружаю переписку…</div></div>
+        <div class="quickrow" id="quickrow">${CHAT_QUICK.map((q, i) => `<button class="chip" data-i="${i}">${q.t}</button>`).join('')}</div>
+        <div class="composer">
+          <button class="micbtn" id="cmic" title="Записать голосом"><span class="mic-glyph">${MICSVG}</span><span class="mic-meter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span></button>
+          <input id="cinput" placeholder="Спроси или запиши: «купил на озоне кофе 250»" />
+          <button class="send" id="csend">${SVG.arrow}</button>
+        </div>
+      </section>
     </div>`;
   const input = document.getElementById('cinput');
   const sendBtn = document.getElementById('csend');
   const micBtn = document.getElementById('cmic');
+
+  function currentThread() {
+    return chatThreads.find((thread) => String(thread.id) === String(chatThreadId))
+      || { id: 'main', title: 'Основной', preset: 'finance', main: true };
+  }
+
+  function applyChatMode() {
+    const thread = currentThread();
+    const preset = CHAT_PRESETS[thread.preset] || CHAT_PRESETS.finance;
+    const badge = document.getElementById('chat-active-preset');
+    const quick = document.getElementById('quickrow');
+    if (badge) badge.innerHTML = `<i>${preset.icon}</i>${esc(preset.title)}`;
+    if (input) input.placeholder = preset.placeholder;
+    if (quick) quick.hidden = thread.preset !== 'finance';
+  }
+
+  async function loadThreads() {
+    try {
+      const r = await api('GET', '/ai/threads');
+      chatThreads = r.threads || [];
+      if (!chatThreads.some((t) => String(t.id) === String(chatThreadId))) chatThreadId = 'main';
+    } catch { chatThreads = [{ id: 'main', title: 'Основной', preset: 'finance', count: 0, main: true }]; }
+    drawThreads();
+  }
+
+  function drawThreads() {
+    const list = document.getElementById('chat-list');
+    if (!list) return;
+    list.innerHTML = chatThreads.map((t) => {
+      const preview = String(t.preview || '').replace(/\s+/g, ' ').slice(0, 46);
+      return `<button class="chat-item${String(t.id) === String(chatThreadId) ? ' active' : ''}" data-thread="${esc(t.id)}">
+          <b>${esc(t.title || 'Новый чат')}</b><em>${esc((CHAT_PRESETS[t.preset] || CHAT_PRESETS.finance).title)}</em>
+          <small>${esc(preview || 'пока пусто')}</small>
+          <span class="meta">${t.count ? t.count + ' сообщ.' : 'новый'}</span>
+          ${t.main ? '' : `<span class="chat-more" data-thread-menu="${esc(t.id)}">⋯</span>`}
+        </button>`;
+    }).join('');
+    list.querySelectorAll('[data-thread]').forEach((b) => b.onclick = (event) => {
+      if (event.target.closest('[data-thread-menu]')) return;
+      if (String(b.dataset.thread) === String(chatThreadId)) return;
+      chatThreadId = b.dataset.thread;
+      localStorage.setItem('noda_pc_thread', chatThreadId);
+      drawThreads();
+      refresh();
+    });
+    list.querySelectorAll('[data-thread-menu]').forEach((node) => node.onclick = async (event) => {
+      event.stopPropagation();
+      const thread = chatThreads.find((t) => String(t.id) === String(node.dataset.threadMenu));
+      if (!thread) return;
+      const name = prompt('Название чата (пусто — удалить)', thread.title || '');
+      if (name === null) return;
+      try {
+        if (!name.trim()) {
+          await api('DELETE', '/ai/threads/' + thread.id);
+          if (String(chatThreadId) === String(thread.id)) { chatThreadId = 'main'; localStorage.setItem('noda_pc_thread', chatThreadId); refresh(); }
+        } else {
+          await api('PATCH', '/ai/threads/' + thread.id, { title: name.trim() });
+        }
+        await loadThreads();
+      } catch (e) { toast('Чат', e.message, 'warn'); }
+    });
+    applyChatMode();
+  }
+
+  const newMenu = document.getElementById('chat-new-menu');
+  document.getElementById('chat-new').onclick = () => { newMenu.hidden = !newMenu.hidden; };
+  app.querySelectorAll('[data-new-preset]').forEach((button) => button.onclick = async () => {
+    const preset = button.dataset.newPreset;
+    try {
+      const r = await api('POST', '/ai/threads', { preset });
+      chatThreads.unshift(r.thread);
+      chatThreadId = r.thread.id;
+      localStorage.setItem('noda_pc_thread', chatThreadId);
+      newMenu.hidden = true;
+      drawThreads();
+      document.getElementById('chat').innerHTML = `<div class="empty">${esc(CHAT_PRESETS[preset]?.empty || 'Что нужно сделать?')}</div>`;
+      input.focus();
+    } catch (e) { toast('Чат', e.message, 'warn'); }
+  });
+
+  document.getElementById('chat-clear').onclick = async () => {
+    if (!confirm('Очистить этот чат? Сообщения удалятся на всех устройствах.')) return;
+    try { await api('DELETE', '/ai/messages?thread=' + encodeURIComponent(chatThreadId)); await refresh(); await loadThreads(); }
+    catch (e) { toast('Чат', e.message, 'warn'); }
+  };
+
   async function refresh() {
     try {
-      const r = await api('GET', '/ai/messages');
+      const r = await api('GET', '/ai/messages?thread=' + encodeURIComponent(chatThreadId));
       const c = document.getElementById('chat');
       if (!c) return;
-      if (!r.messages.length) c.innerHTML = `<div class="empty">Напиши: «купил на озоне кофе 250», «дал Егору 500», «сколько потратил на продукты», «создай заметку…»</div>`;
-      else c.innerHTML = r.messages.map((m) => `<div class="msg ${m.role === 'user' ? 'user' : 'ai'}">${esc(m.content)}</div>`).join('');
+      const messages = (r.messages || []).slice(-120);
+      const preset = CHAT_PRESETS[currentThread().preset] || CHAT_PRESETS.finance;
+      if (!messages.length) c.innerHTML = `<div class="empty">${esc(preset.empty)}</div>`;
+      else c.innerHTML = messages.map((m, i) => `<div class="msg ${m.role === 'user' ? 'user' : 'ai'}${i === messages.length - 1 ? ' fresh' : ''}">${esc(m.content)}</div>`).join('');
       c.scrollTop = c.scrollHeight;
+      applyChatMode();
     } catch {}
   }
+
   async function send() {
     const text = input.value.trim();
     if (!text) return;
     input.value = '';
     const c = document.getElementById('chat');
-    c.innerHTML += `<div class="msg user">${esc(text)}</div><div class="msg ai" id="typing">…</div>`;
+    c.innerHTML += `<div class="msg user fresh">${esc(text)}</div><div class="msg ai" id="typing">…</div>`;
     c.scrollTop = c.scrollHeight;
     sendBtn.disabled = true;
-    try { await api('POST', '/ai/assistant', { text }); } catch (e) { /* ignore */ }
+    try { await api('POST', '/ai/assistant', { text, thread: chatThreadId }); } catch (e) { /* ignore */ }
     sendBtn.disabled = false;
     await refresh();
+    loadThreads();
   }
   sendBtn.onclick = send;
   input.onkeydown = (e) => { if (e.key === 'Enter') send(); };
@@ -1151,7 +1479,36 @@ async function renderChat() {
   }));
 
   // Голосовой ввод: запись с микрофона → транскрипция
-  let rec = null, chunks = [];
+  let rec = null, chunks = [], audioContext = null, meterFrame = 0;
+  const meterBars = [...micBtn.querySelectorAll('.mic-meter i')];
+  function stopMeter() {
+    if (meterFrame) cancelAnimationFrame(meterFrame);
+    meterFrame = 0;
+    if (audioContext) audioContext.close().catch(() => {});
+    audioContext = null;
+    meterBars.forEach((bar) => { bar.style.height = '5px'; });
+  }
+  function startMeter(stream) {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx || !meterBars.length) return;
+    audioContext = new AudioCtx();
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 64;
+    analyser.smoothingTimeConstant = .72;
+    audioContext.createMediaStreamSource(stream).connect(analyser);
+    const samples = new Uint8Array(analyser.frequencyBinCount);
+    const draw = () => {
+      analyser.getByteFrequencyData(samples);
+      const stride = Math.max(1, Math.floor(samples.length / meterBars.length));
+      meterBars.forEach((bar, index) => {
+        let peak = 0;
+        for (let i = index * stride; i < Math.min(samples.length, (index + 1) * stride); i += 1) peak = Math.max(peak, samples[i]);
+        bar.style.height = `${Math.max(5, Math.min(23, 5 + Math.round((peak / 255) * 18)))}px`;
+      });
+      meterFrame = requestAnimationFrame(draw);
+    };
+    draw();
+  }
   micBtn.onclick = async () => {
     if (rec && rec.state === 'recording') { rec.stop(); return; }
     try {
@@ -1161,6 +1518,7 @@ async function renderChat() {
       rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
       rec.onstop = async () => {
         try { stream.getTracks().forEach((t) => t.stop()); } catch {}
+        stopMeter();
         micBtn.classList.remove('rec');
         const blob = new Blob(chunks, { type: (rec && rec.mimeType) || 'audio/webm' });
         if (!blob.size) return;
@@ -1174,25 +1532,36 @@ async function renderChat() {
         input.placeholder = prevPh; micBtn.disabled = false;
       };
       rec.start();
+      startMeter(stream);
       micBtn.classList.add('rec');
     } catch (e) { toast('Микрофон', 'Нет доступа к микрофону', 'warn'); }
   };
 
+  await loadThreads();
   refresh();
 }
 
 // ================= ФАЙЛЫ =================
+// ================= ФАЙЛЫ (галерея, как в веб-версии) =================
 async function renderFiles() {
   const st = await window.arra.getStatus();
-  app.innerHTML = `<div class="page-head"><h1>Файлы</h1></div>
-    <div class="card row"><div class="dot ${st.online ? 'on' : ''}"></div>
-      <div class="grow"><div class="b">${st.online ? 'На связи с телефоном' : 'Не в сети'}</div><div class="lbl">${esc(st.folder)}</div></div>
-      <button class="btn ghost sm" id="openf">Папка</button><button class="btn ghost sm" id="chf">Сменить</button><button class="btn ghost sm" id="logout">Выйти</button></div>
-    <div style="margin-top:12px"><div class="seg" id="modeseg">
-      <button data-mode="path" class="${st.mode === 'path' ? 'active' : ''}">Путь к файлу</button>
-      <button data-mode="file" class="${st.mode === 'file' ? 'active' : ''}">Сам файл / фото</button>
-    </div></div>
-    <h2>Принятые</h2><div id="feed"></div>`;
+  app.innerHTML = `
+    <div class="page-head">
+      <h1>Файлы</h1>
+      <div class="grow"></div>
+      <div class="seg" id="modeseg">
+        <button data-mode="path" class="${st.mode === 'path' ? 'active' : ''}">Путь к файлу</button>
+        <button data-mode="file" class="${st.mode === 'file' ? 'active' : ''}">Сам файл</button>
+      </div>
+      <button class="btn ghost sm" id="openf">Папка</button>
+      <button class="btn ghost sm" id="chf">Сменить</button>
+    </div>
+    <div class="files-bar">
+      <span class="dot ${st.online ? 'on' : ''}"></span>
+      <div class="grow"><b>${st.online ? 'На связи с телефоном' : 'Не в сети'}</b><small>${esc(st.folder || '')}</small></div>
+      <button class="btn ghost sm" id="logout">Выйти</button>
+    </div>
+    <div id="feed"></div>`;
   document.getElementById('openf').onclick = () => window.arra.openFolder();
   document.getElementById('chf').onclick = async () => { await window.arra.chooseFolder(); renderFiles(); };
   document.getElementById('logout').onclick = async () => { await window.arra.logout(); renderLogin(); };
@@ -1202,24 +1571,45 @@ async function renderFiles() {
   }));
   renderFeed();
 }
+
 function renderFeed() {
   const feed = document.getElementById('feed');
   if (!feed) return;
-  if (!state.files.length) { feed.innerHTML = '<div class="empty">Пока пусто. Отправь файл с телефона.</div>'; return; }
-  const imgs = state.files.filter((f) => (f.mime || '').startsWith('image'));
-  const docs = state.files.filter((f) => !(f.mime || '').startsWith('image'));
-  let html = '';
-  if (imgs.length) {
-    html += `<div class="feed-grid">` + imgs.map((f) => `<div class="imgcard" data-p="${esc(f.path)}"><img src="${fileURL(f.path)}" loading="lazy" decoding="async" /></div>`).join('') + `</div>`;
+  if (!state.files.length) {
+    feed.innerHTML = '<div class="empty">Пока пусто<br><small>Отправь файл с телефона — он появится здесь</small></div>';
+    return;
   }
-  html += docs.map((f) => `<div class="file" data-p="${esc(f.path)}"><div class="tile">${SVG.file}</div><div class="grow"><div class="b ellip">${esc(f.name)}</div><div class="lbl">${f.time || ''}</div></div><button class="copybtn">Путь</button></div>`).join('');
-  feed.innerHTML = html;
-  feed.querySelectorAll('.imgcard').forEach((el) => (el.onclick = () => openViewer(el.dataset.p)));
-  feed.querySelectorAll('.file').forEach((el) => (el.onclick = async () => {
+  // группируем по дням, как в веб-версии
+  const days = new Map();
+  for (const file of state.files) {
+    const stamp = file.at || file.time || Date.now();
+    const date = new Date(typeof stamp === 'number' ? stamp : Date.parse(stamp) || Date.now());
+    const key = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    if (!days.has(key)) days.set(key, []);
+    days.get(key).push(file);
+  }
+  feed.innerHTML = `<div class="gallery">${[...days.entries()].map(([key, rows]) => `
+    <div class="gallery-day">${esc(finDayTitle(Number(key)))} · ${rows.length} ${finPlural(rows.length, 'файл', 'файла', 'файлов')}</div>
+    ${rows.map(fileTile).join('')}`).join('')}</div>`;
+
+  feed.querySelectorAll('.shot').forEach((el) => (el.onclick = async () => {
+    if (el.dataset.image === '1') { openViewer(el.dataset.p); return; }
     await window.arra.copyPath(el.dataset.p);
-    const btn = el.querySelector('.copybtn'); if (btn) { btn.textContent = 'Скопировано ✓'; btn.classList.add('ok'); }
+    const hint = el.querySelector('.shot-copy');
+    if (hint) { hint.textContent = 'Путь скопирован ✓'; hint.classList.add('ok'); }
   }));
 }
+
+function fileTile(file) {
+  const isImage = String(file.mime || '').startsWith('image');
+  return `<figure class="shot" data-p="${esc(file.path)}" data-image="${isImage ? 1 : 0}" title="${esc(file.name)}">
+      <span class="shot-media">${isImage
+        ? `<img src="${fileURL(file.path)}" loading="lazy" decoding="async" alt="">`
+        : `<span class="tile">${SVG.file}</span>`}</span>
+      <figcaption><b>${esc(file.name)}</b><span class="shot-copy">${esc(file.time || '')}</span></figcaption>
+    </figure>`;
+}
+
 function openViewer(path) {
   const imgs = state.files.filter((f) => (f.mime || '').startsWith('image'));
   if (!imgs.length) return;
@@ -1252,46 +1642,146 @@ function openViewer(path) {
 }
 
 // ================= ЗАМЕТКИ =================
+// ================= ЗАМЕТКИ (две колонки, как в веб-версии) =================
+
+let pcNotes = [];
+let pcNoteId = null;
+let pcNoteTimer = null;
+
 async function renderNotes() {
-  app.innerHTML = `<div class="page-head"><h1>Заметки</h1><div class="grow"></div><button class="btn sm" id="newnote">＋ Новая</button></div><div id="notes" class="notes-grid"><div class="empty">Загрузка…</div></div>`;
-  document.getElementById('newnote').onclick = () => editNote(null);
+  app.innerHTML = `
+    <div class="page-head">
+      <h1>Заметки</h1>
+      <div class="grow"></div>
+      <button class="btn sm" id="newnote">＋ Новая</button>
+    </div>
+    <div class="notes-split">
+      <aside class="notes-side">
+        <input class="notes-search" id="notesearch" type="search" placeholder="Поиск по заметкам" />
+        <div class="notes-list" id="noteslist"><div class="empty">Загружаю…</div></div>
+      </aside>
+      <section class="note-paper" id="notepaper"><div class="empty">Выбери заметку слева</div></section>
+    </div>`;
+  document.getElementById('newnote').onclick = createPcNote;
+  document.getElementById('notesearch').oninput = (e) => drawNoteList(e.target.value);
   try {
     const r = await api('GET', '/notes');
-    const box = document.getElementById('notes');
-    if (!r.notes.length) box.innerHTML = '<div class="empty">Пусто. Нажми «＋ Новая».</div>';
-    else box.innerHTML = r.notes.map((n) => {
-      const dt = n.updated_at || n.created_at;
-      let dstr = '';
-      try { if (dt) dstr = new Date(dt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }); } catch {}
-      const body = (n.body || '').trim();
-      return `<div class="note" data-id="${n.id}">
-        <div class="nt ellip">${esc(n.title || 'Без названия')}</div>
-        <div class="nb ${body ? '' : 'dim'}">${body ? esc(body) : 'Пустая заметка'}</div>
-        <div class="nmeta"><span class="ndot"></span>${dstr || 'заметка'}</div>
-      </div>`;
-    }).join('');
-    box.querySelectorAll('.note').forEach((el) => (el.onclick = () => editNote(r.notes.find((n) => n.id === el.dataset.id))));
-  } catch (e) { document.getElementById('notes').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    pcNotes = r.notes || [];
+    if (!pcNotes.some((n) => String(n.id) === String(pcNoteId))) pcNoteId = pcNotes[0]?.id || null;
+    drawNoteList('');
+    drawNotePaper();
+  } catch (e) {
+    document.getElementById('noteslist').innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+  }
 }
-function editNote(note) {
-  app.innerHTML = `
-    <div class="row"><button class="btn ghost sm" id="back">‹ Назад</button>${note ? '<button class="btn ghost sm right" id="del">Удалить</button>' : ''}</div>
-    <input id="ntitle" placeholder="Заголовок" style="margin-top:14px;font-size:18px;font-weight:700" value="${esc(note?.title || '')}" />
-    <textarea id="nbody" placeholder="Текст заметки…" style="margin-top:10px;height:300px">${esc(note?.body || '')}</textarea>
-    <button class="btn full" id="save" style="margin-top:12px">Сохранить</button>`;
-  document.getElementById('back').onclick = renderNotes;
-  document.getElementById('save').onclick = async () => {
-    const title = document.getElementById('ntitle').value.trim();
-    const body = document.getElementById('nbody').value;
-    if (!title && !body.trim()) return renderNotes();
-    try {
-      if (note) await api('PUT', '/notes/' + note.id, { title, body });
-      else await api('POST', '/notes', { title, body });
-      renderNotes();
-    } catch (e) { alert(e.message); }
+
+function drawNoteList(query) {
+  const box = document.getElementById('noteslist');
+  if (!box) return;
+  const value = String(query || '').trim().toLowerCase();
+  const list = pcNotes.filter((n) => !value || `${n.title || ''} ${n.body || ''}`.toLowerCase().includes(value));
+  box.innerHTML = list.length ? list.map((n) => {
+    const text = String(n.body || '').replace(/[#>*\-[\]`]/g, ' ').replace(/\s+/g, ' ').trim();
+    const tasks = (String(n.body || '').match(/^- \[[ x]\]/gm) || []).length;
+    const done = (String(n.body || '').match(/^- \[x\]/gm) || []).length;
+    let when = '';
+    try { when = new Date(n.updated_at || n.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }); } catch {}
+    return `<button class="note-item${String(n.id) === String(pcNoteId) ? ' active' : ''}" data-note="${n.id}">
+        <b>${esc(n.title || text.slice(0, 30) || 'Без названия')}</b>
+        <small>${esc(text.slice(0, 68) || 'пустая заметка')}</small>
+        <span class="meta">${esc(when)}${tasks ? ` · задач ${done}/${tasks}` : ''}</span>
+      </button>`;
+  }).join('') : '<div class="empty">Ничего не найдено</div>';
+  box.querySelectorAll('[data-note]').forEach((b) => b.onclick = () => selectPcNote(b.dataset.note));
+}
+
+async function selectPcNote(id) {
+  if (String(id) === String(pcNoteId)) return;
+  await savePcNote();
+  pcNoteId = id;
+  document.querySelectorAll('[data-note]').forEach((b) => b.classList.toggle('active', String(b.dataset.note) === String(id)));
+  drawNotePaper(true);
+}
+
+function drawNotePaper(animate = false) {
+  const paper = document.getElementById('notepaper');
+  if (!paper) return;
+  const note = pcNotes.find((n) => String(n.id) === String(pcNoteId));
+  if (!note) { paper.innerHTML = '<div class="empty">Выбери заметку слева</div>'; return; }
+  paper.classList.remove('swap');
+  paper.innerHTML = `
+    <div class="note-head">
+      <span class="note-state" id="notestate">Сохранено</span>
+      <div class="row" style="gap:8px">
+        <button class="btn ghost sm" id="noteai">Причесать через ИИ</button>
+        <button class="btn ghost sm" id="notedel">Удалить</button>
+      </div>
+    </div>
+    <input class="note-title" id="notetitle" placeholder="Заголовок" value="${esc(note.title || '')}" />
+    <textarea class="note-body" id="notebody" placeholder="Текст заметки…">${esc(note.body || '')}</textarea>`;
+  if (animate) { void paper.offsetWidth; paper.classList.add('swap'); }
+
+  const markDirty = () => {
+    const label = document.getElementById('notestate');
+    if (label) label.textContent = 'Сохраняю…';
+    clearTimeout(pcNoteTimer);
+    pcNoteTimer = setTimeout(savePcNote, 700);
   };
-  const del = document.getElementById('del');
-  if (del) del.onclick = async () => { try { await api('DELETE', '/notes/' + note.id); renderNotes(); } catch {} };
+  document.getElementById('notetitle').oninput = markDirty;
+  document.getElementById('notebody').oninput = markDirty;
+  document.getElementById('notedel').onclick = async () => {
+    if (!confirm('Удалить заметку? Она исчезнет на всех устройствах.')) return;
+    try {
+      await api('DELETE', '/notes/' + note.id);
+      pcNotes = pcNotes.filter((n) => String(n.id) !== String(note.id));
+      pcNoteId = pcNotes[0]?.id || null;
+      drawNoteList(document.getElementById('notesearch')?.value || '');
+      drawNotePaper();
+    } catch (e) { toast('Заметка', e.message, 'warn'); }
+  };
+  document.getElementById('noteai').onclick = async () => {
+    toast('Заметка', 'Причёсываю…', 'info');
+    try {
+      const structured = await api('POST', '/notes/structure', { text: note.body || '' });
+      const saved = await api('PUT', '/notes/' + note.id, { title: note.title, body: structured.structuredBody || note.body });
+      Object.assign(note, saved.note || {});
+      drawNotePaper(true);
+      drawNoteList(document.getElementById('notesearch')?.value || '');
+      toast('Заметка', 'Готово', 'ok');
+    } catch (e) { toast('Заметка', e.message, 'warn'); }
+  };
+}
+
+async function savePcNote() {
+  clearTimeout(pcNoteTimer);
+  const note = pcNotes.find((n) => String(n.id) === String(pcNoteId));
+  const titleField = document.getElementById('notetitle');
+  const bodyField = document.getElementById('notebody');
+  if (!note || !titleField || !bodyField) return;
+  const title = titleField.value.trim();
+  const body = bodyField.value;
+  if (title === (note.title || '') && body === (note.body || '')) return;
+  try {
+    const saved = await api('PUT', '/notes/' + note.id, { title, body });
+    Object.assign(note, saved.note || { title, body });
+    const label = document.getElementById('notestate');
+    if (label) label.textContent = 'Сохранено только что';
+    drawNoteList(document.getElementById('notesearch')?.value || '');
+  } catch (e) {
+    const label = document.getElementById('notestate');
+    if (label) label.textContent = 'Не сохранилось: ' + e.message;
+  }
+}
+
+async function createPcNote() {
+  try {
+    const r = await api('POST', '/notes', { title: '', body: '' });
+    pcNotes.unshift(r.note);
+    pcNoteId = r.note.id;
+    drawNoteList(document.getElementById('notesearch')?.value || '');
+    drawNotePaper(true);
+    document.getElementById('notetitle')?.focus();
+  } catch (e) { toast('Заметка', e.message, 'warn'); }
 }
 
 // ================= ТЕРМИНАЛ / КОД =================
@@ -1310,8 +1800,8 @@ async function renderTerminal() {
       <div class="ws-right">
         <div class="term-launchbar">
           <span class="term-launch-label">Запустить</span>
-          <button class="term-preset" id="start-codex" title="Запустить Codex в YOLO mode"><i></i>Codex · YOLO mode</button>
-          <button class="term-preset claude" id="start-claude" title="Запустить Claude Code без запросов разрешений"><i></i>Claude · полный доступ</button>
+          <button class="term-preset codex" id="start-codex" title="Запустить Codex с полным доступом"><img src="assets/merchants/openai.png" alt="">Codex<span>полный доступ</span></button>
+          <button class="term-preset claude" id="start-claude" title="Запустить Claude Code без запросов разрешений"><img src="assets/merchants/anthropic.png" alt="">Claude<span>полный доступ</span></button>
           <span class="term-preset-note">в текущей папке</span>
         </div>
         <div class="termtabs" id="termtabs"></div>
@@ -1354,6 +1844,11 @@ const sync = {
   blockers: [], blockersChecked: false, blockersBusy: false, closeResult: null,
   remote: {}, showAll: false,
   lastRequest: null, networkRetries: 0,
+  autoClosingBlockers: false,
+  scanLocalFiles: 0, scanLocalDirs: 0,
+  scanRemoteFiles: 0, scanRemoteDirs: 0,
+  scanLocalScope: '', scanRemoteScope: '',
+  scanLocalScopes: {}, scanRemoteScopes: {},
 };
 function fmtB(n) {
   if (!n) return '0 Б';
@@ -1387,9 +1882,9 @@ function syncShortPath(value) {
 function syncConnectionState() {
   if (!sync.busy || !sync.lastProgressAt) return { label: 'ожидание', cls: '' };
   const silent = (Date.now() - sync.lastProgressAt) / 1000;
-  if (silent > 30) return { label: `нет ответа ${Math.round(silent)} сек`, cls: 'bad' };
-  if (silent > 12) return { label: `пауза ${Math.round(silent)} сек`, cls: 'warn' };
-  return { label: 'данные идут', cls: 'ok' };
+  if (silent > 45) return { label: `сервер отвечает медленно · ${Math.round(silent)} сек`, cls: 'warn' };
+  if (silent > 15) return { label: `жду следующий ответ · ${Math.round(silent)} сек`, cls: '' };
+  return { label: 'соединение активно', cls: 'ok' };
 }
 function wireSyncEvents() {
   if (sync.wired) return; sync.wired = true;
@@ -1400,21 +1895,47 @@ function wireSyncEvents() {
       syncLog(o.msg || 'Подготовка переноса');
       sync.busy = true; sync.phase = o.msg || 'Подготовка…'; sync.detail = o.detail || '';
       sync.step = 'scan'; sync.stepError = '';
-      sync.indeterminate = true; updateSyncStage();
+      sync.indeterminate = true; sync.lastProgressAt = Date.now(); updateSyncStage();
     } else if (o.type === 'scan') {
       sync.busy = true; sync.indeterminate = true;
       sync.step = 'scan';
+      sync.lastProgressAt = Date.now();
+      if (o.side === 'remote') {
+        sync.scanRemoteScopes[o.scope || 'Сервер'] = { files: Number(o.files) || 0, dirs: Number(o.dirs) || 0 };
+        sync.scanRemoteFiles = Object.values(sync.scanRemoteScopes).reduce((sum, row) => sum + row.files, 0);
+        sync.scanRemoteDirs = Object.values(sync.scanRemoteScopes).reduce((sum, row) => sum + row.dirs, 0);
+        sync.scanRemoteScope = o.scope || '';
+      } else {
+        sync.scanLocalScopes[o.scope || 'Компьютер'] = { files: Number(o.files) || 0, dirs: Number(o.dirs) || 0 };
+        sync.scanLocalFiles = Object.values(sync.scanLocalScopes).reduce((sum, row) => sum + row.files, 0);
+        sync.scanLocalDirs = Object.values(sync.scanLocalScopes).reduce((sum, row) => sum + row.dirs, 0);
+        sync.scanLocalScope = o.scope || '';
+      }
       sync.phase = o.msg || `Сканирую ${o.side === 'remote' ? 'сервер' : 'этот компьютер'}…`;
-      sync.detail = [o.scope, o.files != null ? `${o.files} файлов` : '', o.dirs != null ? `${o.dirs} папок` : ''].filter(Boolean).join(' · ');
+      sync.detail = 'Считаю файлы с обеих сторон. Общий объём станет известен после сравнения.';
       updateSyncStage();
     }
     else if (o.type === 'status') {
       syncLog(`Проверка завершена: ${o.localFiles || 0} здесь, ${o.remoteFiles || 0} на сервере, ${o.upload || 0} отправить, ${o.download || 0} забрать`);
+      if ((o.excludedScopes || []).length) {
+        syncLog('Архивные диалоги Codex не копируются; активные диалоги, память, настройки и навыки синхронизируются.');
+      }
       sync.busy = false; sync.info = o; sync.projects = o.projects || [];
       sync.lastCheckSeconds = Number(o.elapsed) || Math.round(syncElapsed());
       if (!sync.lastRequest) sync.step = 'idle';
-      sync.phase = (o.upload || o.download || o.conflicts) ? 'Состояние устройств проверено' : 'Это устройство соответствует серверу';
-      sync.detail = `${o.localFiles || 0} файлов здесь · ${o.remoteFiles || 0} файлов на сервере · проверка ${fmtDuration(o.elapsed)}`;
+      if (o.upload && o.download) {
+        sync.phase = 'Изменения есть с обеих сторон';
+        sync.detail = `Единственной актуальной версии пока нет: здесь новее ${fileCount(o.upload)}, на сервере — ${fileCount(o.download)}.`;
+      } else if (o.upload) {
+        sync.phase = 'Актуальнее этот компьютер';
+        sync.detail = `${fileCount(o.upload)} изменены здесь и ещё не сохранены на сервере.`;
+      } else if (o.download) {
+        sync.phase = 'Актуальнее сервер';
+        sync.detail = `${fileCount(o.download)} нужно получить на этот компьютер.`;
+      } else {
+        sync.phase = 'Версии совпадают';
+        sync.detail = 'На этом компьютере и на сервере одинаковые рабочие файлы.';
+      }
       sync.pct = 0; sync.indeterminate = false; renderSyncViewBody(); updateSyncStage();
     } else if (o.type === 'plan') {
       syncLog(`${o.direction === 'push' ? 'Отправка на сервер' : 'Получение с сервера'}: ${o.files || 0} файлов, ${fmtB(o.bytes || 0)}`);
@@ -1424,6 +1945,11 @@ function wireSyncEvents() {
       sync.indeterminate = !(o.files > 0);
       sync.speed = 0; sync.eta = null; sync.current = null; sync.recentFiles = []; sync.blockedFiles = []; sync.verify = null;
       sync.liveProjects = Object.fromEntries((o.projects || []).map((p) => [p.name, { ...p, done: 0, doneBytes: 0 }]));
+      updateSyncStage(); updateSyncLive();
+    } else if (o.type === 'storage') {
+      const free = o.freeBytes == null ? 'неизвестно' : fmtB(o.freeBytes);
+      syncLog(`Место на сервере: свободно ${free}, план ${fmtB(o.plannedUploadBytes || 0)}`);
+      sync.detail = `Сервер: свободно ${free} · для передачи ${fmtB(o.plannedUploadBytes || 0)}`;
       updateSyncStage(); updateSyncLive();
     } else if (o.type === 'preflight') {
       sync.step = 'files';
@@ -1435,10 +1961,10 @@ function wireSyncEvents() {
     } else if (o.type === 'blocked') {
       sync.busy = false; sync.indeterminate = false; sync.blockedFiles = o.files || [];
       sync.step = 'blocked'; sync.phase = `${Number(o.count) === 1 ? 'Занят' : 'Занято'} ${fileCount(o.count)}`;
-      sync.detail = 'Нажми «Закрыть и продолжить» — передача возобновится сама.';
+      sync.detail = 'Освобождаю занятые файлы и автоматически продолжаю передачу.';
       sync.pct = 0; setSyncProgress(0, sync.detail); updateSyncStage(); updateSyncLive(); renderSyncV2Body();
-      refreshSyncBlockers();
-      toast('Файлы заняты', `${fileCount(o.count)} нужно освободить`, 'warn', 6000);
+      refreshSyncBlockers().then(() => autoResolveSyncBlockers());
+      toast('Файлы заняты', `${fileCount(o.count)} · пробую освободить автоматически`, 'warn', 6000);
     } else if (o.type === 'progress') {
       sync.step = 'transfer';
       const pct = o.totalBytes ? Math.round((o.bytes || 0) / o.totalBytes * 100) : (o.total ? Math.round(o.done / o.total * 100) : 0);
@@ -1461,7 +1987,7 @@ function wireSyncEvents() {
     } else if (o.type === 'retry') {
       sync.step = 'transfer';
       sync.lastProgressAt = Date.now();
-      syncLog(`↻ попытка ${o.attempt}/4 · ${o.file}: ${o.error}`);
+      syncLog(`↻ попытка ${o.attempt}/${o.maxAttempts || 3} · ${o.file}: ${o.error}`);
       sync.phase = 'Повторяю файл после ошибки';
       sync.detail = `${syncShortPath(o.file)} · ${o.error}`;
       updateSyncStage(); updateSyncLive();
@@ -1485,6 +2011,11 @@ function wireSyncEvents() {
       sync.errors.push({ file: o.file || 'Файл', error: o.error || 'Ошибка' });
       sync.errors = sync.errors.slice(-50);
       renderSyncJourney();
+    } else if (o.type === 'file_skipped') {
+      syncLog(`↷ пропущен исчезнувший файл · ${o.file}`);
+      sync.detail = `${syncShortPath(o.file)} · исчез после сканирования, передача продолжается`;
+      sync.lastProgressAt = Date.now();
+      updateSyncStage(); updateSyncLive();
     } else if (o.type === 'done') {
       const verb = o.direction === 'push' ? 'Отправлено на сервер' : 'Забрано с сервера';
       sync.pct = 100; sync.indeterminate = false;
@@ -1492,21 +2023,15 @@ function wireSyncEvents() {
       sync.detail = `${fmtB(o.bytes || 0)} · проверено ${o.verified ?? o.transferred ?? 0}${o.errors ? ` · ошибок ${o.errors}` : ''}${o.skipped ? ` · пропущено ${o.skipped}` : ''}`;
       sync.lastDone = new Date().toISOString(); localStorage.setItem('arra-sync-last', sync.lastDone);
       sync.step = o.errors ? 'error' : 'done'; sync.stepError = o.errors ? `${o.errors} ошибок` : '';
-      sync.current = null; sync.speed = 0; sync.eta = null;
+      sync.busy = false; sync.current = null; sync.speed = 0; sync.eta = null;
       sync.verify = null;
       syncLog(`${verb}: ${o.transferred || 0} файлов, ${fmtB(o.bytes || 0)}, ошибок ${o.errors || 0}`);
       setSyncProgress(100, sync.detail); updateSyncStage(); updateSyncLive();
+      renderSyncViewBody();
+      showSyncSummary(o);
       toast('Передача', `${verb}: ${fileCount(o.transferred)}${o.errors ? `, ошибок ${o.errors}` : ''}`, o.errors ? 'warn' : 'ok');
+      setTimeout(() => window.arra.syncRun('status', null, null), 700);
     } else if (o.type === 'error') {
-      const transient = /timed out|timeout|etimedout|econnreset|socket|сервер.*не ответил/i.test(String(o.error || ''));
-      if (transient && sync.lastRequest && sync.networkRetries < 2) {
-        sync.busy = false; sync.indeterminate = true; sync.networkRetries += 1;
-        sync.phase = `Сервер не ответил · повтор ${sync.networkRetries} из 2`;
-        sync.detail = 'Повторяю соединение автоматически…'; updateSyncStage();
-        const request = { ...sync.lastRequest };
-        setTimeout(() => runSyncOp(request.mode, request.only, true), 1400 * sync.networkRetries);
-        return;
-      }
       syncLog('ОШИБКА: ' + (o.error || 'Неизвестная ошибка'));
       sync.busy = false; sync.indeterminate = false; sync.phase = 'Передача остановлена'; sync.detail = o.error || 'Неизвестная ошибка';
       sync.failedStep = ['scan', 'files', 'transfer', 'verify'].includes(sync.step) ? sync.step : 'scan';
@@ -1554,6 +2079,17 @@ function handleRemoteSyncEvent(message) {
 }
 function updateSyncStage() {
   setSyncStatus(sync.phase);
+  // во время передачи карточка состояния показывает фазу и полосу прогресса
+  const progressBox = document.getElementById('sync-progress');
+  if (progressBox) progressBox.hidden = !sync.busy;
+  if (sync.busy) {
+    const title = document.getElementById('sync-journey-title');
+    const detailLine = document.getElementById('sync-journey-detail');
+    if (title) title.textContent = sync.phase || 'Передаю…';
+    if (detailLine) detailLine.textContent = sync.detail || '';
+    const card = document.getElementById('sync-state');
+    if (card) card.className = 'state-card busy';
+  }
   const detail = document.getElementById('sync-detail'); if (detail) detail.textContent = sync.detail || '';
   const icon = document.getElementById('sync-stage-icon'); if (icon) icon.classList.toggle('busy', sync.busy);
   const track = document.getElementById('sync-track'); if (track) track.classList.toggle('indeterminate', !!sync.indeterminate);
@@ -1566,12 +2102,22 @@ function updateSyncStage() {
   const cancel = document.getElementById('sync-cancel'); if (cancel) cancel.hidden = !sync.busy;
   const push = document.getElementById('sync-push-all'); if (push) push.disabled = sync.busy;
   const pull = document.getElementById('sync-pull-all'); if (pull) pull.disabled = sync.busy;
-  const speed = document.getElementById('sync-speed-value'); if (speed) speed.textContent = sync.speed ? `${fmtB(sync.speed)}/с` : '—';
-  const eta = document.getElementById('sync-eta-value'); if (eta) eta.textContent = sync.eta != null ? fmtDuration(sync.eta) : '—';
-  const pct = document.getElementById('sync-pct-value'); if (pct) pct.textContent = `${sync.pct || 0}%`;
+  const scanning = sync.busy && sync.step === 'scan';
+  const speed = document.getElementById('sync-speed-value'); if (speed) speed.textContent = scanning ? fileCount(sync.scanLocalFiles + sync.scanRemoteFiles) : (sync.speed ? `${fmtB(sync.speed)}/с` : '—');
+  const eta = document.getElementById('sync-eta-value'); if (eta) eta.textContent = scanning ? fmtDuration(syncElapsed()) : (sync.eta != null ? fmtDuration(sync.eta) : '—');
+  const speedLabel = document.getElementById('sync-speed-label'); if (speedLabel) speedLabel.textContent = scanning ? 'Уже проверено' : 'Скорость';
+  const etaLabel = document.getElementById('sync-eta-label'); if (etaLabel) etaLabel.textContent = scanning ? 'Идёт' : 'Осталось';
+  const pct = document.getElementById('sync-pct-value'); if (pct) pct.textContent = sync.indeterminate ? 'Сверяю…' : `${sync.pct || 0}%`;
+  const scanSummary = document.getElementById('sync-scan-summary');
+  if (scanSummary) {
+    scanSummary.hidden = !scanning;
+    scanSummary.innerHTML = scanning ? `
+      <div><span>Этот компьютер</span><b>${fmt(sync.scanLocalFiles)} файлов</b><small>${esc(sync.scanLocalScope || 'подключаю')}</small></div>
+      <div><span>Сервер</span><b>${fmt(sync.scanRemoteFiles)} файлов</b><small>${esc(sync.scanRemoteScope || 'подключаю')}</small></div>` : '';
+  }
   renderSyncJourney();
 }
-function updateSyncLive() {
+function updateSyncLiveRich() {
   const box = document.getElementById('sync-live');
   if (!box) return;
   const hasData = sync.busy || sync.current || sync.blockedFiles.length || sync.verify || Object.keys(sync.liveProjects).length;
@@ -1615,8 +2161,16 @@ setInterval(() => { if (sync.busy && state.section === 'sync') { updateSyncStage
 function startSyncStatus() {
   if (sync.busy) return;
   sync.lastRequest = null; sync.step = 'scan'; sync.stepError = ''; sync.errors = [];
-  sync.busy = true; sync.startedAt = Date.now(); sync.phase = 'Подключаюсь к серверу…'; sync.detail = 'Подготавливаю безопасное сравнение'; sync.pct = 0; sync.indeterminate = true;
+  sync.busy = true; sync.startedAt = Date.now();
+  // Явно проговариваем, что это только сверка: раньше при входе в раздел
+  // молча стартовал «какой-то процесс» и было непонятно, что он делает.
+  sync.phase = 'Сверяю с сервером';
+  sync.detail = 'Смотрю, какие файлы изменились здесь и на сервере. Ничего не передаётся.';
+  sync.pct = 0; sync.indeterminate = true;
   sync.lastProgressAt = Date.now(); sync.current = null; sync.speed = 0; sync.eta = null;
+  sync.scanLocalFiles = 0; sync.scanLocalDirs = 0; sync.scanRemoteFiles = 0; sync.scanRemoteDirs = 0;
+  sync.scanLocalScope = ''; sync.scanRemoteScope = '';
+  sync.scanLocalScopes = {}; sync.scanRemoteScopes = {};
   sync.liveProjects = {}; sync.recentFiles = []; sync.blockedFiles = []; sync.verify = null;
   setSyncProgress(0, ''); updateSyncStage();
   syncLog('Проверяю изменения на устройстве и сервере…');
@@ -1629,6 +2183,9 @@ function runSyncOp(mode, only, automaticRetry = false) {
   sync.step = 'scan'; sync.stepError = ''; sync.errors = [];
   sync.busy = true; sync.startedAt = Date.now(); sync.pct = 0; sync.indeterminate = true;
   sync.lastProgressAt = Date.now(); sync.current = null; sync.speed = 0; sync.eta = null;
+  sync.scanLocalFiles = 0; sync.scanLocalDirs = 0; sync.scanRemoteFiles = 0; sync.scanRemoteDirs = 0;
+  sync.scanLocalScope = ''; sync.scanRemoteScope = '';
+  sync.scanLocalScopes = {}; sync.scanRemoteScopes = {};
   sync.liveProjects = {}; sync.recentFiles = []; sync.blockedFiles = []; sync.verify = null;
   setSyncProgress(0, ''); const lg = document.getElementById('sync-log'); if (lg) { lg.textContent = ''; lg.style.display = 'none'; }
   sync.phase = (mode === 'push' ? 'Готовлю отправку на сервер' : 'Готовлю получение с сервера') + (only ? ' · ' + only : '') + '…';
@@ -1639,7 +2196,7 @@ function runSyncOp(mode, only, automaticRetry = false) {
 }
 
 async function refreshSyncBlockers() {
-  if (sync.blockersBusy) return;
+  if (sync.blockersBusy) return sync.blockers;
   sync.blockersBusy = true;
   renderBlockerPanel();
   try { sync.blockers = await window.arra.syncBlockers() || []; }
@@ -1648,6 +2205,18 @@ async function refreshSyncBlockers() {
   sync.blockersChecked = true;
   sync.blockersBusy = false;
   renderBlockerPanel();
+  return sync.blockers;
+}
+
+function autoResolveSyncBlockers() {
+  if (sync.autoClosingBlockers || !sync.blockedFiles.length) return;
+  // Не завершаем сам Codex/ChatGPT: это оборвало бы текущую задачу и не является
+  // безопасным способом освободить обычный проектный файл.
+  const closable = sync.blockers.filter((item) => !/^(codex|chatgpt)$/i.test(String(item.name || '')));
+  const pids = closable.map((item) => item.pid).filter(Boolean);
+  if (!pids.length) return;
+  sync.autoClosingBlockers = true;
+  closeSyncSessions(pids).finally(() => { sync.autoClosingBlockers = false; });
 }
 
 function renderBlockerPanel() {
@@ -1672,11 +2241,11 @@ function renderBlockerPanel() {
     <button id="sync-force-close" data-force-pids="${remaining.map((item) => item.pid).filter(Boolean).join(',')}">Закрыть принудительно</button>
   </div>` : '';
   box.innerHTML = `
-    <div class="sync-blocker-title"><b>Нужно действие</b><span>${sync.blockedFiles.length}</span></div>
+    <div class="sync-blocker-title"><b>Освобождаю файлы</b><span>${sync.blockedFiles.length}</span></div>
     ${closeWarning}
     <div class="sync-blocked-files">${sync.blockedFiles.slice(0, 4).map((file) => `<span>${esc(syncShortPath(file.file || file.project))}</span>`).join('')}</div>
     ${rows.length ? `<div class="sync-blocked-apps">${rows.map((item) => `<span>${esc(item.name)}${item.count > 1 ? ` · ${item.count}` : ''}</span>`).join('')}</div>` : ''}
-    <button class="btn sync-blocker-action" id="sync-close-and-retry" ${sync.blockersBusy ? 'disabled' : ''}>${sync.blockersBusy ? 'Проверяю…' : (rows.length ? 'Закрыть и продолжить' : 'Повторить')}</button>`;
+    <button class="btn sync-blocker-action" id="sync-close-and-retry" ${sync.blockersBusy ? 'disabled' : ''}>${sync.blockersBusy ? 'Закрываю…' : (rows.length ? 'Повторить автозакрытие' : 'Повторить')}</button>`;
   const continueButton = document.getElementById('sync-close-and-retry');
   if (continueButton) continueButton.onclick = () => {
     const pids = useful.map((item) => item.pid).filter(Boolean);
@@ -1687,7 +2256,7 @@ function renderBlockerPanel() {
   if (force) force.onclick = () => forceCloseSyncSessions(String(force.dataset.forcePids || '').split(',').map(Number).filter(Boolean));
 }
 
-async function finishBlockerClose(result, retryRequest) {
+async function finishBlockerClose(result, retryRequest, allowForce = true) {
   sync.blockersBusy = false;
   sync.closeResult = result;
   if (result?.remaining?.length) {
@@ -1695,6 +2264,11 @@ async function finishBlockerClose(result, retryRequest) {
     sync.blockersChecked = true;
     const names = result.remaining.map((item) => item.title || item.name || `PID ${item.pid}`).join(', ');
     syncLog(`Не закрылись: ${names}`);
+    if (allowForce) {
+      syncLog(`Завершаю принудительно без дополнительного подтверждения: ${names}`);
+      await forceCloseSyncSessions(result.remaining.map((item) => item.pid).filter(Boolean), retryRequest);
+      return;
+    }
     toast('Редактор не закрылся', names, 'warn', 8000);
     renderBlockerPanel();
     return;
@@ -1713,7 +2287,6 @@ async function finishBlockerClose(result, retryRequest) {
 
 async function closeSyncSessions(pids) {
   if (!pids.length) return;
-  if (!confirm('Закрыть найденные программы и продолжить передачу?')) return;
   const retryRequest = sync.blockedFiles.length && sync.lastRequest ? { ...sync.lastRequest } : null;
   sync.blockersBusy = true; sync.closeResult = null; renderBlockerPanel();
   toast('Сессии', 'Закрываю и проверяю завершение процессов…', 'info', 3000);
@@ -1730,10 +2303,9 @@ async function closeSyncSessions(pids) {
   }
 }
 
-async function forceCloseSyncSessions(pids) {
+async function forceCloseSyncSessions(pids, retryOverride = null) {
   if (!pids.length) return;
-  if (!confirm('Принудительно завершить эти процессы? Все несохранённые изменения в них будут потеряны.')) return;
-  const retryRequest = sync.blockedFiles.length && sync.lastRequest ? { ...sync.lastRequest } : null;
+  const retryRequest = retryOverride || (sync.blockedFiles.length && sync.lastRequest ? { ...sync.lastRequest } : null);
   sync.blockersBusy = true; renderBlockerPanel();
   try {
     const result = await window.arra.syncForceCloseBlockers(pids);
@@ -1741,7 +2313,7 @@ async function forceCloseSyncSessions(pids) {
       sync.blockersBusy = false; reportError('sync.blockers.force-close', new Error(result?.error || 'Не удалось завершить процессы'), { pids });
       toast('Сессии', result?.error || 'Не удалось завершить процессы', 'warn'); renderBlockerPanel(); return;
     }
-    await finishBlockerClose(result, retryRequest);
+    await finishBlockerClose(result, retryRequest, false);
   } catch (error) {
     sync.blockersBusy = false; reportError('sync.blockers.force-close', error, { pids });
     toast('Сессии', error.message || 'Не удалось завершить процессы', 'warn'); renderBlockerPanel();
@@ -1781,25 +2353,6 @@ function renderSyncViewBody() {
   if (document.querySelector('.sync-v3')) renderSyncV2Body();
   else renderSyncBody();
 }
-function openSyncConfirm() {
-  const i = sync.info || {};
-  let v = document.getElementById('sync-confirm-modal');
-  if (!v) { v = document.createElement('div'); v.id = 'sync-confirm-modal'; v.className = 'editmodal'; document.body.appendChild(v); }
-  v.innerHTML = `<div class="sync-confirm">
-    <h3>Синхронизировать этот компьютер?</h3>
-    <div class="dim" style="margin-top:6px;line-height:1.45">Arra возьмёт более свежие версии с каждого компьютера. Перед заменой существующего файла будет создана резервная копия. Неоднозначные конфликты останутся без изменений.</div>
-    <div class="sync-confirm-summary">
-      <div><b style="color:#6E8FE8">${i.upload || 0}</b><span>отправить</span></div>
-      <div><b style="color:var(--green)">${i.download || 0}</b><span>получить</span></div>
-      <div><b style="color:var(--yellow)">${i.conflicts || 0}</b><span>проверить вручную</span></div>
-    </div>
-    <div class="row"><button class="btn ghost grow" id="sync-confirm-cancel">Отмена</button><button class="btn grow" id="sync-confirm-go">Синхронизировать</button></div>
-  </div>`;
-  const close = () => v.remove();
-  v.onclick = (e) => { if (e.target === v) close(); };
-  document.getElementById('sync-confirm-cancel').onclick = close;
-  document.getElementById('sync-confirm-go').onclick = () => { close(); runSyncOp('sync', null); };
-}
 function renderSync() {
   wireSyncEvents();
   app.innerHTML = `
@@ -1836,7 +2389,7 @@ function renderSync() {
       <div class="sync-foot">Удаления выключены. Перед заменой создаётся резервная копия. Конфликты с неясной более свежей версией Arra не трогает, пока ты не выберешь направление.</div>
     </div>`;
   document.getElementById('sync-refresh').onclick = () => startSyncStatus();
-  document.getElementById('sync-safe').onclick = openSyncConfirm;
+  document.getElementById('sync-safe').onclick = () => runSyncOp('sync', null);
   document.getElementById('sync-cancel').onclick = async () => { await window.arra.syncCancel(); sync.busy = false; sync.indeterminate = false; sync.phase = 'Остановлено'; sync.detail = 'Файлы, которые успели скопироваться, сохранены'; updateSyncStage(); renderSyncBody(); };
   renderSyncBody();
   updateSyncStage();
@@ -1888,29 +2441,45 @@ function fmtSyncDate(value) {
   return d.toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
-function openTransferConfirm(mode, only) {
-  const i = sync.info || {};
-  const count = mode === 'push' ? (only ? (sync.projects.find((p) => p.name === only)?.upload || 0) : (i.upload || 0))
-    : (only ? (sync.projects.find((p) => p.name === only)?.download || 0) : (i.download || 0));
-  let v = document.getElementById('sync-confirm-modal');
-  if (!v) { v = document.createElement('div'); v.id = 'sync-confirm-modal'; v.className = 'editmodal'; document.body.appendChild(v); }
-  const pushing = mode === 'push';
-  v.innerHTML = `<div class="sync-confirm">
-    <div class="sync-confirm-kicker">${pushing ? 'ЭТО УСТРОЙСТВО → СЕРВЕР' : 'СЕРВЕР → ЭТО УСТРОЙСТВО'}</div>
-    <h3>${pushing ? 'Отправить законченную работу?' : 'Забрать актуальную работу?'}</h3>
-    <div class="dim" style="margin-top:7px;line-height:1.5">${pushing
-      ? `Noda сначала проверит все ${count} файлов на блокировки, затем атомарно отправит их на сервер и повторно сверит результат. Если Claude, Codex или редактор держит файл открытым, передача не начнётся.`
-      : `Noda сначала проверит локальные назначения, затем заберёт ${count} файлов во временные копии, атомарно заменит старые версии и повторно сверит результат.`}</div>
-    <div class="sync-confirm-summary two">
-      <div><b>${count}</b><span>файлов</span></div>
-      <div><b>${(i.conflicts || 0) + (i.blocked || 0)}</b><span>проверить до передачи</span></div>
+function showSyncSummary(result) {
+  document.getElementById('sync-summary-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'sync-summary-modal';
+  modal.className = 'editmodal';
+  const projects = Object.values(sync.liveProjects)
+    .filter((project) => project.files || project.done || project.bytes)
+    .sort((a, b) => String(a.label || a.name).localeCompare(String(b.label || b.name), 'ru'));
+  const direction = result.direction === 'push' ? 'На сервер' : 'На это устройство';
+  const rows = projects.length ? projects.map((project) => {
+    const done = Number(project.done || 0);
+    const files = Number(project.files || 0);
+    const complete = files > 0 && done >= files;
+    return `<div class="sync-summary-project">
+      <i class="${complete ? 'ok' : 'warn'}">${complete ? '✓' : '!'}</i>
+      <span><b>${esc(project.label || project.name)}</b><small>${fileCount(done)} из ${fileCount(files)}</small></span>
+      <strong>${fmtB(project.doneBytes || 0)}</strong>
+    </div>`;
+  }).join('') : '<div class="sync-summary-empty">Изменений в проектах не было</div>';
+  const errors = sync.errors.length
+    ? `<div class="sync-summary-errors"><b>Ошибки · ${sync.errors.length}</b>${sync.errors.slice(-8).map((item) => `<span><strong>${esc(item.file)}</strong>${esc(item.error)}</span>`).join('')}</div>`
+    : '<div class="sync-summary-clean">✓ Ошибок нет</div>';
+  modal.innerHTML = `<div class="sync-finish-card">
+    <div class="sync-finish-head">
+      <i class="${result.errors ? 'warn' : 'ok'}">${result.errors ? '!' : '✓'}</i>
+      <div><span>${esc(direction)}</span><h3>${result.errors ? 'Передача завершена с ошибками' : 'Передача завершена'}</h3><p>${fileCount(result.transferred || 0)} · ${fmtB(result.bytes || 0)} · ${fmtDuration(result.elapsed || syncElapsed())}</p></div>
     </div>
-    <div class="row"><button class="btn ghost grow" id="sync-confirm-cancel">Отмена</button><button class="btn grow" id="sync-confirm-go">${pushing ? 'Отправить на сервер' : 'Забрать с сервера'}</button></div>
+    <div class="sync-summary-projects">${rows}</div>
+    ${errors}
+    <div class="row"><button class="btn ghost grow" id="sync-summary-logs">Журнал ошибок</button><button class="btn grow" id="sync-summary-close">Готово</button></div>
   </div>`;
-  const close = () => v.remove();
-  v.onclick = (e) => { if (e.target === v) close(); };
-  document.getElementById('sync-confirm-cancel').onclick = close;
-  document.getElementById('sync-confirm-go').onclick = () => { close(); runSyncOp(mode, only || null); };
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.onclick = (event) => { if (event.target === modal) close(); };
+  document.getElementById('sync-summary-close').onclick = close;
+  document.getElementById('sync-summary-logs').onclick = async () => {
+    const opened = await window.arra.openLogs();
+    if (!opened?.ok) toast('Журнал', opened?.error || 'Не удалось открыть', 'warn');
+  };
 }
 
 function renderSyncJourney() {
@@ -1941,19 +2510,15 @@ function renderSyncJourney() {
 }
 
 function updateSyncLive() {
-  const box = document.getElementById('sync-live');
-  if (!box) return;
-  const current = sync.current;
-  const show = !!current || !!sync.verify;
-  box.hidden = !show;
-  if (!show) { box.innerHTML = ''; return; }
-  if (current) {
-    const pct = current.fileTotal ? Math.round((current.fileBytes || 0) / current.fileTotal * 100) : 0;
-    box.innerHTML = `<div class="sync-current-compact"><b>${esc(current.project || current.scope || 'Файл')}</b><span>${esc(syncShortPath(current.file))}</span><div><i style="width:${Math.max(0, Math.min(100, pct))}%"></i></div><small>${current.done || 0}/${current.total || 0}</small></div>`;
-  } else {
-    box.innerHTML = `<div class="sync-verify-compact"><b>Подтверждено</b><span>${sync.verify?.verified || 0} из ${sync.verify?.total || 0}</span></div>`;
-  }
+  updateSyncLiveRich();
 }
+
+// ================= ПЕРЕДАЧА (как в веб-версии: статус, кнопки, проводник) =================
+
+const SYNC_CONTAINERS = { Work: 'Работа', Tima: 'Личные', MAMA: 'Мама', Tools: 'Инструменты', root: 'Прочее в C:\\Claude' };
+const syncOpenNodes = new Set(JSON.parse(localStorage.getItem('noda_pc_tree_open') || '["projects"]'));
+const FOLDER_SVG = '<svg viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.5h7A1.5 1.5 0 0 1 19 10v7a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 3 17z"/></svg>';
+const FILE_SVG = '<svg viewBox="0 0 24 24"><path d="M7 4h7l4 4v12H7z"/><path d="M14 4v4h4"/></svg>';
 
 async function renderSyncV2() {
   wireSyncEvents();
@@ -1965,43 +2530,50 @@ async function renderSyncV2() {
     sync.autoRole = st.deviceProfile?.role || 'pc';
     if (sync.roleSource === 'auto' || !sync.role) sync.role = sync.autoRole;
   } catch { sync.deviceName = 'Это устройство'; if (!sync.role) sync.role = 'pc'; }
+
   app.innerHTML = `
-    <div class="syncwrap sync-v3">
-      <header class="sync-v3-head">
-        <div class="synctitle">Передача</div>
-      </header>
+    <div class="page-head">
+      <h1>Передача</h1>
+      <div class="sub" id="sync-last"></div>
+      <div class="grow"></div>
+      <button class="btn ghost sm" id="sync-check">Проверить</button>
+    </div>
 
-      <div class="sync-workbench">
-        <section class="sync-command" aria-label="Управление переносом">
-          <div id="sync-actions" class="sync-transfer-list"></div>
-
-          <div class="sync-runtime-strip">
-            <div><span>Скорость</span><b id="sync-speed-value">—</b></div>
-            <div><span>Осталось</span><b id="sync-eta-value">—</b></div>
-            <div><span>Прогресс</span><b id="sync-pct-value">0%</b></div>
-          </div>
-
+    <div class="sync-v3">
+      <div class="state-card" id="sync-state">
+        <div class="state-row"><span class="state-glyph" id="sync-state-glyph">?</span>
+          <div><b id="sync-journey-title">Ещё не сверял</b><p id="sync-journey-detail">Нажми «Проверить»</p></div>
+          <time id="sync-time"></time>
+        </div>
+        <div class="sync-version-rail" id="sync-version-rail"></div>
+        <div class="metrics" id="sync-metrics"></div>
+        <div class="sync-progress" id="sync-progress" hidden>
+          <div class="track" id="sync-track"><i id="sync-bar" style="width:0%"></i></div>
+          <div class="sync-progress-line"><span id="sync-detail"></span><span id="sync-pct-value">0%</span></div>
+          <div class="sync-scan-summary" id="sync-scan-summary" hidden></div>
+          <div class="sync-progress-line dim"><span><span id="sync-speed-label">Скорость</span> <b id="sync-speed-value">—</b></span><span><span id="sync-eta-label">Осталось</span> <b id="sync-eta-value">—</b></span></div>
           <button class="sync-stop-link" id="sync-cancel" hidden>Прервать</button>
-          <div id="sync-metrics" class="sync-summary-strip"></div>
-        </section>
-
-        <section class="sync-inspector sync-journey-panel" aria-label="Путь передачи">
-          <div class="sync-journey-head">
-            <div><b id="sync-journey-title">Готово</b><span id="sync-journey-detail"></span></div>
-            <time id="sync-time"></time>
-          </div>
-          <div id="sync-journey" class="sync-journey"></div>
-          <div id="sync-blocker-panel" class="sync-blocker-panel" hidden></div>
-          <div id="sync-live" class="sync-live-compact" hidden></div>
-          <div id="sync-errors-panel" class="sync-errors-panel" hidden>
-            <div class="sync-errors-head"><b>Ошибки</b><span id="sync-error-count"></span></div>
-            <div id="sync-error-list"></div>
-            <button id="sync-open-logs">Открыть журнал</button>
-          </div>
-        </section>
+        </div>
       </div>
 
+      <div id="sync-actions" class="sync-transfer-list"></div>
+      <div class="sync-codex-policy">
+        <b>Codex · активные диалоги переносятся</b>
+        <span>Активные сессии, память, настройки и навыки синхронизируются. Архивные диалоги остаются только на устройстве.</span>
+      </div>
+
+      <div id="sync-blocker-panel" class="sync-blocker-panel" hidden></div>
+      <div id="sync-live" class="sync-live-compact" hidden></div>
+      <div id="sync-errors-panel" class="sync-errors-panel" hidden>
+        <div class="sync-errors-head"><b>Ошибки</b><span id="sync-error-count"></span></div>
+        <div id="sync-error-list"></div>
+        <button id="sync-open-logs">Открыть журнал</button>
+      </div>
+
+      <div class="tree" id="sync-tree"></div>
+      <div id="sync-journey" hidden></div>
     </div>`;
+
   document.getElementById('sync-open-logs').onclick = async () => {
     const result = await window.arra.openLogs();
     if (!result?.ok) { reportError('logs.open', new Error(result?.error || 'Не удалось открыть логи')); toast('Логи ошибок', result?.error || 'Не удалось открыть папку', 'warn'); }
@@ -2010,13 +2582,49 @@ async function renderSyncV2() {
     await window.arra.syncCancel(); sync.busy = false; sync.indeterminate = false;
     sync.phase = 'Передача прервана'; sync.detail = 'Уже переданные файлы сохранены'; updateSyncStage(); renderSyncV2Body();
   };
-  renderSyncV2Body(); renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney();
+  document.getElementById('sync-check').onclick = () => { toast('Передача', 'Сверяю с сервером…', 'info'); startSyncStatus(); };
+
+  renderSyncV2Body(); renderBlockerPanel(); updateSyncStage(); updateSyncLive();
+  if (!sync.info && !sync.busy) setTimeout(startSyncStatus, 120);
 }
 
-function syncDeviceGlyph(kind) {
-  if (kind === 'laptop') return '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="11" rx="2"/><path d="M2.5 19h19M8 19l1-2h6l1 2"/></svg>';
-  if (kind === 'server') return '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="7" rx="2"/><rect x="4" y="14" width="16" height="7" rx="2"/><path d="M8 6.5h.01M8 17.5h.01M12 6.5h5M12 17.5h5"/></svg>';
-  return '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M8 21h8M12 16v5"/></svg>';
+/** Строка в шапке: когда работа последний раз уезжала на сервер. */
+function updateSyncLastLine() {
+  const line = document.getElementById('sync-last');
+  if (!line) return;
+  const push = sync.info?.serverState?.lastPush;
+  if (!push?.at) { line.textContent = sync.info ? 'На сервер ещё ничего не отправляли' : 'Состояние ещё не проверяли'; return; }
+  const who = push.role === 'laptop' ? 'Ноутбук' : (push.device || 'Компьютер');
+  const when = new Date(push.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  line.textContent = `На сервере — версия от ${when} (${who})`;
+}
+
+function syncAgo(value) {
+  if (!value) return 'не было';
+  const diff = Date.now() - new Date(value).getTime();
+  if (Number.isNaN(diff)) return 'не было';
+  const minutes = Math.round(diff / 60000);
+  if (minutes < 1) return 'только что';
+  if (minutes < 60) return `${minutes} мин назад`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} ч назад`;
+  return `${Math.round(hours / 24)} дн назад`;
+}
+
+function syncDateTime(value) {
+  if (!value) return 'данных пока нет';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'дата неизвестна';
+  return date.toLocaleString('ru-RU', {
+    day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).replace(' г.', '');
+}
+
+function syncEventLine(event, emptyText) {
+  if (!event?.at) return `<b>${esc(emptyText)}</b><small>После первой передачи здесь появится точная дата</small>`;
+  const author = event.device || (event.role === 'laptop' ? 'Ноутбук' : 'Компьютер');
+  const amount = event.files != null ? `${fileCount(event.files)} · ${fmtB(event.bytes || 0)}` : '';
+  return `<b>${esc(syncDateTime(event.at))}</b><small>${esc(author)}${amount ? ` · ${esc(amount)}` : ''}</small>`;
 }
 
 function renderSyncV2Body() {
@@ -2024,20 +2632,198 @@ function renderSyncV2Body() {
   const uploadBytes = sync.projects.reduce((n, p) => n + Number(p.uploadBytes || 0), 0);
   const downloadBytes = sync.projects.reduce((n, p) => n + Number(p.downloadBytes || 0), 0);
   const hasCheck = !!sync.info;
+  const upload = Number(i.upload || 0);
+  const download = Number(i.download || 0);
+
+  // состояние — тем же языком, что в веб-версии
+  // Кроме описания состояния даём прямую рекомендацию, что нажать: без неё
+  // при изменениях с обеих сторон непонятно, с чего начинать.
+  const state = upload && download
+    ? { kind: 'warn', mark: '⇄', title: 'Изменения есть с обеих сторон', text: `Здесь новее ${fileCount(upload)}, на сервере — ${fileCount(download)}.`, advice: 'Сначала «Отправить на сервер» — свои изменения не потеряются. Потом «Забрать с сервера».' }
+    : upload ? { kind: 'local', mark: '↑', title: 'Актуальнее этот компьютер', text: `${fileCount(upload)} изменены здесь и ещё не сохранены на сервере.`, advice: 'Нажми «Отправить на сервер».' }
+      : download ? { kind: 'server', mark: '↓', title: 'Актуальнее сервер', text: `${fileCount(download)} нужно получить на этот компьютер.`, advice: 'Нажми «Забрать с сервера».' }
+        : hasCheck ? { kind: 'ok', mark: '✓', title: 'Версии совпадают', text: 'На этом компьютере и на сервере одинаковые рабочие файлы.', advice: 'Ничего делать не нужно.' }
+          : { kind: '', mark: '?', title: 'Ещё не сверял', text: 'Нажми «Проверить» — сравню с сервером.', advice: '' };
+
+  const card = document.getElementById('sync-state');
+  if (card && !sync.busy) {
+    card.className = `state-card ${state.kind}`;
+    const glyph = document.getElementById('sync-state-glyph');
+    const title = document.getElementById('sync-journey-title');
+    const detail = document.getElementById('sync-journey-detail');
+    if (glyph) glyph.textContent = state.mark;
+    if (title) title.textContent = state.title;
+    if (detail) detail.textContent = state.text;
+    let advice = document.getElementById('sync-advice');
+    if (!advice && detail?.parentElement) {
+      advice = document.createElement('div');
+      advice.id = 'sync-advice';
+      advice.className = 'sync-advice';
+      detail.parentElement.appendChild(advice);
+    }
+    if (advice) { advice.textContent = state.advice || ''; advice.hidden = !state.advice; }
+  }
+
+  const server = i.serverState || {};
+  const rail = document.getElementById('sync-version-rail');
+  if (rail) {
+    const localFresh = upload > 0;
+    const serverFresh = download > 0;
+    const split = localFresh && serverFresh;
+    const localStatus = !hasCheck ? 'Ещё не проверено' : split ? `Здесь новее ${fmt(upload)}` : localFresh ? 'Текущая версия' : serverFresh ? 'Нужно обновить' : 'Совпадает';
+    const serverStatus = !hasCheck ? 'Ещё не проверено' : split ? `На сервере новее ${fmt(download)}` : serverFresh ? 'Текущая версия' : localFresh ? 'Нужно обновить' : 'Совпадает';
+    const linkLabel = !hasCheck ? 'сверяю версии' : split ? 'обе стороны менялись' : localFresh ? 'сохранить на сервер' : serverFresh ? 'получить на компьютер' : 'одна версия';
+    rail.innerHTML = `
+      <div class="sync-version-node ${localFresh ? 'fresh' : ''} ${serverFresh && !localFresh ? 'older' : ''} ${split ? 'split' : ''}">
+        <i>${syncDeviceGlyph(sync.autoRole === 'laptop' ? 'laptop' : 'pc')}</i>
+        <span><b>${esc(sync.deviceName || 'Это устройство')}</b><small>${fmt(i.localFiles || 0)} файлов</small></span>
+        <em>${esc(localStatus)}</em>
+      </div>
+      <div class="sync-version-link ${split ? 'split' : localFresh ? 'to-server' : serverFresh ? 'to-local' : 'equal'}"><i>${localFresh && !serverFresh ? '→' : serverFresh && !localFresh ? '←' : '↔'}</i><small>${esc(linkLabel)}</small></div>
+      <div class="sync-version-node server ${serverFresh ? 'fresh' : ''} ${localFresh && !serverFresh ? 'older' : ''} ${split ? 'split' : ''}">
+        <i>${syncDeviceGlyph('server')}</i>
+        <span><b>Сервер</b><small>${fmt(i.remoteFiles || 0)} файлов</small></span>
+        <em>${esc(serverStatus)}</em>
+      </div>`;
+  }
+  const metrics = document.getElementById('sync-metrics');
+  if (metrics) {
+    const localDevice = server.devices?.[sync.deviceName] || {};
+    const localPull = localDevice.lastPull || server.lastPull;
+    metrics.innerHTML = hasCheck ? `
+      <div class="sync-history-item"><span>Версия на сервере</span>${syncEventLine(server.lastPush, 'Сервер ещё не сохраняли')}</div>
+      <div class="sync-history-divider" aria-hidden="true"></div>
+      <div class="sync-history-item"><span>Последнее получение на этом ПК</span>${syncEventLine(localPull, 'На этот ПК ещё не забирали')}</div>` : '';
+  }
+
   const actions = document.getElementById('sync-actions');
   if (actions) actions.innerHTML = `
-    <button class="sync-transfer-choice" id="sync-push-all">
-      <b>Отправить</b>${hasCheck ? `<span>${fmt(i.upload || 0)} · ${fmtB(uploadBytes)}</span>` : ''}
+    <button class="sync-transfer-choice ${upload ? 'recommended' : 'inactive'}" id="sync-push-all" ${hasCheck && upload ? '' : 'disabled'}>
+      <i aria-hidden="true">↑</i>
+      <span class="sync-choice-copy"><b>Отправить на сервер</b><small>${upload ? 'Сохранить изменения этого компьютера' : 'Новых локальных изменений нет'}</small></span>
+      ${hasCheck ? `<span class="sync-choice-total">${fileCount(upload)}<strong>${fmtB(uploadBytes)}</strong></span>` : ''}
     </button>
-    <button class="sync-transfer-choice secondary" id="sync-pull-all">
-      <b>Забрать</b>${hasCheck ? `<span>${fmt(i.download || 0)} · ${fmtB(downloadBytes)}</span>` : ''}
+    <button class="sync-transfer-choice secondary ${download && !upload ? 'recommended' : download ? '' : 'inactive'}" id="sync-pull-all" ${hasCheck && download ? '' : 'disabled'}>
+      <i aria-hidden="true">↓</i>
+      <span class="sync-choice-copy"><b>Забрать с сервера</b><small>${download ? 'Получить изменения с сервера' : 'Новых серверных изменений нет'}</small></span>
+      ${hasCheck ? `<span class="sync-choice-total">${fileCount(download)}<strong>${fmtB(downloadBytes)}</strong></span>` : ''}
     </button>`;
   document.getElementById('sync-push-all').onclick = () => runSyncOp('push', null);
   document.getElementById('sync-pull-all').onclick = () => runSyncOp('pull', null);
 
-  const metrics = document.getElementById('sync-metrics');
-  if (metrics) metrics.innerHTML = hasCheck && i.conflicts ? `<span class="warn"><b>${fmt(i.conflicts)}</b> конфликтов</span>` : '';
-  renderBlockerPanel(); updateSyncStage(); updateSyncLive(); renderSyncJourney();
+  renderSyncTree();
+  renderBlockerPanel(); updateSyncStage(); updateSyncLive(); updateSyncLastLine();
+}
+
+/* ---------- проводник: разделы → контейнеры → проекты → папки ---------- */
+
+function syncCounters({ upload = 0, download = 0, conflicts = 0, blocked = 0 }) {
+  const parts = [];
+  if (upload) parts.push(`<span class="tag up">↑ ${fmt(upload)}</span>`);
+  if (download) parts.push(`<span class="tag down">↓ ${fmt(download)}</span>`);
+  if (conflicts) parts.push(`<span class="tag warn">⇄ ${fmt(conflicts)}</span>`);
+  if (blocked) parts.push(`<span class="tag warn">занято ${fmt(blocked)}</span>`);
+  if (!parts.length) parts.push('<span class="tag mute">совпадает</span>');
+  return `<span class="tags">${parts.join('')}</span>`;
+}
+
+let syncTreeMark = '';
+function renderSyncTree(force = false) {
+  const box = document.getElementById('sync-tree');
+  if (!box) return;
+  const projects = sync.projects || [];
+  // список перестраиваем, только если состояние реально изменилось (иначе окно встаёт колом)
+  const mark = `${projects.length}|${[...syncOpenNodes].join(',')}|${projects.map((p) => `${p.name}:${p.upload || 0}:${p.download || 0}:${p.localFiles || 0}`).join('|')}`;
+  if (!force && mark === syncTreeMark) return;
+  syncTreeMark = mark;
+  const scopes = (sync.info?.scopes || []).filter((scope) => projects.some((p) => p.scope === scope.id) || scope.localFiles);
+  if (!scopes.length) { box.innerHTML = ''; return; }
+
+  box.innerHTML = scopes.map((scope) => {
+    const rows = projects.filter((p) => p.scope === scope.id);
+    const open = syncOpenNodes.has(scope.id);
+    return `
+      <div class="tree-scope tree-node${open ? ' open' : ''}">
+        <button class="tree-row" data-toggle="${esc(scope.id)}">
+          <span class="caret">›</span>
+          <span class="folder-ic ${scope.id.startsWith('codex') || scope.id === 'claude' ? 'mem' : ''}">${FOLDER_SVG}</span>
+          <span class="tree-main"><b>${esc(scope.label)}</b><small>${fmt(scope.localFiles || 0)} файлов здесь · ${fmt(scope.remoteFiles || 0)} на сервере</small></span>
+          ${syncCounters(scope)}
+        </button>
+        <div class="tree-body"><div>${syncScopeChildren(scope, rows)}</div></div>
+      </div>`;
+  }).join('');
+
+  box.querySelectorAll('[data-toggle]').forEach((button) => button.onclick = () => {
+    const node = button.closest('.tree-node');
+    const id = button.dataset.toggle;
+    const open = node.classList.toggle('open');
+    if (open) syncOpenNodes.add(id); else syncOpenNodes.delete(id);
+    localStorage.setItem('noda_pc_tree_open', JSON.stringify([...syncOpenNodes]));
+    renderSyncTree(true);
+  });
+}
+
+function syncScopeChildren(scope, rows) {
+  if (!rows.length) return '<div class="empty" style="padding:18px">Пусто</div>';
+  if (scope.id !== 'projects') return rows.map((p) => syncProjectNode(p)).join('');
+  const groups = new Map();
+  for (const project of rows) {
+    const parts = String(project.name || '').split('/');
+    const key = parts.length > 1 ? parts[0] : 'root';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(project);
+  }
+  return [...groups.entries()].map(([key, items]) => {
+    const id = `container:${key}`;
+    const open = syncOpenNodes.has(id);
+    const totals = items.reduce((acc, item) => ({
+      upload: acc.upload + (item.upload || 0),
+      download: acc.download + (item.download || 0),
+      conflicts: acc.conflicts + (item.conflicts || 0),
+      blocked: acc.blocked + (item.blocked || 0),
+      files: acc.files + (item.localFiles || 0),
+    }), { upload: 0, download: 0, conflicts: 0, blocked: 0, files: 0 });
+    return `
+      <div class="tree-node${open ? ' open' : ''}">
+        <button class="tree-row" data-toggle="${esc(id)}">
+          <span class="caret">›</span>
+          <span class="folder-ic">${FOLDER_SVG}</span>
+          <span class="tree-main"><b>${esc(SYNC_CONTAINERS[key] || key)}</b><small>${items.length} проектов · ${fmt(totals.files)} файлов</small></span>
+          ${syncCounters(totals)}
+        </button>
+        <div class="tree-body"><div>${items.map((p) => syncProjectNode(p)).join('')}</div></div>
+      </div>`;
+  }).join('');
+}
+
+function syncProjectNode(project) {
+  const id = `${project.scope}/${project.name}`;
+  const open = syncOpenNodes.has(id);
+  const folders = project.folders || [];
+  const remote = project.remoteLatest ? new Date(project.remoteLatest * 1000).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  return `
+    <div class="tree-node${open ? ' open' : ''}">
+      <button class="tree-row" data-toggle="${esc(id)}">
+        <span class="caret">${folders.length ? '›' : ''}</span>
+        <span class="folder-ic">${FOLDER_SVG}</span>
+        <span class="tree-main"><b>${esc(project.label)}</b><small>${fmt(project.localFiles || 0)} файлов${remote ? ` · на сервере ${remote}` : ' · на сервере нет'}</small></span>
+        ${syncCounters(project)}
+      </button>
+      ${folders.length && open ? `<div class="tree-body"><div>${folders.slice(0, 40).map((folder) => `
+        <div class="tree-row static">
+          <span class="caret"></span>
+          <span class="folder-ic file">${FILE_SVG}</span>
+          <span class="tree-main"><b>${esc(folder.name || 'корень')}</b><small>${fmt(folder.files)} файлов · ${fmtB(folder.bytes)}</small></span>
+          ${folder.blocked ? `<span class="tags"><span class="tag warn">занято ${fmt(folder.blocked)}</span></span>` : '<span class="tags"><span class="tag mute">готово</span></span>'}
+        </div>`).join('')}${folders.length > 40 ? `<div class="tree-row static"><span></span><span></span><span class="tree-main"><small>…и ещё ${folders.length - 40} папок</small></span><span></span></div>` : ''}</div></div>` : ''}
+    </div>`;
+}
+
+function syncDeviceGlyph(kind) {
+  if (kind === 'laptop') return '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="11" rx="2"/><path d="M2.5 19h19M8 19l1-2h6l1 2"/></svg>';
+  if (kind === 'server') return '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="7" rx="2"/><rect x="4" y="14" width="16" height="7" rx="2"/><path d="M8 6.5h.01M8 17.5h.01M12 6.5h5M12 17.5h5"/></svg>';
+  return '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M8 21h8M12 16v5"/></svg>';
 }
 
 // Иконка + цвет по типу файла (своя ФОРМА для pdf, md, фото, кода, архива и т.д. — как в VS Code)

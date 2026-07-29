@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage, shell, Notification, desktopCapturer, screen, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, clipboard, nativeImage, shell, Notification, desktopCapturer, screen, session, Tray, Menu, powerSaveBlocker } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const https = require('https');
+const dns = require('dns');
 const { execFile, spawn, spawnSync } = require('child_process');
 const WebSocket = require('ws');
 const { initUpdater, checkNow: checkUpdatesNow } = require('./updater');
@@ -11,6 +12,23 @@ const { initUpdater, checkNow: checkUpdatesNow } = require('./updater');
 const BASE = 'https://aura.5.42.122.102.sslip.io';
 const WS_URL = 'wss://aura.5.42.122.102.sslip.io/agent';
 const CLIENT_WS_URL = 'wss://aura.5.42.122.102.sslip.io/client';
+const AURA_HOST = new URL(BASE).hostname;
+const AURA_IP = '5.42.122.102';
+
+/**
+ * sslip.io иногда не разрешается системным DNS Windows, хотя сам сервер доступен.
+ * Для единственного нашего хоста используем известный IPv4 как fallback lookup:
+ * URL и TLS SNI остаются доменными, поэтому сертификат продолжает проверяться.
+ */
+function resilientLookup(hostname, options, callback) {
+  const cb = typeof options === 'function' ? options : callback;
+  const opts = options && typeof options === 'object' ? options : {};
+  if (String(hostname).toLowerCase() === AURA_HOST) {
+    if (opts.all) return cb(null, [{ address: AURA_IP, family: 4 }]);
+    return cb(null, AURA_IP, 4);
+  }
+  return dns.lookup(hostname, options, callback);
+}
 
 // Постоянный JSONL-журнал. Он нужен именно для случаев, когда окно уже закрылось
 // или операция зависла: записи остаются на диске и не пропадают вместе с UI.
@@ -81,6 +99,10 @@ function saveSettings() {
 
 let settings = {};
 let win = null;
+let windowRestoreBounds = null;
+let tray = null;
+let isQuitting = false;
+let backgroundPowerBlocker = null;
 // Безопасная отправка в окно: если окно уже уничтожено (закрыли приложение, а WS ещё шлёт) —
 // НЕ падаем с «Object has been destroyed», а молча пропускаем.
 function winSend(channel, payload) {
@@ -162,7 +184,8 @@ function detectDeviceProfile() {
       "$b = @(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue)",
       "$e = Get-CimInstance Win32_SystemEnclosure -ErrorAction SilentlyContinue | Select-Object -First 1",
       "$c = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue | Select-Object -First 1",
-      "[pscustomobject]@{hasBattery=($b.Count -gt 0);chassis=@($e.ChassisTypes);manufacturer=$c.Manufacturer;model=$c.Model}|ConvertTo-Json -Compress",
+      "$o = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue | Select-Object -First 1",
+      "[pscustomobject]@{hasBattery=($b.Count -gt 0);chassis=@($e.ChassisTypes);manufacturer=$c.Manufacturer;model=$c.Model;productType=$o.ProductType}|ConvertTo-Json -Compress",
     ].join('; ');
     const result = spawnSync('powershell.exe', psArgs(script), { encoding: 'utf8', windowsHide: true, timeout: 7000 });
     const data = JSON.parse(String(result.stdout || '').trim() || '{}');
@@ -170,11 +193,19 @@ function detectDeviceProfile() {
     const laptopTypes = new Set([8, 9, 10, 11, 12, 14, 18, 21, 30, 31, 32]);
     const chassisLaptop = chassis.some((n) => laptopTypes.has(n));
     const hasBattery = !!data.hasBattery;
-    const role = hasBattery || chassisLaptop ? 'laptop' : 'pc';
+    const serverOs = Number(data.productType) === 2 || Number(data.productType) === 3;
+    const serverHardware = /server|poweredge|proliant|thinksystem|rack/i.test(`${data.manufacturer || ''} ${data.model || ''}`);
+    const role = serverOs || serverHardware ? 'server' : hasBattery || chassisLaptop ? 'laptop' : 'pc';
     deviceProfileCache = {
       role,
       confidence: hasBattery ? 'high' : (chassis.length ? 'medium' : 'low'),
-      reason: hasBattery ? 'Windows обнаружил батарею' : (chassisLaptop ? 'тип корпуса похож на ноутбук' : 'батарея не обнаружена'),
+      reason: serverOs
+        ? 'Windows Server'
+        : serverHardware
+          ? 'модель определяется как сервер'
+          : hasBattery
+            ? 'Windows обнаружил батарею'
+            : (chassisLaptop ? 'тип корпуса похож на ноутбук' : 'батарея не обнаружена'),
       hostname: os.hostname(),
       manufacturer: String(data.manufacturer || ''),
       model: String(data.model || ''),
@@ -211,14 +242,14 @@ function deviceKey() {
 }
 
 function automaticDeviceName(profile = detectDeviceProfile()) {
-  const prefix = profile.role === 'laptop' ? 'Ноутбук' : 'ПК';
+  const prefix = profile.role === 'laptop' ? 'Ноутбук' : profile.role === 'server' ? 'Сервер' : 'ПК';
   const host = String(profile.hostname || os.hostname() || '').trim();
   return host ? `${prefix} · ${host}` : prefix;
 }
 
 function resolvedDeviceName(requested, profile = detectDeviceProfile()) {
   const value = String(requested || settings.deviceName || '').trim();
-  if (!value || /^(мой\s*(?:пк|компьютер)|компьютер|ноутбук|pc)$/i.test(value)) return automaticDeviceName(profile);
+  if (!value || /^(мой\s*(?:пк|компьютер)|компьютер|ноутбук|сервер|server|pc)$/i.test(value)) return automaticDeviceName(profile);
   return value.slice(0, 100);
 }
 
@@ -473,6 +504,8 @@ function uploadFileToBackend(absPath, jwt) {
     const u = new URL(BASE + '/files');
     const req = https.request(u, {
       method: 'POST',
+      lookup: resilientLookup,
+      family: 4,
       headers: {
         'Content-Type': 'multipart/form-data; boundary=' + boundary,
         'Content-Length': payload.length,
@@ -738,8 +771,28 @@ function handleRelay(msg, send) {
     case 'sync_remote_status':
       runSyncProc('status', null, null, (event) => send({ type: 'sync_remote_event', reqId: msg.reqId, event }));
       break;
+    case 'sync_remote_cancel':
+      send({ type: 'sync_remote_ack', reqId: msg.reqId, message: 'Останавливаю передачу' });
+      cancelSyncProc();
+      send({ type: 'sync_remote_event', reqId: msg.reqId, event: { type: 'cancelled', msg: 'Передача остановлена' } });
+      break;
     case 'sync_remote_blockers':
       listPotentialBlockers().then((items) => send({ type: 'sync_remote_blockers', reqId: msg.reqId, items }));
+      break;
+    // Телефон просит освободить занятые файлы: аккуратно закрываем держащие их
+    // приложения (CloseMainWindow — редактор сам предложит сохранить). Принудительно
+    // не убиваем: несохранённая работа важнее одной передачи.
+    case 'sync_remote_unblock':
+      send({ type: 'sync_remote_ack', reqId: msg.reqId, message: 'Освобождаю занятые файлы' });
+      releaseBlockers()
+        .then((result) => send({
+          type: 'sync_remote_event',
+          reqId: msg.reqId,
+          event: result.remaining.length
+            ? { type: 'blocked', files: result.remaining.map((item) => ({ file: item.name, reason: item.title || 'не закрылось само' })), error: 'Часть программ не закрылась — закрой их вручную' }
+            : { type: 'phase', msg: 'Файлы освобождены', detail: `Закрыто программ: ${result.closed}` },
+        }))
+        .catch((error) => send({ type: 'sync_remote_event', reqId: msg.reqId, event: { type: 'error', error: String(error?.message || error) } }));
       break;
     case 'sync_remote_ack':
       winSend('remote-sync-event', msg);
@@ -845,6 +898,8 @@ function httpJson(method, urlPath, body, token) {
       u,
       {
         method,
+        lookup: resilientLookup,
+        family: 4,
         headers: {
           'Content-Type': 'application/json',
           ...(data ? { 'Content-Length': data.length } : {}),
@@ -873,7 +928,7 @@ function downloadFile(fileId, dest, pcToken) {
   return new Promise((resolve, reject) => {
     const u = new URL(`${BASE}/files/${fileId}/download?token=${pcToken}`);
     https
-      .get(u, (res) => {
+      .get(u, { lookup: resilientLookup, family: 4 }, (res) => {
         if (res.statusCode >= 400) { res.resume(); reject(new Error('HTTP ' + res.statusCode)); return; }
         const out = fs.createWriteStream(dest);
         res.pipe(out);
@@ -959,7 +1014,7 @@ function connectWS() {
   clearTimeout(reconnectTimer);
   if (!settings.token) return;
   try { ws?.close(); } catch {}
-  ws = new WebSocket(`${WS_URL}?token=${settings.token}`);
+  ws = new WebSocket(`${WS_URL}?token=${settings.token}`, { lookup: resilientLookup, family: 4 });
   ws.on('open', () => { online = true; pushStatus(); });
   ws.on('message', (raw) => {
     try {
@@ -1001,6 +1056,35 @@ function connectWS() {
 }
 
 // ---- Окно ----
+function showMainWindow() {
+  if (!win || win.isDestroyed()) createWindow();
+  try {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  } catch {}
+}
+
+function createTray() {
+  if (tray) return;
+  try {
+    const ico = path.join(__dirname, 'icon.ico');
+    const png = path.join(__dirname, 'icon.png');
+    tray = new Tray(fs.existsSync(ico) ? ico : nativeImage.createFromPath(png));
+    tray.setToolTip('Noda · работает в фоне');
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Открыть Noda', click: showMainWindow },
+      { type: 'separator' },
+      { label: 'Noda работает в фоне', enabled: false },
+      { label: 'Выйти', click: () => { isQuitting = true; app.quit(); } },
+    ]));
+    tray.on('click', showMainWindow);
+    tray.on('double-click', showMainWindow);
+  } catch (error) {
+    writeLog('warn', 'tray.create', error);
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1180,
@@ -1008,7 +1092,7 @@ function createWindow() {
     minWidth: 720,
     minHeight: 560,
     frame: false,
-    backgroundColor: '#F4F5F7',
+    backgroundColor: '#0B0B0E',
     title: 'Noda',
     icon: path.join(__dirname, 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true },
@@ -1030,6 +1114,23 @@ function createWindow() {
   });
   win.webContents.on('render-process-gone', (_e, details) => writeLog('fatal', 'renderer.process-gone', details));
   win.on('unresponsive', () => writeLog('error', 'window.unresponsive', {}));
+  win.on('close', (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    win.hide();
+    if (!settings.backgroundHintShown) {
+      settings.backgroundHintShown = true;
+      saveSettings();
+      try {
+        if (Notification.isSupported()) new Notification({
+          title: 'Noda работает в фоне',
+          body: 'Передача и связь с телефоном продолжатся. Открыть Noda можно из системного трея.',
+          icon: path.join(__dirname, 'icon.png'),
+        }).show();
+      } catch {}
+    }
+  });
+  win.on('closed', () => { win = null; });
   win.webContents.once('did-finish-load', () => {
     win.webContents.executeJavaScript(`({ title: document.title, body: document.body && document.body.innerText.slice(0,120), hasArra: !!window.arra })`)
       .then((state) => console.log('[renderer ready]', state)).catch((e) => { writeLog('error', 'renderer.inspect', e); console.error('[renderer inspect]', e); });
@@ -1039,7 +1140,11 @@ function createWindow() {
     pushStatus();
     // Занимаем рабочую область экрана ЯВНО (не win.maximize() — фреймлес-окно при maximize
     // уезжает на пару пикселей под панель задач и срезает низ терминала).
-    try { const disp = screen.getDisplayMatching(win.getBounds()); win.setBounds(disp.workArea); } catch { win.maximize(); }
+    try {
+      windowRestoreBounds = win.getBounds();
+      const disp = screen.getDisplayMatching(windowRestoreBounds);
+      win.setBounds(disp.workArea);
+    } catch { win.maximize(); }
     win.show();
   });
 }
@@ -1084,9 +1189,30 @@ try { app.setAppUserModelId('com.arratima.arra.desktop'); } catch {}
 app.whenReady().then(async () => {
   pruneLogs();
   writeLog('info', 'app.start', { version: app.getVersion(), packaged: app.isPackaged, platform: process.platform, arch: process.arch });
+  try {
+    app.configureHostResolver({
+      enableBuiltInResolver: true,
+      enableHappyEyeballs: true,
+      secureDnsMode: 'automatic',
+      secureDnsServers: [
+        'https://cloudflare-dns.com/dns-query',
+        'https://dns.google/dns-query',
+      ],
+    });
+  } catch (error) {
+    writeLog('warn', 'network.host-resolver', error);
+  }
   const elev = await deescalateIfElevated();
   if (elev === 'relaunched') { app.quit(); return; } // поднимется не-админ копия
   settings = loadSettings();
+  createTray();
+  try {
+    if (backgroundPowerBlocker == null) {
+      backgroundPowerBlocker = powerSaveBlocker.start('prevent-app-suspension');
+    }
+  } catch (error) {
+    writeLog('warn', 'background.power-blocker', error);
+  }
   // Разрешаем микрофон (голосовой ввод помощника); остальное — по умолчанию запрещаем
   try {
     session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
@@ -1130,7 +1256,16 @@ ipcMain.handle('open-logs', async () => {
 });
 ipcMain.handle('log-path', () => ({ dir: logsDir(), file: logPath() }));
 
-app.on('window-all-closed', () => { manualClose = true; try { ws?.close(); } catch {} app.quit(); });
+app.on('window-all-closed', () => {});
+app.on('activate', showMainWindow);
+app.on('before-quit', () => {
+  isQuitting = true;
+  manualClose = true;
+  try { ws?.close(); } catch {}
+  try {
+    if (backgroundPowerBlocker != null && powerSaveBlocker.isStarted(backgroundPowerBlocker)) powerSaveBlocker.stop(backgroundPowerBlocker);
+  } catch {}
+});
 
 // ---- IPC ----
 ipcMain.handle('get-status', () => ({
@@ -1227,6 +1362,8 @@ ipcMain.handle('transcribe', async (_e, { base64, mime }) => {
       const u = new URL(BASE + '/ai/transcribe');
       const req = https.request(u, {
         method: 'POST',
+        lookup: resilientLookup,
+        family: 4,
         headers: {
           'Content-Type': 'multipart/form-data; boundary=' + boundary,
           'Content-Length': payload.length,
@@ -1405,14 +1542,15 @@ function runSyncProc(mode, only, role, remoteEmit = null) {
   return tryExe('python', 'py');
 }
 ipcMain.handle('sync-run', (_e, { mode, only, role } = {}) => { runSyncProc(mode || 'status', only || null, role || null); return true; });
-ipcMain.handle('sync-cancel', () => {
+function cancelSyncProc() {
   if (syncProc) {
     writeLog('warn', 'sync.cancel', { childPid: syncProc.pid });
     try { syncProc.kill(); } catch (error) { writeLog('error', 'sync.cancel', error); }
     syncProc = null;
   }
   return true;
-});
+}
+ipcMain.handle('sync-cancel', cancelSyncProc);
 
 function listPotentialBlockers() {
   const terminalItems = [...ptys.entries()].map(([id, value]) => ({
@@ -1470,7 +1608,17 @@ async function waitForProcessExit(pids, timeoutMs) {
 }
 
 ipcMain.handle('sync-blockers', () => listPotentialBlockers());
-ipcMain.handle('sync-close-blockers', async (_e, pids = []) => {
+
+/** Найти всё, что держит рабочие файлы, и мягко закрыть. Используется и с телефона. */
+async function releaseBlockers() {
+  const items = await listPotentialBlockers();
+  const pids = items.map((item) => item.pid).filter(Boolean);
+  if (!pids.length) return { closed: 0, remaining: [] };
+  const result = await closeBlockers(pids);
+  return { closed: result.closed || 0, remaining: result.remaining || [] };
+}
+
+async function closeBlockers(pids) {
   const safePids = normalizeProcessPids(pids);
   if (!safePids.length) return { ok: true, requested: 0, closed: 0, remaining: [] };
   if (process.platform !== 'win32') return { ok: false, error: 'Закрытие сессий поддерживается только в Windows' };
@@ -1497,7 +1645,9 @@ ipcMain.handle('sync-close-blockers', async (_e, pids = []) => {
   else if (closeError) result.warning = closeError.message;
   writeLog(remaining.length ? 'warn' : 'info', 'sync.blockers.close-result', result);
   return result;
-});
+}
+ipcMain.handle('sync-close-blockers', (_e, pids = []) => closeBlockers(pids));
+
 ipcMain.handle('sync-force-close-blockers', async (_e, pids = []) => {
   const safePids = normalizeProcessPids(pids);
   if (!safePids.length) return { ok: true, requested: 0, closed: 0, remaining: [] };
@@ -1527,7 +1677,10 @@ ipcMain.handle('remote-sync', async (_e, { deviceId, mode = 'push' } = {}) => {
   if (!jwt) return { ok: false, error: 'Нет авторизации' };
   const reqId = `sync-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   try {
-    const remoteWs = new WebSocket(`${CLIENT_WS_URL}?token=${encodeURIComponent(jwt)}`);
+    const remoteWs = new WebSocket(`${CLIENT_WS_URL}?token=${encodeURIComponent(jwt)}`, {
+      lookup: resilientLookup,
+      family: 4,
+    });
     const timeout = setTimeout(() => { try { remoteWs.close(); } catch {} }, 30 * 60 * 1000);
     remoteWs.on('open', () => remoteWs.send(JSON.stringify({
       to: 'pc', deviceId, clientKind: 'desktop',
@@ -1595,4 +1748,32 @@ ipcMain.on('pty-restart', (_e, { cols, rows, termId } = {}) => restartPty(termId
 ipcMain.on('pty-kill', (_e, { termId } = {}) => killPty(termId || 'L1'));
 
 ipcMain.on('win-min', () => win?.minimize());
-ipcMain.on('win-close', () => { manualClose = true; try { ws?.close(); } catch {} app.quit(); });
+ipcMain.on('win-max', () => {
+  if (!win) return;
+  try {
+    const current = win.getBounds();
+    const work = screen.getDisplayMatching(current).workArea;
+    const fillsWorkArea = Math.abs(current.x - work.x) < 3
+      && Math.abs(current.y - work.y) < 3
+      && Math.abs(current.width - work.width) < 3
+      && Math.abs(current.height - work.height) < 3;
+    if (fillsWorkArea) {
+      const saved = windowRestoreBounds || { width: 1180, height: 780 };
+      const width = Math.min(saved.width, work.width - 40);
+      const height = Math.min(saved.height, work.height - 40);
+      win.setBounds({
+        x: work.x + Math.round((work.width - width) / 2),
+        y: work.y + Math.round((work.height - height) / 2),
+        width,
+        height,
+      });
+    } else {
+      windowRestoreBounds = current;
+      win.setBounds(work);
+    }
+  } catch {
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+  }
+});
+ipcMain.on('win-close', () => win?.close());

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0d0d11">
+  <title>Noda</title>
+  <link rel="icon" href="assets/noda.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Arimo:wght@400;500;600;700&family=Orbitron:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=20260725-6">
+</head>
+<body>
+  <section class="login-gate" id="loginGate" aria-label="Вход">
+    <form class="login-console" id="loginForm">
+      <div class="login-brand">
+        <span class="brand-mark"><img src="assets/noda.png" alt=""></span>
+        <span>NO<span>DA</span></span>
+      </div>
+      <label for="loginPassword">ПАРОЛЬ</label>
+      <div class="login-input-row">
+        <input id="loginPassword" type="password" inputmode="numeric" autocomplete="current-password" maxlength="16" autofocus>
+        <button class="key light" type="submit">Войти</button>
+      </div>
+      <p id="loginError" role="alert"></p>
+    </form>
+  </section>
+
+  <main class="hardware" id="app" aria-label="Noda" hidden>
+    <header class="brand-row">
+      <a class="brand" href="#" aria-label="Noda">
+        <span class="brand-mark"><img src="assets/noda.png" alt=""></span>
+        <span>NO<span>DA</span></span>
+      </a>
+      <div class="vib" aria-hidden="true"><i class="blur"></i><i></i></div>
+      <div class="top-right">
+        <label class="search" id="searchWrap" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+          <input id="search" type="search" autocomplete="off" placeholder="поиск проекта">
+          <kbd>/</kbd>
+        </label>
+      </div>
+    </header>
+
+    <div class="body-grid">
+      <aside class="left-panel">
+        <div class="group-title"><i></i><span>РАЗДЕЛЫ</span><i></i></div>
+        <nav class="nav-grid" aria-label="Разделы">
+          <button class="key wide active" type="button" data-section="finance">ФИНАНСЫ</button>
+          <button class="key wide" type="button" data-section="assistant">ПОМОЩНИК</button>
+          <button class="key wide" type="button" data-section="notes">ЗАМЕТКИ</button>
+          <button class="key wide" type="button" data-section="files">ФАЙЛЫ</button>
+          <button class="key wide" type="button" data-section="transfer">ПЕРЕДАЧА</button>
+          <button class="key wide" type="button" data-section="remote">УДАЛ. ПК</button>
+          <button class="key wide" type="button" data-section="projects">ПРОЕКТЫ</button>
+        </nav>
+
+        <div id="projectFilters" hidden>
+          <div class="group-title"><i></i><span>ФИЛЬТР</span><i></i></div>
+          <div class="filter-grid" role="group" aria-label="Фильтр проектов">
+            <button class="key wide active" type="button" data-filter="all">ВСЕ</button>
+            <button class="key wide" type="button" data-filter="work">РАБОЧИЕ</button>
+            <button class="key wide" type="button" data-filter="personal">ЛИЧНЫЕ</button>
+          </div>
+        </div>
+
+        <div class="panel-bottom">
+          <div class="group-title"><i></i><span>ДИЗАЙН</span><i></i></div>
+          <a class="key wide" href="/2/" style="margin-bottom:14px">iOS-версия</a>
+          <div class="group-title"><i></i><span>УСТРОЙСТВА</span><i></i></div>
+          <div class="device-strip" id="deviceStrip"></div>
+        </div>
+      </aside>
+
+      <section class="work-panel" id="workPanel" aria-live="polite"></section>
+    </div>
+  </main>
+
+  <div class="toast" id="toast" role="status"></div>
+  <dialog class="lightbox" id="lightbox">
+    <button class="lightbox-close" type="button" aria-label="Закрыть">×</button>
+    <button class="lightbox-nav lightbox-prev" type="button" aria-label="Предыдущий экран">‹</button>
+    <img id="lightboxImage" src="" alt="">
+    <button class="lightbox-nav lightbox-next" type="button" aria-label="Следующий экран">›</button>
+    <span id="lightboxCount"></span>
+  </dialog>
+  <script type="module" src="app.js?v=20260725-4"></script>
+</body>
+</html>

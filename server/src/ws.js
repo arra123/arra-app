@@ -77,13 +77,22 @@ export function notifyUser(userId, event) {
 export function addClient(userId, socket) {
   if (!clients.has(userId)) clients.set(userId, new Set());
   clients.get(userId).add(socket);
+  notifyUser(userId, { type: 'presence', phoneOnline: true });
 }
 
 export function removeClient(userId, socket) {
   const set = clients.get(userId);
   if (!set) return;
   set.delete(socket);
-  if (set.size === 0) clients.delete(userId);
+  if (set.size === 0) {
+    clients.delete(userId);
+    notifyUser(userId, { type: 'presence', phoneOnline: false });
+  }
+}
+
+/** Есть ли открытый телефонный/веб-клиент у пользователя. */
+export function isClientOnline(userId) {
+  return (clients.get(userId)?.size || 0) > 0;
 }
 
 /** Переслать сообщение от ПК-агента всем клиентам пользователя (терминал/файлы/Claude) */

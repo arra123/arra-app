@@ -34,4 +34,33 @@ export const STK = {
   crystal: om('1F52E'),      // 🔮 «прогноз»
   star: om('2B50'),          // ⭐
   wave: om('1F44B'),         // 👋 выход
+  chat: om('1F4AC'),         // 💬 чат с Ульяной
+  send: om('1F680'),         // 🚀 отправить
+  play: om('25B6-FE0F'),     // ▶️ воспроизведение
+  pause: om('23F8-FE0F'),    // ⏸
+  zoom: om('1F50D'),         // 🔍
+
+  // Доп. причины плача
+  music: om('1F3B5'),        // 🎵 песня
+  angry: om('1F620'),        // 😠 обида/злость
+  briefcase: om('1F4BC'),    // 💼 работа/начальник
+  book: om('1F4DA'),         // 📚 учёба/дедлайн
+  sleepy: om('1F634'),       // 😴 недосып
+  newspaper: om('1F4F0'),    // 📰 новости
+  heartEyes: om('1F60D'),    // 😍 от счастья
+  paw: om('1F43E'),          // 🐾 питомец
+  collision: om('1F4A5'),    // 💥 «избили» (рофл)
+  hug: om('1FAC2'),          // 🫂 поддержка
+  pencil: om('270F-FE0F'),   // ✏️ своё
+} as const;
+
+// Кастомные стикеры Ульяны (вырезаны из сгенерённого листа, прозрачный фон).
+// Градации плача — под результат диагноза: чем выше балл, тем сильнее рыдает.
+export const UL = {
+  calm: require('../../assets/ulyana/ulyana_calm.png'),
+  almost: require('../../assets/ulyana/ulyana_almost.png'),
+  cry1: require('../../assets/ulyana/ulyana_cry1.png'),
+  cry2: require('../../assets/ulyana/ulyana_cry2.png'),
+  sob: require('../../assets/ulyana/ulyana_sob.png'),
+  flood: require('../../assets/ulyana/ulyana_flood.png'),
 } as const;

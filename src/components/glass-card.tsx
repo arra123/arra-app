@@ -1,4 +1,3 @@
-import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import { type ReactNode } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
@@ -19,8 +18,11 @@ type Props = {
 };
 
 /**
- * Стеклянная карточка в стиле iOS 26 Liquid Glass.
- * На iOS 26+ используется нативный GlassView, иначе — мягкий полупрозрачный фолбэк.
+ * Светлая карточка в стиле Noda.
+ *
+ * Контентные поверхности намеренно не используют системный Liquid Glass:
+ * iOS может заменить его непрозрачным тёмным материалом при настройках
+ * доступности, из-за чего светлая тема теряет контраст.
  */
 export function GlassCard({
   children,
@@ -31,27 +33,17 @@ export function GlassCard({
   interactive = false,
 }: Props) {
   const theme = useTheme();
+  void interactive;
 
-  if (isLiquidGlassAvailable()) {
-    return (
-      <GlassView
-        glassEffectStyle={variant}
-        tintColor={tint}
-        isInteractive={interactive}
-        style={[{ borderRadius: radius, overflow: 'hidden' }, style]}>
-        {children}
-      </GlassView>
-    );
-  }
-
-  // Фолбэк (Android / web / iOS < 26)
   return (
     <View
       style={[
-        styles.fallback,
+        styles.surface,
         {
           borderRadius: radius,
-          backgroundColor: theme.glass,
+          backgroundColor:
+            tint ??
+            (variant === 'clear' ? 'rgba(255,255,255,0.78)' : theme.glass),
           borderColor: theme.glassBorder,
         },
         style,
@@ -62,8 +54,13 @@ export function GlassCard({
 }
 
 const styles = StyleSheet.create({
-  fallback: {
-    borderWidth: StyleSheet.hairlineWidth,
+  surface: {
+    borderWidth: 1,
     overflow: 'hidden',
+    shadowColor: '#243247',
+    shadowOpacity: 0.055,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
 });

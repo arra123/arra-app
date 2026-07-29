@@ -2,8 +2,8 @@ import { GlassView } from 'expo-glass-effect';
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
+  Image,
+  ScrollView,
   StyleSheet,
   TextInput,
   TouchableOpacity,
@@ -50,9 +50,21 @@ export function AuthScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={[styles.center, { paddingTop: insets.top }]}>
+      <ScrollView
+        contentContainerStyle={[styles.center, { paddingTop: insets.top }]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.brand}>
+          <Image source={require('../../noda-ios/assets/noda.png')} style={styles.logoMark} />
+          <View>
+            <ThemedText style={styles.logo}>Noda</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              рабочий контур
+            </ThemedText>
+          </View>
+        </View>
         <GlassCard radius={Radius.xl} style={styles.card}>
           {/* Переключатель Войти / Регистрация */}
           <View style={[styles.segment, { backgroundColor: theme.backgroundSelected }]}>
@@ -120,19 +132,28 @@ export function AuthScreen() {
             />
           )}
         </GlassCard>
-      </KeyboardAvoidingView>
+      </ScrollView>
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  center: { flex: 1, justifyContent: 'center', paddingHorizontal: Spacing.four, gap: Spacing.four },
-  logoWrap: { alignItems: 'center', gap: Spacing.two },
-  logoBadge: { width: 72, height: 72, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  logoBadgeText: { color: '#fff', fontSize: 40, fontWeight: '800' },
-  logo: { fontSize: 40, fontWeight: '700', marginTop: Spacing.one },
-  subtitle: { textAlign: 'center' },
+  center: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.four,
+    paddingBottom: Spacing.four,
+    gap: Spacing.four,
+  },
+  brand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    gap: Spacing.three,
+  },
+  logoMark: { width: 64, height: 64 },
+  logo: { fontSize: 32, lineHeight: 35, fontWeight: '700', letterSpacing: -0.8 },
   card: { padding: Spacing.four, gap: Spacing.three },
   segment: { flexDirection: 'row', borderRadius: Radius.md, padding: 4, gap: 4 },
   segmentBtn: { flex: 1, alignItems: 'center', paddingVertical: Spacing.two, borderRadius: Radius.sm },
@@ -144,6 +165,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   button: { height: 54, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  buttonText: { color: '#fff', fontSize: 17, fontWeight: '600' },
-  hint: { textAlign: 'center' },
 });

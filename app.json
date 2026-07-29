@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "Arra",
+    "name": "Noda",
     "slug": "aura",
     "owner": "arratima",
-    "version": "1.4.1",
+    "version": "1.10.0",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "aura",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -17,17 +17,18 @@
       "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["audio"],
-        "NSCameraUsageDescription": "Aura использует камеру, чтобы быстро снимать чеки и фото для переноса на компьютер.",
-        "NSMicrophoneUsageDescription": "Aura использует микрофон для голосового ввода трат.",
-        "NSPhotoLibraryUsageDescription": "Aura добавляет фото и скриншоты из галереи для распознавания трат и переноса файлов."
+        "UIBackgroundModes": [
+          "audio"
+        ],
+        "NSCameraUsageDescription": "Noda использует камеру, чтобы быстро снимать чеки и фото для переноса на компьютер.",
+        "NSMicrophoneUsageDescription": "Noda использует микрофон для голосового ввода.",
+        "NSPhotoLibraryUsageDescription": "Noda добавляет фото и скриншоты из галереи для распознавания и переноса файлов."
       }
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#F4F7FB",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
@@ -51,12 +52,12 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#08090A",
+          "backgroundColor": "#F4F7FB",
           "image": "./assets/images/icon.png",
           "imageWidth": 110,
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#08090A",
+            "backgroundColor": "#F4F7FB",
             "image": "./assets/images/icon.png",
             "imageWidth": 110
           }
@@ -67,9 +68,11 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "Arra берёт последнее фото из галереи, чтобы быстро отправить его на компьютер."
+          "photosPermission": "Noda берёт выбранные фото из галереи, чтобы быстро отправить их на компьютер."
         }
-      ]
+      ],
+      "expo-asset",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

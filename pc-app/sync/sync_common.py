@@ -48,22 +48,43 @@ SKIP_DIRS = {
     # сборки/зависимости
     "node_modules", ".next", ".git", ".expo", "__pycache__", ".venv", "venv",
     "dist", "build", ".turbo", ".cache", ".npm", ".nvm",
-    "target",
+    "target", "tmp", ".tmp", "temp", ".temp",
+    "export-ios", "export-android",
+    "codex-tmp", ".codex-tmp",
+    "Cache", "Cache_Data", "Code Cache", "GPUCache", "DawnCache",
+    "GrShaderCache", "ShaderCache", "component_crx_cache", "Crashpad",
     # claude code runtime (большие, бесполезные на другой машине)
     "shell-snapshots", "cache", "telemetry",
     "file-history", "ide", "backups", "downloads",
     ".pyenv", "paste-cache", "tasks",
     "image-cache",
     ".arra-backups",
+    ".playwright-mcp",
     # внешние
     ".google",
     # архив (старые штуки оставлены локально)
     "_archive",
 }
 SKIP_DIR_PREFIXES = (
+    "_archived_",  # локальные архивы старых рабочих копий не являются проектами
+    ".audit-",  # локальные профили и снимки визуальной проверки
+    ".expo-export-",  # одноразовые каталоги Expo export исчезают прямо во время передачи
+    "chrome-fresh-",  # одноразовые профили Chromium, создаваемые Codex
     ".chrome-design-",  # временные профили Chrome: кэш, cookies и заблокированные SQLite-файлы
     ".chrome-debug-profile",  # профили браузерных тестов: только кэш и машинное состояние
 )
+SKIP_DIR_SUFFIXES = (
+    "-tmp", "_tmp",  # временные рабочие каталоги с проектным префиксом
+)
+
+
+def is_skipped_dir_name(name, extra_skip_dirs=None):
+    skip_dirs = SKIP_DIRS | set(extra_skip_dirs or ())
+    return (
+        name in skip_dirs or
+        any(name.startswith(prefix) for prefix in SKIP_DIR_PREFIXES) or
+        any(name.endswith(suffix) for suffix in SKIP_DIR_SUFFIXES)
+    )
 
 # Корневые папки внутри C:\Claude, которые исключаем только при push
 # (бывает, что pull их притаскивает, а на этой машине мы их не хотим заливать)
@@ -83,6 +104,13 @@ SKIP_FILES = {
     "daemon-auth-status.json", "daemon-auth-cooldown", "daemon.lock", "daemon.status.json",
     "mcp-needs-auth-cache.json",
 }
+SKIP_FILE_MARKERS = (
+    ".noda-part-",  # незавершённые временные файлы прошлой передачи
+)
+
+
+def is_skipped_file_name(name):
+    return name in SKIP_FILES or any(marker in name for marker in SKIP_FILE_MARKERS)
 
 # Файлы, которые на pull НЕ удаляются, даже если их нет на сервере
 # (защита от случайного wipe того, что собрано локально)
@@ -193,8 +221,13 @@ def connect():
                 SERVER, username=USER, password=PASSWORD,
                 timeout=20, banner_timeout=20, auth_timeout=20,
             )
+            # без keepalive сервер рвёт простаивающее соединение на длинных файлах
+            try:
+                client.get_transport().set_keepalive(15)
+            except Exception:
+                pass
             sftp = client.open_sftp()
-            sftp.get_channel().settimeout(45)
+            sftp.get_channel().settimeout(120)
             return client, sftp
         except Exception as ex:
             last_error = ex
@@ -218,10 +251,10 @@ def should_skip_file(path, base, is_push):
         return True
 
     for part in rel.parts:
-        if part in SKIP_DIRS or any(part.startswith(prefix) for prefix in SKIP_DIR_PREFIXES):
+        if is_skipped_dir_name(part):
             return True
 
-    if path.name in SKIP_FILES:
+    if is_skipped_file_name(path.name):
         return True
 
     if is_push:
@@ -282,7 +315,7 @@ def scan_local(base, is_push, label="local", progress=None, extra_skip_dirs=None
                 if d == base and include_roots and e.name not in include_roots:
                     continue
                 if e.is_dir(follow_symlinks=False):
-                    if e.name in skip_dirs or any(e.name.startswith(prefix) for prefix in SKIP_DIR_PREFIXES):
+                    if is_skipped_dir_name(e.name, skip_dirs):
                         continue
                     # Linked Git worktrees are temporary parallel agent checkouts. The
                     # canonical project is already synced; copying every worktree would
@@ -296,7 +329,7 @@ def scan_local(base, is_push, label="local", progress=None, extra_skip_dirs=None
                         continue
                     stack.append(Path(e.path))
                 elif e.is_file(follow_symlinks=False):
-                    if e.name in skip_files:
+                    if e.name in skip_files or any(marker in e.name for marker in SKIP_FILE_MARKERS):
                         continue
                     if is_push and Path(e.name).suffix.lower() in SKIP_EXTENSIONS:
                         continue
@@ -342,10 +375,10 @@ def scan_remote(sftp, remote_base, label="remote", progress=None):
             rel = f"{prefix}/{e.filename}" if prefix else e.filename
             full = f"{rpath}/{e.filename}"
             if stat.S_ISDIR(e.st_mode):
-                if e.filename not in SKIP_DIRS and not any(e.filename.startswith(prefix) for prefix in SKIP_DIR_PREFIXES):
+                if not is_skipped_dir_name(e.filename):
                     walk(full, rel)
             else:
-                if e.filename in SKIP_FILES:
+                if is_skipped_file_name(e.filename):
                     continue
                 files[rel] = (e.st_size, int(e.st_mtime))
             now = time.time()
@@ -449,8 +482,14 @@ def ensure_dir(sftp, path):
         except Exception:
             try:
                 sftp.mkdir(cur)
-            except Exception:
-                pass
+            except Exception as mkdir_error:
+                # Другой процесс мог создать каталог между stat и mkdir.
+                try:
+                    sftp.stat(cur)
+                except Exception:
+                    raise RuntimeError(
+                        f"Сервер не создал каталог {cur}: {mkdir_error}"
+                    ) from mkdir_error
 
 
 def progress_line(done_n, total_n, done_b, total_b, t_start):
