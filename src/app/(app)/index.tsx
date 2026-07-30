@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
+import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppleSegmented } from '@/components/apple-segmented';
@@ -42,6 +43,16 @@ type Debt = {
   created_at?: string | null;
 };
 type ViewKind = 'period' | 'people';
+type SpanKind = 'all' | 'month' | 'week' | 'year';
+
+/** Период — необязательный фильтр. По умолчанию всегда «Всё»: экран
+ *  открывается на всей истории, которую можно листать, как в банке. */
+const spans: { id: SpanKind; label: string }[] = [
+  { id: 'all', label: 'Всё' },
+  { id: 'month', label: 'Месяц' },
+  { id: 'week', label: 'Неделя' },
+  { id: 'year', label: 'Год' },
+];
 
 const people = ['Тима', 'Даня', 'Женя'] as const;
 const cars = ['Ситидрайв', 'Делимобиль', 'БелкаКар', 'Яндекс Драйв'] as const;
@@ -54,6 +65,14 @@ const cleanNote = (d: Debt) => (d.note || '').replace(/\[(Тима|Даня|Же
 const dateOf = (d: Debt) => new Date(d.occurred_at || d.created_at || Date.now());
 const timeOf = (d: Debt) => dateOf(d).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 const startOfDay = (date: Date) => { const d = new Date(date); d.setHours(0, 0, 0, 0); return d; };
+const startOfWeek = (date: Date) => { const d = startOfDay(date); d.setDate(d.getDate() - ((d.getDay() || 7) - 1)); return d; };
+const spanStart = (span: SpanKind) => {
+  const now = new Date();
+  if (span === 'week') return startOfWeek(now);
+  if (span === 'month') return new Date(now.getFullYear(), now.getMonth(), 1);
+  if (span === 'year') return new Date(now.getFullYear(), 0, 1);
+  return null;
+};
 const plural = (n: number, one: string, few: string, many: string) => {
   const m10 = n % 10; const m100 = n % 100;
   if (m10 === 1 && m100 !== 11) return one;
@@ -80,6 +99,7 @@ export default function FinanceScreen() {
   const [debts, setDebts] = useState<Debt[]>([]);
   const [mine, setMine] = useState<Debt[]>([]);
   const [view, setView] = useState<ViewKind>('period');
+  const [span, setSpan] = useState<SpanKind>('all');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [edit, setEdit] = useState<Debt | 'new' | null>(null);
@@ -102,9 +122,16 @@ export default function FinanceScreen() {
     return onQuickAction((action) => { if (action === 'car') setCarOpen(true); });
   }, []);
 
-  const unpaid = useMemo(() => debts.filter((d) => !d.settled), [debts]);
-  const feed = useMemo(() => [...unpaid].sort((a, b) => dateOf(b).getTime() - dateOf(a).getTime()), [unpaid]);
+  // Лента — вся история: и открытые записи, и уже закрытые. Фильтр периода
+  // применяется только если его выбрали руками.
+  const inSpan = useMemo(() => {
+    const from = spanStart(span);
+    return from ? debts.filter((d) => dateOf(d).getTime() >= from.getTime()) : debts;
+  }, [debts, span]);
+  const unpaid = useMemo(() => inSpan.filter((d) => !d.settled), [inSpan]);
+  const feed = useMemo(() => [...inSpan].sort((a, b) => dateOf(b).getTime() - dateOf(a).getTime()), [inSpan]);
   const total = unpaid.reduce((s, d) => s + Number(d.amount), 0);
+  const closed = useMemo(() => inSpan.filter((d) => d.settled), [inSpan]);
 
   // Держим виджет в актуальном состоянии — он читает только то, что ему передали.
   useEffect(() => {
@@ -158,8 +185,8 @@ export default function FinanceScreen() {
     const title = named ? d.counterparty : (purpose || 'Без названия');
     const who = recipient(d);
     return (
+      <Animated.View key={d.id} layout={LinearTransition.duration(200)} exiting={FadeOut.duration(140)}>
       <ReanimatedSwipeable
-        key={d.id}
         friction={1.1}
         rightThreshold={30}
         overshootRight={false}
@@ -209,6 +236,7 @@ export default function FinanceScreen() {
           </Pressable>
         </Pressable>
       </ReanimatedSwipeable>
+      </Animated.View>
     );
   };
 
@@ -235,6 +263,31 @@ export default function FinanceScreen() {
           selectedIndex={view === 'period' ? 0 : 1}
           onChange={(index) => setView(index === 0 ? 'period' : 'people')}
         />
+
+        {/* Период — необязательный: «Всё» стоит всегда, пока не выберешь другое. */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.spanRow}>
+          {spans.map((item) => {
+            const on = span === item.id;
+            return (
+              <Pressable
+                key={item.id}
+                onPress={() => { haptic.select(); setSpan(item.id); }}
+                style={[styles.spanChip, {
+                  borderColor: on ? theme.tint : theme.separator,
+                  backgroundColor: on ? theme.tint : theme.backgroundElement,
+                }]}>
+                <ThemedText type="small" style={{ color: on ? '#fff' : theme.text, fontWeight: '600' }}>{item.label}</ThemedText>
+              </Pressable>
+            );
+          })}
+          <View style={styles.spanNote}>
+            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+              {span === 'all'
+                ? `вся история · ${feed.length} ${plural(feed.length, 'запись', 'записи', 'записей')}`
+                : `${feed.length} ${plural(feed.length, 'запись', 'записи', 'записей')} за период`}
+            </ThemedText>
+          </View>
+        </ScrollView>
 
         {loading ? <ActivityIndicator style={{ marginTop: 60 }} color={theme.tint} /> : view === 'people' ? (
           <>
@@ -263,20 +316,34 @@ export default function FinanceScreen() {
         ) : days.length === 0 ? (
           <View style={styles.empty}>
             <Glyph name="tray" fallback="—" color={theme.textSecondary} size={28} />
-            <ThemedText themeColor="textSecondary">Открытых записей нет</ThemedText>
+            <ThemedText themeColor="textSecondary">{span === 'all' ? 'Записей пока нет' : 'За этот период записей нет'}</ThemedText>
           </View>
         ) : (
-          days.map(([key, items]) => {
-            const daySum = items.filter((d) => !d.settled).reduce((s, d) => s + Number(d.amount), 0);
-            return (
-              <View key={key} style={styles.group}>
-                <ThemedText type="small" themeColor="textSecondary" style={styles.groupHead}>
-                  {dayTitle(key)} · {money(daySum)}
-                </ThemedText>
-                <GlassCard radius={Radius.lg} style={styles.list}>{items.map(row)}</GlassCard>
-              </View>
-            );
-          })
+          <>
+            {days.map(([key, items]) => {
+              const daySum = items.filter((d) => !d.settled).reduce((s, d) => s + Number(d.amount), 0);
+              const dayClosed = items.filter((d) => d.settled).length;
+              return (
+                <Animated.View
+                  key={key}
+                  style={styles.group}
+                  entering={FadeIn.duration(180)}
+                  exiting={FadeOut.duration(140)}
+                  layout={LinearTransition.duration(220)}>
+                  <ThemedText type="small" themeColor="textSecondary" style={styles.groupHead}>
+                    {dayTitle(key)} · {daySum ? money(daySum) : 'закрыто'}
+                    {daySum > 0 && dayClosed > 0 ? ` · вернули ${dayClosed}` : ''}
+                  </ThemedText>
+                  <GlassCard radius={Radius.lg} style={styles.list}>{items.map(row)}</GlassCard>
+                </Animated.View>
+              );
+            })}
+            {closed.length > 0 && (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.groupHead}>
+                {span === 'all' ? 'За всё время вернули' : 'За период вернули'} {money(closed.reduce((s, d) => s + Number(d.amount), 0))}
+              </ThemedText>
+            )}
+          </>
         )}
 
         <ThemedText type="small" themeColor="textSecondary" style={styles.version}>v{APP_BUILD}</ThemedText>
@@ -560,6 +627,9 @@ const styles = StyleSheet.create({
   total: { fontSize: 38, lineHeight: 44, fontWeight: '800', letterSpacing: -1.4 },
   group: { gap: Spacing.two },
   groupHead: { paddingHorizontal: 4 },
+  spanRow: { gap: Spacing.two, alignItems: 'center', paddingRight: Spacing.three },
+  spanChip: { minHeight: 34, justifyContent: 'center', paddingHorizontal: Spacing.three, borderRadius: Radius.pill, borderWidth: StyleSheet.hairlineWidth },
+  spanNote: { paddingLeft: Spacing.one, maxWidth: 190 },
   list: { overflow: 'hidden' },
   row: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three },
   personHead: { minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three },

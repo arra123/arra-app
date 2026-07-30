@@ -1394,6 +1394,82 @@ ipcMain.handle('fs-delete', async (_e, p) => {
 });
 ipcMain.handle('copy-path', (_e, p) => { clipboard.writeText(p); return true; });
 ipcMain.handle('clip-read', () => clipboard.readText());
+
+/* ---- Файлы: превью, копирование, правка ----
+   Телефон присылает и HEIC, и крупные JPEG. Chromium HEIC не рисует, а фото
+   на 5 МБ в сетке из тридцати карточек кладут окно. Поэтому превью всегда
+   готовит main: системный thumbnail знает HEIC и отдаёт мелкий PNG. */
+const thumbCache = new Map();
+async function makeThumb(file, size) {
+  const box = Math.max(96, Math.min(1024, Number(size) || 320));
+  const key = `${file}|${box}`;
+  const cached = thumbCache.get(key);
+  let stamp = 0;
+  try { stamp = fs.statSync(file).mtimeMs; } catch { return { ok: false, error: 'Файла нет на диске' }; }
+  if (cached && cached.stamp === stamp) return { ok: true, dataUrl: cached.dataUrl, cached: true };
+  let image = null;
+  try { image = await nativeImage.createThumbnailFromPath(file, { width: box, height: box }); } catch {}
+  if (!image || image.isEmpty()) {
+    try { image = nativeImage.createFromPath(file); } catch {}
+    if (image && !image.isEmpty()) image = image.resize({ width: box, quality: 'good' });
+  }
+  if (!image || image.isEmpty()) return { ok: false, error: 'Формат без превью' };
+  const dataUrl = image.toDataURL();
+  thumbCache.set(key, { stamp, dataUrl });
+  if (thumbCache.size > 400) thumbCache.delete(thumbCache.keys().next().value);
+  return { ok: true, dataUrl };
+}
+ipcMain.handle('file-thumb', async (_e, { path: file, size } = {}) => {
+  try { return await makeThumb(file, size); }
+  catch (e) { writeLog('warn', 'files.thumb', { path: file, error: e }); return { ok: false, error: e.message }; }
+});
+ipcMain.handle('file-info', (_e, file) => {
+  try {
+    const info = fs.statSync(file);
+    return { ok: true, exists: true, size: info.size, mtime: info.mtimeMs };
+  } catch { return { ok: true, exists: false }; }
+});
+/** Сама картинка в буфер — чтобы вставить в чат, а не путь. */
+ipcMain.handle('copy-image', async (_e, file) => {
+  try {
+    let image = nativeImage.createFromPath(file);
+    if (image.isEmpty()) {
+      // HEIC и прочая экзотика: берём системное превью в полный размер экрана
+      const thumb = await makeThumb(file, 1024);
+      if (!thumb.ok) return { ok: false, error: thumb.error };
+      image = nativeImage.createFromDataURL(thumb.dataUrl);
+    }
+    if (image.isEmpty()) return { ok: false, error: 'Не получилось прочитать картинку' };
+    clipboard.writeImage(image);
+    return { ok: true };
+  } catch (e) { writeLog('error', 'files.copyImage', { path: file, error: e }); return { ok: false, error: e.message }; }
+});
+/** Сам файл в буфер (CF_HDROP) — вставляется в проводник и в чаты. */
+ipcMain.handle('copy-file', (_e, file) => new Promise((resolve) => {
+  if (!fs.existsSync(file)) { resolve({ ok: false, error: 'Файла нет на диске' }); return; }
+  execFile(
+    'powershell',
+    ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', `Set-Clipboard -LiteralPath ${JSON.stringify(file)}`],
+    (error) => {
+      if (error) { writeLog('warn', 'files.copyFile', { path: file, error }); resolve({ ok: false, error: 'Не получилось положить файл в буфер' }); return; }
+      resolve({ ok: true });
+    },
+  );
+}));
+/** Рисование поверх фото: сохраняем правку рядом с исходником. */
+ipcMain.handle('save-image', async (_e, { path: file, dataUrl } = {}) => {
+  try {
+    const image = nativeImage.createFromDataURL(String(dataUrl || ''));
+    if (image.isEmpty()) return { ok: false, error: 'Пустое изображение' };
+    const base = path.join(path.dirname(file), path.basename(file, path.extname(file)));
+    let target = `${base}-правка.png`;
+    let n = 2;
+    while (fs.existsSync(target)) target = `${base}-правка-${n++}.png`;
+    await fs.promises.writeFile(target, image.toPNG());
+    clipboard.writeImage(image);
+    return { ok: true, path: target };
+  } catch (e) { writeLog('error', 'files.saveImage', { path: file, error: e }); return { ok: false, error: e.message }; }
+});
 ipcMain.handle('recopy', (_e, f) => copyToClipboard(f.path, f.mime));
 ipcMain.handle('logout', () => {
   manualClose = true;
@@ -1403,6 +1479,143 @@ ipcMain.handle('logout', () => {
   online = false;
   pushStatus();
   return { ok: true };
+});
+
+/* ---- Активные диалоги Codex и Claude ----
+   В «Передаче» нужно видеть не только «сколько файлов», но и какие живые
+   диалоги уезжают: их файлы и есть самое ценное в переносе. */
+/* Заголовок диалога ищем потоково: в rollout-файлах Codex первое сообщение
+   человека лежит после мегабайта служебного контекста, поэтому читаем чанками
+   и останавливаемся, как только нашли. Результат кэшируем по mtime. */
+const sessionTitleCache = new Map();
+function scanSession(file, handleLine, maxBytes = 1572864) {
+  let fd = null;
+  try {
+    fd = fs.openSync(file, 'r');
+    const chunk = Buffer.alloc(65536);
+    let offset = 0;
+    let tail = '';
+    while (offset < maxBytes) {
+      const read = fs.readSync(fd, chunk, 0, chunk.length, offset);
+      if (!read) break;
+      offset += read;
+      const text = tail + chunk.slice(0, read).toString('utf8');
+      const lines = text.split('\n');
+      tail = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let row = null;
+        try { row = JSON.parse(line); } catch { continue; }
+        if (handleLine(row) === true) return;
+      }
+      if (tail.length > 4194304) tail = '';
+    }
+  } catch {}
+  finally { try { if (fd != null) fs.closeSync(fd); } catch {} }
+}
+function firstLineText(value, limit = 140) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const marker = '## My request for Codex:';
+  const cut = text.includes(marker) ? text.split(marker)[1].trim() : text;
+  return cut.slice(0, limit);
+}
+/** Служебный контекст (инструкции, окружение, списки плагинов) — не заголовок. */
+function looksLikeSystemText(value) {
+  const text = String(value || '').trimStart();
+  if (!text) return true;
+  if (text.startsWith('<') || text.startsWith('#')) return true;
+  return /^(caveat:|instructions for|you are |environment|system-reminder)/i.test(text)
+    || /(AGENTS\.md instructions|recommended_plugins|<environment_context|<user_instructions|<system-reminder)/i.test(text.slice(0, 400));
+}
+function walkJsonl(root, depth = 4) {
+  const out = [];
+  const step = (dir, level) => {
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { if (level < depth) step(full, level + 1); continue; }
+      if (entry.isFile() && entry.name.toLowerCase().endsWith('.jsonl')) out.push(full);
+    }
+  };
+  step(root, 0);
+  return out;
+}
+function codexSessionTitle(file) {
+  let title = '';
+  let cwd = '';
+  scanSession(file, (row) => {
+    const payload = row?.payload;
+    if (!cwd && (row?.type === 'session_meta' || row?.type === 'turn_context') && payload?.cwd) cwd = String(payload.cwd);
+    if (!title && row?.type === 'event_msg' && payload?.type === 'user_message' && !looksLikeSystemText(payload.message)) {
+      title = firstLineText(payload.message);
+    }
+    // В новых rollout-файлах реплика человека приходит как response_item.
+    if (!title && payload?.role === 'user' && Array.isArray(payload.content)) {
+      const text = payload.content.map((part) => part?.text || '').join(' ');
+      if (!looksLikeSystemText(text)) title = firstLineText(text);
+    }
+    return !!(title && cwd);
+  });
+  return { title, cwd };
+}
+function claudeSessionTitle(file) {
+  let title = '';
+  let summary = '';
+  let cwd = '';
+  scanSession(file, (row) => {
+    if (!cwd && row?.cwd) cwd = String(row.cwd);
+    // Claude Code пишет строку summary — это лучшее название для диалога.
+    if (!summary && row?.type === 'summary' && row?.summary) summary = firstLineText(row.summary);
+    const content = row?.message?.content;
+    if (!title && row?.type === 'user') {
+      const text = typeof content === 'string'
+        ? content
+        : Array.isArray(content) ? content.map((part) => (typeof part === 'string' ? part : part?.text || '')).join(' ') : '';
+      if (!looksLikeSystemText(text)) title = firstLineText(text);
+    }
+    return !!(cwd && (summary || title));
+  });
+  return { title: summary || title, cwd };
+}
+ipcMain.handle('codex-sessions', () => {
+  const home = os.homedir();
+  const limitAt = Date.now() - 30 * 86400000;
+  const rows = [];
+  const collect = (root, kind, reader) => {
+    if (!fs.existsSync(root)) return;
+    for (const file of walkJsonl(root)) {
+      let info = null;
+      try { info = fs.statSync(file); } catch { continue; }
+      if (info.mtimeMs < limitAt) continue;
+      rows.push({ kind, file, size: info.size, updated: info.mtimeMs, reader });
+    }
+  };
+  collect(path.join(home, '.codex', 'sessions'), 'codex', codexSessionTitle);
+  collect(path.join(home, '.claude', 'projects'), 'claude', claudeSessionTitle);
+  rows.sort((a, b) => b.updated - a.updated);
+  const top = rows.slice(0, 14);
+  return top.map((row) => {
+    const cacheKey = `${row.file}|${row.updated}`;
+    let meta = sessionTitleCache.get(cacheKey);
+    if (!meta) {
+      meta = row.reader(row.file);
+      sessionTitleCache.set(cacheKey, meta);
+      if (sessionTitleCache.size > 120) sessionTitleCache.delete(sessionTitleCache.keys().next().value);
+    }
+    const name = path.basename(row.file, '.jsonl');
+    return {
+      kind: row.kind,
+      id: name.slice(-36),
+      file: row.file,
+      name,
+      size: row.size,
+      updated: row.updated,
+      title: meta.title || 'Без названия',
+      cwd: meta.cwd || '',
+      project: meta.cwd ? path.basename(meta.cwd.replace(/^\\\\\?\\/, '')) : '',
+    };
+  });
 });
 
 // ---- Перенос (синхронизация рабочих файлов с сервером) ----

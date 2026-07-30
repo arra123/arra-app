@@ -13,6 +13,13 @@ contextBridge.exposeInMainWorld('arra', {
   fsDelete: (p) => ipcRenderer.invoke('fs-delete', p),
   copyPath: (p) => ipcRenderer.invoke('copy-path', p),
   copyText: (t) => ipcRenderer.invoke('copy-path', t),
+  // Файлы: превью через main (HEIC и тяжёлые фото), копирование самой картинки/файла
+  fileThumb: (path, size) => ipcRenderer.invoke('file-thumb', { path, size }),
+  fileInfo: (p) => ipcRenderer.invoke('file-info', p),
+  copyImage: (p) => ipcRenderer.invoke('copy-image', p),
+  copyFile: (p) => ipcRenderer.invoke('copy-file', p),
+  saveImage: (path, dataUrl) => ipcRenderer.invoke('save-image', { path, dataUrl }),
+  codexSessions: () => ipcRenderer.invoke('codex-sessions'),
   clipRead: () => ipcRenderer.invoke('clip-read'),
   recopy: (f) => ipcRenderer.invoke('recopy', f),
   logout: () => ipcRenderer.invoke('logout'),

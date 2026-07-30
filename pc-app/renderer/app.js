@@ -949,6 +949,23 @@ function finDayTitle(value) {
   return new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', ...(withYear ? { year: 'numeric' } : {}) }).format(date);
 }
 
+/* Периоды — необязательный фильтр. По умолчанию всегда «Всё»: заходишь и
+   видишь всю историю, как в банке, а не срез за текущий месяц. */
+const FIN_SPANS = [
+  { id: 'all', label: 'Всё' },
+  { id: 'month', label: 'Месяц' },
+  { id: 'week', label: 'Неделя' },
+  { id: 'year', label: 'Год' },
+];
+
+function finSpanFrom(span) {
+  const now = new Date();
+  if (span === 'week') return finStartOfWeek(now);
+  if (span === 'month') return new Date(now.getFullYear(), now.getMonth(), 1);
+  if (span === 'year') return new Date(now.getFullYear(), 0, 1);
+  return null;
+}
+
 async function renderFin() {
   app.innerHTML = '<div class="empty">Загружаю…</div>';
   let result;
@@ -958,16 +975,21 @@ async function renderFin() {
   state.debtList = all.filter((d) => d.direction !== 'i_owe');
   state.myDebts = all.filter((d) => d.direction === 'i_owe' && !d.settled);
   state.finView = state.finView || localStorage.getItem('noda_pc_fin_view') || 'period';
+  state.finSpan = state.finSpan || 'all';
   finDraw();
 }
 
 function finDraw() {
-  const allRows = state.debtList.slice().sort((a, b) => finDate(b) - finDate(a));
+  const span = state.finSpan || 'all';
+  const from = finSpanFrom(span);
+  const sorted = state.debtList.slice().sort((a, b) => finDate(b) - finDate(a));
+  const allRows = from ? sorted.filter((d) => finDate(d) >= from) : sorted;
   const returned = allRows.filter((d) => d.settled);
-  const unpaid = state.debtList.filter((d) => !d.settled);
+  const unpaid = allRows.filter((d) => !d.settled);
   const total = finSum(unpaid);
   const people = state.finView === 'people';
   const oldest = unpaid.length ? new Date(Math.min(...unpaid.map((d) => finDate(d)))) : null;
+  const hidden = sorted.length - allRows.length;
 
   const days = new Map();
   for (const d of allRows) {
@@ -999,14 +1021,23 @@ function finDraw() {
       </div>
     </div>
 
+    <div class="fin-spans">
+      ${FIN_SPANS.map((item) => `<button class="fin-span${span === item.id ? ' active' : ''}" data-span="${item.id}">${item.label}</button>`).join('')}
+      <span class="fin-span-note">${span === 'all' ? `вся история · ${allRows.length} ${finPlural(allRows.length, 'запись', 'записи', 'записей')}` : `${hidden ? `скрыто ${hidden} за пределами периода` : 'всё внутри периода'}`}</span>
+    </div>
+
     ${people ? finPeopleList(unpaid) : `
       ${days.size ? [...days.entries()].map(([key, rows]) => finDayGroup(key, rows)).join('')
         : '<div class="empty">Записей пока нет<br><small>Добавь первый ожидаемый возврат</small></div>'}
-      ${returned.length ? `<div class="fin-note">За всё время вернули ${fmt(finSum(returned))} ₽</div>` : ''}`}
+      ${returned.length ? `<div class="fin-note">${span === 'all' ? 'За всё время вернули' : 'За период вернули'} ${fmt(finSum(returned))} ₽</div>` : ''}`}
   `;
 
   document.getElementById('fin-add').onclick = () => openDebtModal(null);
   document.getElementById('fin-car').onclick = openCarModal;
+  app.querySelectorAll('[data-span]').forEach((b) => b.onclick = () => {
+    state.finSpan = b.dataset.span;
+    finDraw();
+  });
   app.querySelectorAll('[data-view]').forEach((b) => b.onclick = () => {
     state.finView = b.dataset.view;
     localStorage.setItem('noda_pc_fin_view', state.finView);
@@ -1024,9 +1055,18 @@ function finDraw() {
     event.stopPropagation();
     const d = state.debtList.find((x) => x.id === b.dataset.settle);
     if (!d) return;
-    b.classList.toggle('on');
-    try { await api('PATCH', '/debts/' + d.id, { settled: !d.settled }); await renderFin(); }
-    catch (e) { toast('Не сохранилось', e.message, 'warn'); }
+    // Отмечаем сразу и с анимацией: сеть догоняет в фоне, экран не мигает.
+    const next = !d.settled;
+    const row = b.closest('.fin-row');
+    b.classList.toggle('on', next);
+    if (row) {
+      row.classList.add('fin-flip');
+      row.classList.toggle('settled', next);
+      setTimeout(() => row.classList.remove('fin-flip'), 420);
+    }
+    d.settled = next;
+    try { await api('PATCH', '/debts/' + d.id, { settled: next }); }
+    catch (e) { d.settled = !next; toast('Не сохранилось', e.message, 'warn'); finDraw(); }
   });
 }
 
@@ -1542,17 +1582,24 @@ async function renderChat() {
 }
 
 // ================= ФАЙЛЫ =================
-// ================= ФАЙЛЫ (галерея, как в веб-версии) =================
+// Галерея принятых с телефона файлов. Превью делает main-процесс: iPhone
+// присылает HEIC (Chromium его не рисует) и фото по 5 МБ, от которых сетка
+// карточек начинает лагать.
+
+const FILES_PAGE = 48;
+let filesShown = FILES_PAGE;
+const thumbCache = new Map();
+let thumbWatcher = null;
+
+const isImageFile = (file) => String(file.mime || '').startsWith('image') || /\.(png|jpe?g|gif|webp|bmp|heic|heif|avif|tiff?)$/i.test(file.name || '');
+
 async function renderFiles() {
   const st = await window.arra.getStatus();
+  filesShown = FILES_PAGE;
   app.innerHTML = `
     <div class="page-head">
       <h1>Файлы</h1>
       <div class="grow"></div>
-      <div class="seg" id="modeseg">
-        <button data-mode="path" class="${st.mode === 'path' ? 'active' : ''}">Путь к файлу</button>
-        <button data-mode="file" class="${st.mode === 'file' ? 'active' : ''}">Сам файл</button>
-      </div>
       <button class="btn ghost sm" id="openf">Папка</button>
       <button class="btn ghost sm" id="chf">Сменить</button>
     </div>
@@ -1565,10 +1612,6 @@ async function renderFiles() {
   document.getElementById('openf').onclick = () => window.arra.openFolder();
   document.getElementById('chf').onclick = async () => { await window.arra.chooseFolder(); renderFiles(); };
   document.getElementById('logout').onclick = async () => { await window.arra.logout(); renderLogin(); };
-  app.querySelectorAll('#modeseg button').forEach((b) => (b.onclick = () => {
-    app.querySelectorAll('#modeseg button').forEach((x) => x.classList.toggle('active', x === b));
-    window.arra.setMode(b.dataset.mode);
-  }));
   renderFeed();
 }
 
@@ -1579,66 +1622,318 @@ function renderFeed() {
     feed.innerHTML = '<div class="empty">Пока пусто<br><small>Отправь файл с телефона — он появится здесь</small></div>';
     return;
   }
-  // группируем по дням, как в веб-версии
+  const visible = state.files.slice(0, filesShown);
   const days = new Map();
-  for (const file of state.files) {
+  for (const file of visible) {
     const stamp = file.at || file.time || Date.now();
     const date = new Date(typeof stamp === 'number' ? stamp : Date.parse(stamp) || Date.now());
     const key = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
     if (!days.has(key)) days.set(key, []);
     days.get(key).push(file);
   }
+  const rest = state.files.length - visible.length;
   feed.innerHTML = `<div class="gallery">${[...days.entries()].map(([key, rows]) => `
     <div class="gallery-day">${esc(finDayTitle(Number(key)))} · ${rows.length} ${finPlural(rows.length, 'файл', 'файла', 'файлов')}</div>
-    ${rows.map(fileTile).join('')}`).join('')}</div>`;
+    ${rows.map(fileTile).join('')}`).join('')}</div>
+    ${rest > 0 ? `<button class="btn ghost files-more" id="files-more">Показать ещё ${Math.min(rest, FILES_PAGE)} из ${rest}</button>` : ''}`;
 
-  feed.querySelectorAll('.shot').forEach((el) => (el.onclick = async () => {
-    if (el.dataset.image === '1') { openViewer(el.dataset.p); return; }
-    await window.arra.copyPath(el.dataset.p);
-    const hint = el.querySelector('.shot-copy');
-    if (hint) { hint.textContent = 'Путь скопирован ✓'; hint.classList.add('ok'); }
-  }));
+  const more = document.getElementById('files-more');
+  if (more) more.onclick = () => { filesShown += FILES_PAGE; renderFeed(); };
+  wireFileTiles(feed);
+  watchThumbs(feed);
 }
 
+/** Одна карточка: превью, имя и два способа забрать файл — сам файл или путь. */
 function fileTile(file) {
-  const isImage = String(file.mime || '').startsWith('image');
-  return `<figure class="shot" data-p="${esc(file.path)}" data-image="${isImage ? 1 : 0}" title="${esc(file.name)}">
-      <span class="shot-media">${isImage
-        ? `<img src="${fileURL(file.path)}" loading="lazy" decoding="async" alt="">`
+  const image = isImageFile(file);
+  return `<figure class="shot" data-p="${esc(file.path)}" data-image="${image ? 1 : 0}" data-name="${esc(file.name)}" title="${esc(file.name)}">
+      <span class="shot-media" data-thumb="${image ? esc(file.path) : ''}">${image
+        ? '<span class="shot-skeleton"></span>'
         : `<span class="tile">${SVG.file}</span>`}</span>
-      <figcaption><b>${esc(file.name)}</b><span class="shot-copy">${esc(file.time || '')}</span></figcaption>
+      <figcaption>
+        <b>${esc(file.name)}</b>
+        <span class="shot-copy">${esc(file.time || '')}</span>
+        <span class="shot-acts">
+          <button class="shot-act" data-copy-file="1" title="Скопировать сам файл — вставится в чат или папку">${image ? 'Картинка' : 'Файл'}</button>
+          <button class="shot-act" data-copy-path="1" title="Скопировать путь к файлу">Путь</button>
+          <button class="shot-act icon" data-open="1" title="Открыть в системе">↗</button>
+        </span>
+      </figcaption>
     </figure>`;
 }
 
+function shotHint(tile, text, kind = 'ok') {
+  const hint = tile.querySelector('.shot-copy');
+  if (!hint) return;
+  if (!tile.dataset.hint) tile.dataset.hint = hint.textContent;
+  hint.textContent = text;
+  hint.classList.toggle('ok', kind === 'ok');
+  hint.classList.toggle('bad', kind === 'bad');
+  clearTimeout(Number(tile.dataset.hintTimer || 0));
+  tile.dataset.hintTimer = String(setTimeout(() => {
+    hint.textContent = tile.dataset.hint || '';
+    hint.classList.remove('ok', 'bad');
+  }, 2600));
+}
+
+function wireFileTiles(root) {
+  root.querySelectorAll('.shot').forEach((tile) => {
+    const path = tile.dataset.p;
+    tile.querySelector('.shot-media').onclick = () => {
+      if (tile.dataset.image === '1') openViewer(path);
+      else window.arra.openFile(path);
+    };
+    tile.querySelector('[data-copy-file]').onclick = async (event) => {
+      event.stopPropagation();
+      const result = tile.dataset.image === '1' ? await window.arra.copyImage(path) : await window.arra.copyFile(path);
+      shotHint(tile, result?.ok ? (tile.dataset.image === '1' ? 'Картинка в буфере ✓' : 'Файл в буфере ✓') : (result?.error || 'Не получилось'), result?.ok ? 'ok' : 'bad');
+    };
+    tile.querySelector('[data-copy-path]').onclick = async (event) => {
+      event.stopPropagation();
+      await window.arra.copyPath(path);
+      shotHint(tile, 'Путь скопирован ✓');
+    };
+    tile.querySelector('[data-open]').onclick = (event) => { event.stopPropagation(); window.arra.openFile(path); };
+    tile.oncontextmenu = (event) => {
+      event.preventDefault();
+      showCtxMenu(event.clientX, event.clientY, [
+        { label: 'Открыть', action: () => window.arra.openFile(path) },
+        { label: 'Показать в папке', action: () => window.arra.openPath(path) },
+        { label: 'Скопировать путь', action: () => window.arra.copyPath(path) },
+      ]);
+    };
+  });
+}
+
+/** Превью подтягиваем только для карточек, которые реально видно. */
+function watchThumbs(root) {
+  thumbWatcher?.disconnect();
+  thumbWatcher = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      thumbWatcher.unobserve(entry.target);
+      void loadThumb(entry.target);
+    }
+  }, { rootMargin: '240px' });
+  const boxes = [...root.querySelectorAll('.shot-media[data-thumb]')].filter((box) => box.dataset.thumb);
+  boxes.forEach((box) => thumbWatcher.observe(box));
+  // Пока окно свёрнуто, наблюдатель молчит — первый экран грузим сами,
+  // иначе после разворачивания висят пустые плитки.
+  boxes.slice(0, 12).forEach((box) => { thumbWatcher.unobserve(box); void loadThumb(box); });
+}
+
+async function loadThumb(box) {
+  const path = box.dataset.thumb;
+  if (!path || box.dataset.done === '1') return;
+  box.dataset.done = '1';
+  const cached = thumbCache.get(path);
+  if (cached) { paintThumb(box, cached); return; }
+  const result = await window.arra.fileThumb(path, 420);
+  if (result?.ok && result.dataUrl) { thumbCache.set(path, result.dataUrl); paintThumb(box, result.dataUrl); return; }
+  box.innerHTML = `<span class="shot-broken"><b>${esc(result?.error || 'Превью нет')}</b><small>${/нет на диске/i.test(result?.error || '') ? 'файл не дошёл целиком' : 'файл открывается системой'}</small></span>`;
+}
+
+function paintThumb(box, dataUrl) {
+  const img = document.createElement('img');
+  img.decoding = 'async';
+  img.alt = '';
+  img.src = dataUrl;
+  box.innerHTML = '';
+  box.appendChild(img);
+}
+
+/* ---- Просмотр фото ----
+   Отдельные слои: панель сверху, картинка в центре, действия снизу. Кнопки
+   больше не лежат поверх картинки, поэтому крестик нажимается там, где виден. */
 function openViewer(path) {
-  const imgs = state.files.filter((f) => (f.mime || '').startsWith('image'));
+  const imgs = state.files.filter(isImageFile);
   if (!imgs.length) return;
   let idx = Math.max(0, imgs.findIndex((f) => f.path === path));
 
-  // Строим оверлей ОДИН раз; при листании меняем только src (без пересоздания — нет прыжков)
-  let v = document.getElementById('viewer');
-  if (v) v.remove();
-  v = document.createElement('div'); v.id = 'viewer'; v.className = 'viewer';
-  v.innerHTML = `<button class="vnav vprev">‹</button><img id="vimg" /><button class="vnav vnext">›</button>
-    <button class="vclose">✕</button><span class="vcount"></span><button class="copybtn vcopy">Скопировать путь</button>`;
+  document.getElementById('viewer')?.remove();
+  const v = document.createElement('div');
+  v.id = 'viewer';
+  v.className = 'viewer';
+  v.innerHTML = `
+    <div class="vbar">
+      <span class="vname"></span>
+      <span class="vcount"></span>
+      <button class="vclose" title="Закрыть (Esc)">✕</button>
+    </div>
+    <div class="vstage">
+      <button class="vnav vprev" title="Предыдущее (←)">‹</button>
+      <div class="vframe"><img id="vimg" alt=""><canvas id="vdraw" hidden></canvas></div>
+      <button class="vnav vnext" title="Следующее (→)">›</button>
+    </div>
+    <div class="vacts">
+      <button class="vact" data-act="copy-image">Скопировать картинку</button>
+      <button class="vact" data-act="copy-path">Скопировать путь</button>
+      <button class="vact" data-act="draw">Рисовать</button>
+      <button class="vact" data-act="open">Открыть</button>
+    </div>`;
   document.body.appendChild(v);
 
   const img = v.querySelector('#vimg');
+  const canvas = v.querySelector('#vdraw');
   const count = v.querySelector('.vcount');
-  const update = () => { img.src = fileURL(imgs[idx].path); count.textContent = `${idx + 1} / ${imgs.length}`; };
-  const prev = () => { idx = (idx - 1 + imgs.length) % imgs.length; update(); };
-  const next = () => { idx = (idx + 1) % imgs.length; update(); };
+  const name = v.querySelector('.vname');
+  const flash = (text, bad = false) => {
+    const bar = v.querySelector('.vflash') || Object.assign(document.createElement('div'), { className: 'vflash' });
+    bar.textContent = text;
+    bar.classList.toggle('bad', bad);
+    if (!bar.parentElement) v.appendChild(bar);
+    clearTimeout(Number(bar.dataset.timer || 0));
+    bar.dataset.timer = String(setTimeout(() => bar.remove(), 2200));
+  };
+
+  // Сначала показываем готовое превью (мгновенно), полный файл догружаем следом.
+  const update = async () => {
+    stopDraw();
+    const file = imgs[idx];
+    name.textContent = file.name || '';
+    count.textContent = `${idx + 1} / ${imgs.length}`;
+    const shown = idx;
+    const cached = thumbCache.get(file.path);
+    if (cached) img.src = cached;
+    else {
+      const thumb = await window.arra.fileThumb(file.path, 720);
+      if (shown !== idx) return;
+      if (thumb?.ok) { thumbCache.set(file.path, thumb.dataUrl); img.src = thumb.dataUrl; }
+    }
+    const full = new Image();
+    full.onload = () => { if (shown === idx) img.src = full.src; };
+    full.src = fileURL(file.path);
+  };
+  const prev = () => { idx = (idx - 1 + imgs.length) % imgs.length; void update(); };
+  const next = () => { idx = (idx + 1) % imgs.length; void update(); };
   const close = () => { v.remove(); document.removeEventListener('keydown', onKey); };
-  const onKey = (e) => { if (e.key === 'Escape') close(); else if (e.key === 'ArrowLeft') prev(); else if (e.key === 'ArrowRight') next(); };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { if (drawing) stopDraw(); else close(); }
+    else if (e.key === 'ArrowLeft') prev();
+    else if (e.key === 'ArrowRight') next();
+  };
 
   v.querySelector('.vclose').onclick = close;
-  v.onclick = (e) => { if (e.target === v) close(); };
-  v.querySelector('.vprev').onclick = (e) => { e.stopPropagation(); prev(); };
-  v.querySelector('.vnext').onclick = (e) => { e.stopPropagation(); next(); };
-  v.querySelector('.vcopy').onclick = async (e) => { e.stopPropagation(); await window.arra.copyPath(imgs[idx].path); const b = v.querySelector('.vcopy'); b.textContent = 'Скопировано ✓'; b.classList.add('ok'); };
+  v.querySelector('.vprev').onclick = prev;
+  v.querySelector('.vnext').onclick = next;
+  v.querySelector('.vstage').onclick = (e) => { if (e.target.classList.contains('vstage')) close(); };
+  // Колесо и горизонтальный свайп тачпада — тоже листание.
+  let wheelLock = 0;
+  v.querySelector('.vstage').onwheel = (e) => {
+    if (drawing) return;
+    const now = Date.now();
+    if (now - wheelLock < 220) return;
+    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (Math.abs(delta) < 12) return;
+    wheelLock = now;
+    if (delta > 0) next(); else prev();
+  };
   document.addEventListener('keydown', onKey);
-  if (imgs.length < 2) { v.querySelector('.vprev').style.display = 'none'; v.querySelector('.vnext').style.display = 'none'; }
-  update();
+  if (imgs.length < 2) { v.querySelector('.vprev').hidden = true; v.querySelector('.vnext').hidden = true; }
+
+  /* ---- рисование поверх фото ---- */
+  let drawing = false;
+  let strokes = [];
+  let brush = { color: '#FF3B30', width: 6 };
+  const ctx = canvas.getContext('2d');
+
+  function stopDraw() {
+    if (!drawing) return;
+    drawing = false;
+    strokes = [];
+    canvas.hidden = true;
+    v.querySelector('.vtools')?.remove();
+    v.classList.remove('drawing');
+  }
+
+  function repaint() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const stroke of strokes) {
+      ctx.strokeStyle = stroke.color;
+      ctx.lineWidth = stroke.width;
+      ctx.beginPath();
+      stroke.points.forEach((point, i) => (i ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y)));
+      ctx.stroke();
+    }
+  }
+
+  function startDraw() {
+    if (drawing) { stopDraw(); return; }
+    drawing = true;
+    v.classList.add('drawing');
+    const rect = img.getBoundingClientRect();
+    canvas.width = Math.round(rect.width);
+    canvas.height = Math.round(rect.height);
+    canvas.hidden = false;
+    strokes = [];
+    repaint();
+
+    const tools = document.createElement('div');
+    tools.className = 'vtools';
+    tools.innerHTML = `
+      <span class="vcolors">${['#FF3B30', '#FFD60A', '#30D158', '#0A84FF', '#FFFFFF', '#111111'].map((color) => `<button data-color="${color}" style="background:${color}" class="${color === brush.color ? 'on' : ''}"></button>`).join('')}</span>
+      <span class="vsizes">${[3, 6, 12, 22].map((size) => `<button data-size="${size}" class="${size === brush.width ? 'on' : ''}"><i style="width:${Math.min(size, 16)}px;height:${Math.min(size, 16)}px"></i></button>`).join('')}</span>
+      <button class="vact" data-tool="undo">Отменить</button>
+      <button class="vact" data-tool="clear">Стереть всё</button>
+      <button class="vact primary" data-tool="save">Сохранить и скопировать</button>
+      <button class="vact" data-tool="exit">Выйти из рисования</button>`;
+    v.appendChild(tools);
+    tools.querySelectorAll('[data-color]').forEach((button) => button.onclick = () => {
+      brush.color = button.dataset.color;
+      tools.querySelectorAll('[data-color]').forEach((x) => x.classList.toggle('on', x === button));
+    });
+    tools.querySelectorAll('[data-size]').forEach((button) => button.onclick = () => {
+      brush.width = Number(button.dataset.size);
+      tools.querySelectorAll('[data-size]').forEach((x) => x.classList.toggle('on', x === button));
+    });
+    tools.querySelector('[data-tool="undo"]').onclick = () => { strokes.pop(); repaint(); };
+    tools.querySelector('[data-tool="clear"]').onclick = () => { strokes = []; repaint(); };
+    tools.querySelector('[data-tool="exit"]').onclick = () => stopDraw();
+    tools.querySelector('[data-tool="save"]').onclick = async () => {
+      const merged = document.createElement('canvas');
+      merged.width = img.naturalWidth || canvas.width;
+      merged.height = img.naturalHeight || canvas.height;
+      const mctx = merged.getContext('2d');
+      mctx.drawImage(img, 0, 0, merged.width, merged.height);
+      mctx.drawImage(canvas, 0, 0, merged.width, merged.height);
+      const result = await window.arra.saveImage(imgs[idx].path, merged.toDataURL('image/png'));
+      if (result?.ok) { flash('Сохранено рядом с фото и скопировано ✓'); stopDraw(); }
+      else flash(result?.error || 'Не сохранилось', true);
+    };
+  }
+
+  const point = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  };
+  canvas.onpointerdown = (event) => {
+    if (!drawing) return;
+    canvas.setPointerCapture(event.pointerId);
+    strokes.push({ color: brush.color, width: brush.width, points: [point(event)] });
+    repaint();
+  };
+  canvas.onpointermove = (event) => {
+    if (!drawing || !canvas.hasPointerCapture?.(event.pointerId)) return;
+    strokes[strokes.length - 1]?.points.push(point(event));
+    repaint();
+  };
+  canvas.onpointerup = (event) => { try { canvas.releasePointerCapture(event.pointerId); } catch {} };
+
+  v.querySelectorAll('[data-act]').forEach((button) => button.onclick = async () => {
+    const file = imgs[idx];
+    if (button.dataset.act === 'copy-image') {
+      const result = await window.arra.copyImage(file.path);
+      flash(result?.ok ? 'Картинка в буфере ✓' : (result?.error || 'Не получилось'), !result?.ok);
+    } else if (button.dataset.act === 'copy-path') {
+      await window.arra.copyPath(file.path);
+      flash('Путь скопирован ✓');
+    } else if (button.dataset.act === 'draw') startDraw();
+    else if (button.dataset.act === 'open') window.arra.openFile(file.path);
+  });
+
+  void update();
 }
 
 // ================= ЗАМЕТКИ =================
@@ -1695,9 +1990,10 @@ function drawNoteList(query) {
   box.querySelectorAll('[data-note]').forEach((b) => b.onclick = () => selectPcNote(b.dataset.note));
 }
 
-async function selectPcNote(id) {
+/** Переключение мгновенное: прошлую заметку досохраняем в фоне. */
+function selectPcNote(id) {
   if (String(id) === String(pcNoteId)) return;
-  await savePcNote();
+  void savePcNote();
   pcNoteId = id;
   document.querySelectorAll('[data-note]').forEach((b) => b.classList.toggle('active', String(b.dataset.note) === String(id)));
   drawNotePaper(true);
@@ -1708,6 +2004,22 @@ function drawNotePaper(animate = false) {
   if (!paper) return;
   const note = pcNotes.find((n) => String(n.id) === String(pcNoteId));
   if (!note) { paper.innerHTML = '<div class="empty">Выбери заметку слева</div>'; return; }
+
+  // Разметку не пересоздаём — меняем только содержимое полей. Иначе каждое
+  // переключение стоит полного пересбора DOM и заметно «тормозит».
+  const title = document.getElementById('notetitle');
+  const body = document.getElementById('notebody');
+  if (title && body && paper.dataset.ready === '1') {
+    title.value = note.title || '';
+    body.value = note.body || '';
+    body.scrollTop = 0;
+    const label = document.getElementById('notestate');
+    if (label) label.textContent = 'Сохранено';
+    if (animate) { paper.classList.remove('swap'); void paper.offsetWidth; paper.classList.add('swap'); }
+    wireNotePaper(note);
+    return;
+  }
+
   paper.classList.remove('swap');
   paper.innerHTML = `
     <div class="note-head">
@@ -1719,8 +2031,12 @@ function drawNotePaper(animate = false) {
     </div>
     <input class="note-title" id="notetitle" placeholder="Заголовок" value="${esc(note.title || '')}" />
     <textarea class="note-body" id="notebody" placeholder="Текст заметки…">${esc(note.body || '')}</textarea>`;
+  paper.dataset.ready = '1';
   if (animate) { void paper.offsetWidth; paper.classList.add('swap'); }
+  wireNotePaper(note);
+}
 
+function wireNotePaper(note) {
   const markDirty = () => {
     const label = document.getElementById('notestate');
     if (label) label.textContent = 'Сохраняю…';
@@ -1766,7 +2082,16 @@ async function savePcNote() {
     Object.assign(note, saved.note || { title, body });
     const label = document.getElementById('notestate');
     if (label) label.textContent = 'Сохранено только что';
-    drawNoteList(document.getElementById('notesearch')?.value || '');
+    // Список целиком не перерисовываем: правим только строку этой заметки,
+    // иначе каждый автосейв во время набора дёргает всю боковую панель.
+    const item = document.querySelector(`[data-note="${note.id}"]`);
+    if (item) {
+      const text = String(body || '').replace(/[#>*\-[\]`]/g, ' ').replace(/\s+/g, ' ').trim();
+      const titleEl = item.querySelector('b');
+      const previewEl = item.querySelector('small');
+      if (titleEl) titleEl.textContent = title || text.slice(0, 30) || 'Без названия';
+      if (previewEl) previewEl.textContent = text.slice(0, 68) || 'пустая заметка';
+    }
   } catch (e) {
     const label = document.getElementById('notestate');
     if (label) label.textContent = 'Не сохранилось: ' + e.message;
@@ -1799,10 +2124,8 @@ async function renderTerminal() {
       </div>
       <div class="ws-right">
         <div class="term-launchbar">
-          <span class="term-launch-label">Запустить</span>
-          <button class="term-preset codex" id="start-codex" title="Запустить Codex с полным доступом"><img src="assets/merchants/openai.png" alt="">Codex<span>полный доступ</span></button>
-          <button class="term-preset claude" id="start-claude" title="Запустить Claude Code без запросов разрешений"><img src="assets/merchants/anthropic.png" alt="">Claude<span>полный доступ</span></button>
-          <span class="term-preset-note">в текущей папке</span>
+          <button class="term-preset codex" id="start-codex" title="Запустить Codex в текущей папке (полный доступ)"><img src="assets/merchants/openai.png" alt="">Codex</button>
+          <button class="term-preset claude" id="start-claude" title="Запустить Claude в текущей папке (без запросов разрешений)"><img src="assets/merchants/anthropic.png" alt="">Claude</button>
         </div>
         <div class="termtabs" id="termtabs"></div>
         <div id="xterm-host" class="xterm-host"></div>
@@ -1839,6 +2162,10 @@ const sync = {
   lastDone: localStorage.getItem('arra-sync-last') || '',
   speed: 0, eta: null, lastProgressAt: 0, current: null,
   liveProjects: {}, recentFiles: [], blockedFiles: [], verify: null,
+  // Полный список перенесённых файлов и итог последней передачи — из них
+  // строится проводник «что именно уехало» под кнопками.
+  transferLog: [], lastResult: null,
+  codexSessions: [], codexOpen: new Set(), codexLoadedAt: 0, codexShowAll: false,
   step: 'idle', failedStep: 'scan', stepError: '', errors: [],
   panelTab: localStorage.getItem('noda-sync-panel') || 'tree',
   blockers: [], blockersChecked: false, blockersBusy: false, closeResult: null,
@@ -1912,7 +2239,7 @@ function wireSyncEvents() {
         sync.scanLocalScope = o.scope || '';
       }
       sync.phase = o.msg || `Сканирую ${o.side === 'remote' ? 'сервер' : 'этот компьютер'}…`;
-      sync.detail = 'Считаю файлы с обеих сторон. Общий объём станет известен после сравнения.';
+      sync.detail = 'Считаю файлы с обеих сторон';
       updateSyncStage();
     }
     else if (o.type === 'status') {
@@ -1923,19 +2250,12 @@ function wireSyncEvents() {
       sync.busy = false; sync.info = o; sync.projects = o.projects || [];
       sync.lastCheckSeconds = Number(o.elapsed) || Math.round(syncElapsed());
       if (!sync.lastRequest) sync.step = 'idle';
-      if (o.upload && o.download) {
-        sync.phase = 'Изменения есть с обеих сторон';
-        sync.detail = `Единственной актуальной версии пока нет: здесь новее ${fileCount(o.upload)}, на сервере — ${fileCount(o.download)}.`;
-      } else if (o.upload) {
-        sync.phase = 'Актуальнее этот компьютер';
-        sync.detail = `${fileCount(o.upload)} изменены здесь и ещё не сохранены на сервере.`;
-      } else if (o.download) {
-        sync.phase = 'Актуальнее сервер';
-        sync.detail = `${fileCount(o.download)} нужно получить на этот компьютер.`;
-      } else {
-        sync.phase = 'Версии совпадают';
-        sync.detail = 'На этом компьютере и на сервере одинаковые рабочие файлы.';
-      }
+      // Короткие формулировки без пояснений: числа видны в кнопках.
+      sync.detail = '';
+      if (o.upload && o.download) sync.phase = 'Менялось с обеих сторон';
+      else if (o.upload) sync.phase = 'Актуальнее этот компьютер';
+      else if (o.download) sync.phase = 'Актуальнее сервер';
+      else sync.phase = 'Версии совпадают';
       sync.pct = 0; sync.indeterminate = false; renderSyncViewBody(); updateSyncStage();
     } else if (o.type === 'plan') {
       syncLog(`${o.direction === 'push' ? 'Отправка на сервер' : 'Получение с сервера'}: ${o.files || 0} файлов, ${fmtB(o.bytes || 0)}`);
@@ -1944,6 +2264,7 @@ function wireSyncEvents() {
       sync.detail = `${o.files || 0} файлов · ${fmtB(o.bytes || 0)}${o.only ? ' · ' + o.only : ''}`;
       sync.indeterminate = !(o.files > 0);
       sync.speed = 0; sync.eta = null; sync.current = null; sync.recentFiles = []; sync.blockedFiles = []; sync.verify = null;
+      sync.transferLog = []; sync.lastResult = null;
       sync.liveProjects = Object.fromEntries((o.projects || []).map((p) => [p.name, { ...p, done: 0, doneBytes: 0 }]));
       updateSyncStage(); updateSyncLive();
     } else if (o.type === 'storage') {
@@ -1982,6 +2303,10 @@ function wireSyncEvents() {
       if (o.state === 'done' || o.state === 'failed') {
         sync.recentFiles.unshift({ file: o.file, project: o.project, direction: o.direction, ok: o.state === 'done', bytes: o.fileTotal || 0 });
         sync.recentFiles = sync.recentFiles.slice(0, 8);
+        if (sync.transferLog.length < 900) sync.transferLog.push({
+          file: o.file || '', project: o.project || projectKey || 'Прочее', projectKey: projectKey || '',
+          scope: o.scope || '', direction: o.direction || '', bytes: o.fileTotal || 0, ok: o.state === 'done',
+        });
       }
       setSyncProgress(pct, sync.detail); updateSyncStage(); updateSyncLive();
     } else if (o.type === 'retry') {
@@ -2025,10 +2350,16 @@ function wireSyncEvents() {
       sync.step = o.errors ? 'error' : 'done'; sync.stepError = o.errors ? `${o.errors} ошибок` : '';
       sync.busy = false; sync.current = null; sync.speed = 0; sync.eta = null;
       sync.verify = null;
+      sync.lastResult = {
+        direction: o.direction || 'push', at: Date.now(),
+        transferred: Number(o.transferred || 0), bytes: Number(o.bytes || 0),
+        elapsed: Number(o.elapsed || syncElapsed()), errors: Number(o.errors || 0),
+        verified: o.verified ?? o.transferred ?? 0, skipped: Number(o.skipped || 0),
+        files: sync.transferLog.slice(),
+      };
       syncLog(`${verb}: ${o.transferred || 0} файлов, ${fmtB(o.bytes || 0)}, ошибок ${o.errors || 0}`);
       setSyncProgress(100, sync.detail); updateSyncStage(); updateSyncLive();
       renderSyncViewBody();
-      showSyncSummary(o);
       toast('Передача', `${verb}: ${fileCount(o.transferred)}${o.errors ? `, ошибок ${o.errors}` : ''}`, o.errors ? 'warn' : 'ok');
       setTimeout(() => window.arra.syncRun('status', null, null), 700);
     } else if (o.type === 'error') {
@@ -2093,12 +2424,10 @@ function updateSyncStage() {
   const detail = document.getElementById('sync-detail'); if (detail) detail.textContent = sync.detail || '';
   const icon = document.getElementById('sync-stage-icon'); if (icon) icon.classList.toggle('busy', sync.busy);
   const track = document.getElementById('sync-track'); if (track) track.classList.toggle('indeterminate', !!sync.indeterminate);
+  // Дата версии на сервере уже стоит в центре рельса — здесь показываем только
+  // время идущей передачи, чтобы не дублировать.
   const tm = document.getElementById('sync-time');
-  if (tm) tm.textContent = sync.busy
-    ? fmtDuration(syncElapsed())
-    : (sync.lastDone
-      ? `последняя: ${new Date(sync.lastDone).toLocaleString('ru-RU', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}`
-      : (sync.info ? `проверено за ${fmtDuration(sync.lastCheckSeconds)}` : 'ещё не запускалась'));
+  if (tm) { tm.textContent = sync.busy ? fmtDuration(syncElapsed()) : ''; tm.hidden = !sync.busy; }
   const cancel = document.getElementById('sync-cancel'); if (cancel) cancel.hidden = !sync.busy;
   const push = document.getElementById('sync-push-all'); if (push) push.disabled = sync.busy;
   const pull = document.getElementById('sync-pull-all'); if (pull) pull.disabled = sync.busy;
@@ -2165,7 +2494,7 @@ function startSyncStatus() {
   // Явно проговариваем, что это только сверка: раньше при входе в раздел
   // молча стартовал «какой-то процесс» и было непонятно, что он делает.
   sync.phase = 'Сверяю с сервером';
-  sync.detail = 'Смотрю, какие файлы изменились здесь и на сервере. Ничего не передаётся.';
+  sync.detail = 'Ничего не передаётся, только сравниваю';
   sync.pct = 0; sync.indeterminate = true;
   sync.lastProgressAt = Date.now(); sync.current = null; sync.speed = 0; sync.eta = null;
   sync.scanLocalFiles = 0; sync.scanLocalDirs = 0; sync.scanRemoteFiles = 0; sync.scanRemoteDirs = 0;
@@ -2441,47 +2770,6 @@ function fmtSyncDate(value) {
   return d.toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
-function showSyncSummary(result) {
-  document.getElementById('sync-summary-modal')?.remove();
-  const modal = document.createElement('div');
-  modal.id = 'sync-summary-modal';
-  modal.className = 'editmodal';
-  const projects = Object.values(sync.liveProjects)
-    .filter((project) => project.files || project.done || project.bytes)
-    .sort((a, b) => String(a.label || a.name).localeCompare(String(b.label || b.name), 'ru'));
-  const direction = result.direction === 'push' ? 'На сервер' : 'На это устройство';
-  const rows = projects.length ? projects.map((project) => {
-    const done = Number(project.done || 0);
-    const files = Number(project.files || 0);
-    const complete = files > 0 && done >= files;
-    return `<div class="sync-summary-project">
-      <i class="${complete ? 'ok' : 'warn'}">${complete ? '✓' : '!'}</i>
-      <span><b>${esc(project.label || project.name)}</b><small>${fileCount(done)} из ${fileCount(files)}</small></span>
-      <strong>${fmtB(project.doneBytes || 0)}</strong>
-    </div>`;
-  }).join('') : '<div class="sync-summary-empty">Изменений в проектах не было</div>';
-  const errors = sync.errors.length
-    ? `<div class="sync-summary-errors"><b>Ошибки · ${sync.errors.length}</b>${sync.errors.slice(-8).map((item) => `<span><strong>${esc(item.file)}</strong>${esc(item.error)}</span>`).join('')}</div>`
-    : '<div class="sync-summary-clean">✓ Ошибок нет</div>';
-  modal.innerHTML = `<div class="sync-finish-card">
-    <div class="sync-finish-head">
-      <i class="${result.errors ? 'warn' : 'ok'}">${result.errors ? '!' : '✓'}</i>
-      <div><span>${esc(direction)}</span><h3>${result.errors ? 'Передача завершена с ошибками' : 'Передача завершена'}</h3><p>${fileCount(result.transferred || 0)} · ${fmtB(result.bytes || 0)} · ${fmtDuration(result.elapsed || syncElapsed())}</p></div>
-    </div>
-    <div class="sync-summary-projects">${rows}</div>
-    ${errors}
-    <div class="row"><button class="btn ghost grow" id="sync-summary-logs">Журнал ошибок</button><button class="btn grow" id="sync-summary-close">Готово</button></div>
-  </div>`;
-  document.body.appendChild(modal);
-  const close = () => modal.remove();
-  modal.onclick = (event) => { if (event.target === modal) close(); };
-  document.getElementById('sync-summary-close').onclick = close;
-  document.getElementById('sync-summary-logs').onclick = async () => {
-    const opened = await window.arra.openLogs();
-    if (!opened?.ok) toast('Журнал', opened?.error || 'Не удалось открыть', 'warn');
-  };
-}
-
 function renderSyncJourney() {
   const box = document.getElementById('sync-journey');
   if (!box) return;
@@ -2499,7 +2787,8 @@ function renderSyncJourney() {
     return `<div class="sync-journey-step ${stateName}"><i>${stateName === 'done' ? '✓' : index + 1}</i><b>${labels[index]}</b><span>${stateLabel}</span></div>`;
   }).join('');
   const title = document.getElementById('sync-journey-title'); if (title) title.textContent = sync.phase || 'Готово';
-  const detail = document.getElementById('sync-journey-detail'); if (detail) detail.textContent = sync.detail || '';
+  const detail = document.getElementById('sync-journey-detail');
+  if (detail) { detail.textContent = sync.detail || ''; detail.hidden = !sync.detail; }
   const errors = document.getElementById('sync-errors-panel');
   if (errors) {
     errors.hidden = !sync.errors.length;
@@ -2534,7 +2823,6 @@ async function renderSyncV2() {
   app.innerHTML = `
     <div class="page-head">
       <h1>Передача</h1>
-      <div class="sub" id="sync-last"></div>
       <div class="grow"></div>
       <button class="btn ghost sm" id="sync-check">Проверить</button>
     </div>
@@ -2557,9 +2845,14 @@ async function renderSyncV2() {
       </div>
 
       <div id="sync-actions" class="sync-transfer-list"></div>
-      <div class="sync-codex-policy">
-        <b>Codex · активные диалоги переносятся</b>
-        <span>Активные сессии, память, настройки и навыки синхронизируются. Архивные диалоги остаются только на устройстве.</span>
+
+      <div class="sync-sessions" id="sync-sessions">
+        <div class="sync-sessions-head">
+          <b>Диалоги</b>
+          <span id="sync-sessions-note"></span>
+          <button class="sync-sessions-refresh" id="sync-sessions-refresh" title="Обновить список">↻</button>
+        </div>
+        <div class="sync-sessions-list" id="sync-sessions-list"><div class="sync-sessions-empty">Читаю список диалогов…</div></div>
       </div>
 
       <div id="sync-blocker-panel" class="sync-blocker-panel" hidden></div>
@@ -2570,10 +2863,15 @@ async function renderSyncV2() {
         <button id="sync-open-logs">Открыть журнал</button>
       </div>
 
+      <div id="sync-outcome" class="sync-outcome" hidden></div>
       <div class="tree" id="sync-tree"></div>
       <div id="sync-journey" hidden></div>
     </div>`;
 
+  // Разметку раздела только что пересобрали: кэш дерева относится к прошлому
+  // DOM, иначе проводник остаётся пустым при повторном входе.
+  syncTreeMark = '';
+  document.getElementById('sync-sessions-refresh').onclick = () => loadCodexSessions(true);
   document.getElementById('sync-open-logs').onclick = async () => {
     const result = await window.arra.openLogs();
     if (!result?.ok) { reportError('logs.open', new Error(result?.error || 'Не удалось открыть логи')); toast('Логи ошибок', result?.error || 'Не удалось открыть папку', 'warn'); }
@@ -2585,7 +2883,77 @@ async function renderSyncV2() {
   document.getElementById('sync-check').onclick = () => { toast('Передача', 'Сверяю с сервером…', 'info'); startSyncStatus(); };
 
   renderSyncV2Body(); renderBlockerPanel(); updateSyncStage(); updateSyncLive();
+  void loadCodexSessions(Date.now() - sync.codexLoadedAt > 120000);
   if (!sync.info && !sync.busy) setTimeout(startSyncStatus, 120);
+}
+
+/* ---- Активные диалоги Codex и Claude ----
+   Главное в переносе — не абстрактные «файлы», а живые диалоги. Показываем их
+   списком: по каждому видно, что именно уехало в последнюю передачу. */
+async function loadCodexSessions(force = false) {
+  if (!force && sync.codexSessions.length) { renderCodexSessions(); return; }
+  try {
+    const rows = await window.arra.codexSessions();
+    sync.codexSessions = Array.isArray(rows) ? rows : [];
+    sync.codexLoadedAt = Date.now();
+  } catch (error) { reportError('sync.codexSessions', error); sync.codexSessions = []; }
+  renderCodexSessions();
+}
+
+/** Файлы последней передачи, относящиеся к конкретному диалогу. */
+function sessionTransferFiles(session) {
+  const id = String(session.id || '').toLowerCase();
+  if (!id) return [];
+  return (sync.lastResult?.files || []).filter((row) => String(row.file || '').toLowerCase().includes(id));
+}
+
+function renderCodexSessions() {
+  const box = document.getElementById('sync-sessions-list');
+  if (!box) return;
+  const rows = sync.codexSessions;
+  const note = document.getElementById('sync-sessions-note');
+  if (note) note.textContent = rows.length ? `${rows.length}` : '';
+  if (!rows.length) { box.innerHTML = '<div class="sync-sessions-empty">Активных диалогов не нашлось</div>'; return; }
+
+  // Строка диалога: слева название, справа объём. Раскрывается по клику.
+  const visible = sync.codexShowAll ? rows : rows.slice(0, 6);
+  box.innerHTML = visible.map((session) => {
+    const open = sync.codexOpen.has(session.id);
+    const moved = sessionTransferFiles(session);
+    const label = session.title && session.title !== 'Без названия'
+      ? session.title
+      : (session.project ? `Диалог в ${session.project}` : 'Диалог без названия');
+    return `
+      <div class="sync-session${open ? ' open' : ''}">
+        <button class="sync-session-row" data-session="${esc(session.id)}">
+          <img class="sync-session-logo" src="assets/merchants/${session.kind === 'claude' ? 'anthropic' : 'openai'}.png" alt="">
+          <span class="sync-session-main"><b>${esc(label)}</b></span>
+          ${moved.length ? `<span class="sync-session-moved">${moved[0].direction === 'pull' ? '↓' : '↑'} ${fmt(moved.length)}</span>` : ''}
+          <span class="sync-session-size">${fmtB(session.size || 0)}</span>
+          <span class="caret">›</span>
+        </button>
+        <div class="sync-session-body"><div>
+          <div class="sync-session-file meta"><span>${esc(session.kind === 'claude' ? 'Claude' : 'Codex')}${session.project ? ` · ${esc(session.project)}` : ''}</span><small>${esc(syncAgo(session.updated))}</small></div>
+          ${moved.length
+            ? moved.slice(0, 8).map((row) => `<div class="sync-session-file"><i>${row.direction === 'pull' ? '↓' : '↑'}</i><span>${esc(syncShortPath(row.file))}</span><small>${fmtB(row.bytes || 0)}</small></div>`).join('')
+              + (moved.length > 8 ? `<div class="sync-session-file more">…и ещё ${moved.length - 8}</div>` : '')
+            : ''}
+          ${session.cwd ? `<div class="sync-session-cwd">${esc(session.cwd.replace(/^\\\\\?\\/, ''))}</div>` : ''}
+        </div></div>
+      </div>`;
+  }).join('') + (rows.length > visible.length
+    ? `<button class="sync-sessions-more" id="sync-sessions-more">Показать все ${rows.length}</button>`
+    : (sync.codexShowAll && rows.length > 6 ? '<button class="sync-sessions-more" id="sync-sessions-less">Свернуть</button>' : ''));
+
+  box.querySelectorAll('[data-session]').forEach((button) => button.onclick = () => {
+    const id = button.dataset.session;
+    if (sync.codexOpen.has(id)) sync.codexOpen.delete(id); else sync.codexOpen.add(id);
+    button.closest('.sync-session').classList.toggle('open');
+  });
+  const more = document.getElementById('sync-sessions-more');
+  if (more) more.onclick = () => { sync.codexShowAll = true; renderCodexSessions(); };
+  const less = document.getElementById('sync-sessions-less');
+  if (less) less.onclick = () => { sync.codexShowAll = false; renderCodexSessions(); };
 }
 
 /** Строка в шапке: когда работа последний раз уезжала на сервер. */
@@ -2638,12 +3006,13 @@ function renderSyncV2Body() {
   // состояние — тем же языком, что в веб-версии
   // Кроме описания состояния даём прямую рекомендацию, что нажать: без неё
   // при изменениях с обеих сторон непонятно, с чего начинать.
+  // Одна короткая строка вместо абзаца пояснений: числа и так видны в кнопках.
   const state = upload && download
-    ? { kind: 'warn', mark: '⇄', title: 'Изменения есть с обеих сторон', text: `Здесь новее ${fileCount(upload)}, на сервере — ${fileCount(download)}.`, advice: 'Сначала «Отправить на сервер» — свои изменения не потеряются. Потом «Забрать с сервера».' }
-    : upload ? { kind: 'local', mark: '↑', title: 'Актуальнее этот компьютер', text: `${fileCount(upload)} изменены здесь и ещё не сохранены на сервере.`, advice: 'Нажми «Отправить на сервер».' }
-      : download ? { kind: 'server', mark: '↓', title: 'Актуальнее сервер', text: `${fileCount(download)} нужно получить на этот компьютер.`, advice: 'Нажми «Забрать с сервера».' }
-        : hasCheck ? { kind: 'ok', mark: '✓', title: 'Версии совпадают', text: 'На этом компьютере и на сервере одинаковые рабочие файлы.', advice: 'Ничего делать не нужно.' }
-          : { kind: '', mark: '?', title: 'Ещё не сверял', text: 'Нажми «Проверить» — сравню с сервером.', advice: '' };
+    ? { kind: 'warn', mark: '⇄', title: 'Менялось с обеих сторон' }
+    : upload ? { kind: 'local', mark: '↑', title: 'Актуальнее этот компьютер' }
+      : download ? { kind: 'server', mark: '↓', title: 'Актуальнее сервер' }
+        : hasCheck ? { kind: 'ok', mark: '✓', title: 'Версии совпадают' }
+          : { kind: '', mark: '?', title: 'Ещё не сверял' };
 
   const card = document.getElementById('sync-state');
   if (card && !sync.busy) {
@@ -2653,66 +3022,148 @@ function renderSyncV2Body() {
     const detail = document.getElementById('sync-journey-detail');
     if (glyph) glyph.textContent = state.mark;
     if (title) title.textContent = state.title;
-    if (detail) detail.textContent = state.text;
-    let advice = document.getElementById('sync-advice');
-    if (!advice && detail?.parentElement) {
-      advice = document.createElement('div');
-      advice.id = 'sync-advice';
-      advice.className = 'sync-advice';
-      detail.parentElement.appendChild(advice);
-    }
-    if (advice) { advice.textContent = state.advice || ''; advice.hidden = !state.advice; }
+    if (detail) { detail.textContent = ''; detail.hidden = true; }
+    document.getElementById('sync-advice')?.remove();
   }
 
+  // В центре рельса — дата версии, которая сейчас лежит на сервере. Это
+  // единственная дата, которую действительно нужно видеть.
   const server = i.serverState || {};
   const rail = document.getElementById('sync-version-rail');
   if (rail) {
     const localFresh = upload > 0;
     const serverFresh = download > 0;
     const split = localFresh && serverFresh;
-    const localStatus = !hasCheck ? 'Ещё не проверено' : split ? `Здесь новее ${fmt(upload)}` : localFresh ? 'Текущая версия' : serverFresh ? 'Нужно обновить' : 'Совпадает';
-    const serverStatus = !hasCheck ? 'Ещё не проверено' : split ? `На сервере новее ${fmt(download)}` : serverFresh ? 'Текущая версия' : localFresh ? 'Нужно обновить' : 'Совпадает';
-    const linkLabel = !hasCheck ? 'сверяю версии' : split ? 'обе стороны менялись' : localFresh ? 'сохранить на сервер' : serverFresh ? 'получить на компьютер' : 'одна версия';
+    const push = server.lastPush;
+    const pushWhen = push?.at
+      ? new Date(push.at).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).replace(' г.', '')
+      : '';
+    const pushWho = push?.at ? (push.role === 'laptop' ? 'Ноутбук' : (push.device || 'Компьютер')) : '';
     rail.innerHTML = `
-      <div class="sync-version-node ${localFresh ? 'fresh' : ''} ${serverFresh && !localFresh ? 'older' : ''} ${split ? 'split' : ''}">
+      <div class="sync-version-node ${localFresh ? 'fresh' : ''} ${serverFresh && !localFresh ? 'older' : ''}">
         <i>${syncDeviceGlyph(sync.autoRole === 'laptop' ? 'laptop' : 'pc')}</i>
         <span><b>${esc(sync.deviceName || 'Это устройство')}</b><small>${fmt(i.localFiles || 0)} файлов</small></span>
-        <em>${esc(localStatus)}</em>
       </div>
-      <div class="sync-version-link ${split ? 'split' : localFresh ? 'to-server' : serverFresh ? 'to-local' : 'equal'}"><i>${localFresh && !serverFresh ? '→' : serverFresh && !localFresh ? '←' : '↔'}</i><small>${esc(linkLabel)}</small></div>
-      <div class="sync-version-node server ${serverFresh ? 'fresh' : ''} ${localFresh && !serverFresh ? 'older' : ''} ${split ? 'split' : ''}">
+      <div class="sync-version-center ${split ? 'split' : localFresh ? 'to-server' : serverFresh ? 'to-local' : 'equal'}">
+        <span class="sync-version-when">${pushWhen ? esc(pushWhen) : (hasCheck ? 'на сервер ещё не отправляли' : 'сверяю версии')}</span>
+        ${pushWho ? '<small>версия на сервере</small>' : ''}
+      </div>
+      <div class="sync-version-node server ${serverFresh ? 'fresh' : ''} ${localFresh && !serverFresh ? 'older' : ''}">
         <i>${syncDeviceGlyph('server')}</i>
         <span><b>Сервер</b><small>${fmt(i.remoteFiles || 0)} файлов</small></span>
-        <em>${esc(serverStatus)}</em>
       </div>`;
   }
   const metrics = document.getElementById('sync-metrics');
-  if (metrics) {
-    const localDevice = server.devices?.[sync.deviceName] || {};
-    const localPull = localDevice.lastPull || server.lastPull;
-    metrics.innerHTML = hasCheck ? `
-      <div class="sync-history-item"><span>Версия на сервере</span>${syncEventLine(server.lastPush, 'Сервер ещё не сохраняли')}</div>
-      <div class="sync-history-divider" aria-hidden="true"></div>
-      <div class="sync-history-item"><span>Последнее получение на этом ПК</span>${syncEventLine(localPull, 'На этот ПК ещё не забирали')}</div>` : '';
-  }
+  if (metrics) metrics.innerHTML = '';
 
+  // Зелёным горит ровно одна кнопка — та, которую надо нажать сейчас. При
+  // изменениях с обеих сторон первой всегда идёт отправка: так свои правки
+  // не затираются серверными.
   const actions = document.getElementById('sync-actions');
+  const pushClass = upload ? 'recommended' : 'inactive';
+  const pullClass = download ? (upload ? 'ready' : 'recommended') : 'inactive';
   if (actions) actions.innerHTML = `
-    <button class="sync-transfer-choice ${upload ? 'recommended' : 'inactive'}" id="sync-push-all" ${hasCheck && upload ? '' : 'disabled'}>
+    <button class="sync-transfer-choice ${pushClass}" id="sync-push-all" ${hasCheck && upload ? '' : 'disabled'}>
       <i aria-hidden="true">↑</i>
-      <span class="sync-choice-copy"><b>Отправить на сервер</b><small>${upload ? 'Сохранить изменения этого компьютера' : 'Новых локальных изменений нет'}</small></span>
+      <span class="sync-choice-copy"><b>Отправить на сервер</b></span>
       ${hasCheck ? `<span class="sync-choice-total">${fileCount(upload)}<strong>${fmtB(uploadBytes)}</strong></span>` : ''}
     </button>
-    <button class="sync-transfer-choice secondary ${download && !upload ? 'recommended' : download ? '' : 'inactive'}" id="sync-pull-all" ${hasCheck && download ? '' : 'disabled'}>
+    <button class="sync-transfer-choice ${pullClass}" id="sync-pull-all" ${hasCheck && download ? '' : 'disabled'}>
       <i aria-hidden="true">↓</i>
-      <span class="sync-choice-copy"><b>Забрать с сервера</b><small>${download ? 'Получить изменения с сервера' : 'Новых серверных изменений нет'}</small></span>
+      <span class="sync-choice-copy"><b>Забрать с сервера</b></span>
       ${hasCheck ? `<span class="sync-choice-total">${fileCount(download)}<strong>${fmtB(downloadBytes)}</strong></span>` : ''}
     </button>`;
   document.getElementById('sync-push-all').onclick = () => runSyncOp('push', null);
   document.getElementById('sync-pull-all').onclick = () => runSyncOp('pull', null);
 
+  renderSyncOutcome();
+  renderCodexSessions();
   renderSyncTree();
   renderBlockerPanel(); updateSyncStage(); updateSyncLive(); updateSyncLastLine();
+}
+
+/* ---- Итог передачи: аккуратный проводник «что уехало» ----
+   Раньше итог показывался модалкой и пропадал вместе с ней. Теперь он живёт
+   под кнопками: разделы → проекты → файлы, каждый блок раскрывается. */
+const SYNC_SCOPE_TITLES = {
+  projects: 'Проекты',
+  claude: 'Память Claude',
+  'codex-memory': 'Память Codex',
+  'codex-sessions': 'Диалоги Codex',
+  'codex-config': 'Настройки Codex',
+  'codex-archive': 'Архив Codex',
+};
+const syncOutcomeOpen = new Set();
+
+function renderSyncOutcome() {
+  const box = document.getElementById('sync-outcome');
+  if (!box) return;
+  const result = sync.lastResult;
+  if (!result) { box.hidden = true; box.innerHTML = ''; return; }
+  box.hidden = false;
+
+  const pull = result.direction === 'pull';
+  const groups = new Map();
+  for (const row of result.files) {
+    const scope = row.scope || (row.projectKey || '').split('/')[0] || 'projects';
+    const scopeKey = SYNC_SCOPE_TITLES[scope] ? scope : 'projects';
+    if (!groups.has(scopeKey)) groups.set(scopeKey, new Map());
+    const projects = groups.get(scopeKey);
+    const label = row.project || 'Прочее';
+    const project = projects.get(label) || { label, files: 0, bytes: 0, rows: [] };
+    project.files += 1;
+    project.bytes += Number(row.bytes || 0);
+    if (project.rows.length < 40) project.rows.push(row);
+    projects.set(label, project);
+  }
+
+  const scopes = [...groups.entries()].map(([scope, projects]) => {
+    const list = [...projects.values()].sort((a, b) => b.files - a.files);
+    return {
+      scope,
+      title: SYNC_SCOPE_TITLES[scope] || 'Проекты',
+      files: list.reduce((n, p) => n + p.files, 0),
+      bytes: list.reduce((n, p) => n + p.bytes, 0),
+      list,
+    };
+  }).sort((a, b) => b.files - a.files);
+
+  box.innerHTML = `
+    <div class="sync-outcome-head">
+      <i class="${result.errors ? 'warn' : 'ok'}">${result.errors ? '!' : '✓'}</i>
+      <div>
+        <b>${pull ? 'Забрано с сервера' : 'Отправлено на сервер'}</b>
+        <small>${fileCount(result.transferred)} · ${fmtB(result.bytes)} · ${fmtDuration(result.elapsed)}${result.errors ? ` · ошибок ${result.errors}` : ''}${result.skipped ? ` · пропущено ${result.skipped}` : ''}</small>
+      </div>
+      <time>${new Date(result.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</time>
+    </div>
+    ${scopes.length ? `<div class="sync-outcome-scopes">${scopes.map((scope) => `
+      <div class="sync-outcome-scope">
+        <div class="sync-outcome-scope-head"><b>${esc(scope.title)}</b><span>${fileCount(scope.files)} · ${fmtB(scope.bytes)}</span></div>
+        <div class="sync-outcome-projects">${scope.list.map((project) => {
+          const id = `${scope.scope}|${project.label}`;
+          const open = syncOutcomeOpen.has(id);
+          return `
+            <div class="sync-outcome-project${open ? ' open' : ''}">
+              <button data-outcome="${esc(id)}">
+                <span class="sync-outcome-dir ${pull ? 'down' : 'up'}">${pull ? '↓' : '↑'}</span>
+                <span class="sync-outcome-name"><b>${esc(project.label)}</b><small>${fileCount(project.files)} · ${fmtB(project.bytes)}</small></span>
+                <span class="caret">›</span>
+              </button>
+              <div class="sync-outcome-files"><div>
+                ${project.rows.map((row) => `<div class="sync-outcome-file"><span>${esc(syncShortPath(row.file))}</span><small>${fmtB(row.bytes || 0)}</small></div>`).join('')}
+                ${project.files > project.rows.length ? `<div class="sync-outcome-file more">…и ещё ${project.files - project.rows.length}</div>` : ''}
+              </div></div>
+            </div>`;
+        }).join('')}</div>
+      </div>`).join('')}</div>`
+      : '<div class="sync-outcome-empty">Файлы не менялись — переносить было нечего</div>'}`;
+
+  box.querySelectorAll('[data-outcome]').forEach((button) => button.onclick = () => {
+    const id = button.dataset.outcome;
+    if (syncOutcomeOpen.has(id)) syncOutcomeOpen.delete(id); else syncOutcomeOpen.add(id);
+    button.closest('.sync-outcome-project').classList.toggle('open');
+  });
 }
 
 /* ---------- проводник: разделы → контейнеры → проекты → папки ---------- */
