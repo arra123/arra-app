@@ -1,15 +1,41 @@
 import { randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, rm, stat } from 'node:fs/promises';
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { extname, join } from 'node:path';
 import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { compactDeviceRows, normalizeDeviceRole } from '../devices.js';
+import { buildRtcConfig } from '../rtc.js';
 import { addAgent, isAgentOnline, isClientOnline, notifyDevice, notifyUser, onlineTokenIds, relayToAgents, relayToClients, removeAgent } from '../ws.js';
+
+// Совместимость с Noda <= 1.10.9: старый удалённый ПК отправлял кадры
+// только мобильным клиентам. Сервер запоминает, какой desktop-агент открыл
+// просмотр, и возвращает ему кадры без необходимости сначала обновлять ПК.
+const legacyScreenViewers = new Map();
+const screenRouteKey = (userId, targetId) => `${userId}:${targetId}`;
+const rememberScreenViewer = (userId, targetId, sourceId) => {
+  legacyScreenViewers.set(screenRouteKey(userId, targetId), { sourceId, expiresAt: Date.now() + 30 * 60_000 });
+};
+const legacyScreenViewer = (userId, targetId) => {
+  const key = screenRouteKey(userId, targetId);
+  const route = legacyScreenViewers.get(key);
+  if (!route || route.expiresAt < Date.now()) { legacyScreenViewers.delete(key); return null; }
+  route.expiresAt = Date.now() + 30 * 60_000;
+  return route.sourceId;
+};
 
 export default async function fileRoutes(app) {
   await mkdir(config.uploadDir, { recursive: true });
+
+  app.get('/pc/rtc-config', { preHandler: app.auth }, async (request) => {
+    return buildRtcConfig({
+      userId: request.user.id,
+      turnUrl: config.rtc.turnUrl,
+      turnSecret: config.rtc.turnSecret,
+      credentialTtlSeconds: config.rtc.credentialTtlSeconds,
+    });
+  });
 
   // Загрузка файла с телефона. targetTokenId (необязательно, в query) — на какой ПК отправить.
   app.post('/files', { preHandler: app.auth }, async (request, reply) => {
@@ -95,6 +121,61 @@ export default async function fileRoutes(app) {
     return reply.send(createReadStream(f.storage_path));
   });
 
+  /* Превью картинки.
+     Галерея на телефоне тянула полноразмерные фото по 3–5 МБ на каждую плитку
+     и прогружалась минутами. Здесь отдаём сжатую копию нужной ширины и держим
+     её на диске: второй заход уже мгновенный. */
+  app.get('/files/:id/thumb', async (request, reply) => {
+    let userId = null;
+    const qToken = request.query?.token;
+    if (qToken) {
+      const row = await one('SELECT user_id FROM pc_tokens WHERE token = $1', [qToken]);
+      if (row) userId = row.user_id;
+    } else {
+      try {
+        await request.jwtVerify();
+        userId = request.user.id;
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!userId) return reply.code(401).send({ error: 'Не авторизован' });
+
+    const f = await one('SELECT * FROM files WHERE id = $1 AND user_id = $2', [request.params.id, userId]);
+    if (!f) return reply.code(404).send({ error: 'Файл не найден' });
+    if (!String(f.mime || '').startsWith('image')) return reply.code(415).send({ error: 'Не картинка' });
+
+    const width = Math.min(1024, Math.max(120, Number(request.query?.w) || 420));
+    const dir = join(config.uploadDir, 'thumbs');
+    const cachePath = join(dir, `${f.id}-${width}.jpg`);
+
+    reply.header('Content-Type', 'image/jpeg');
+    reply.header('Cache-Control', 'private, max-age=604800');
+    try {
+      await stat(cachePath);
+      return reply.send(createReadStream(cachePath));
+    } catch {
+      /* превью ещё не делали */
+    }
+
+    try {
+      const sharp = (await import('sharp')).default;
+      await mkdir(dir, { recursive: true });
+      const buffer = await sharp(f.storage_path, { failOn: 'none' })
+        .rotate()
+        .resize({ width, withoutEnlargement: true })
+        .jpeg({ quality: 78, mozjpeg: true })
+        .toBuffer();
+      await writeFile(cachePath, buffer);
+      return reply.send(buffer);
+    } catch (error) {
+      request.log.warn({ err: error, file: f.id }, 'thumb failed');
+      // HEIC без нужного кодека и битые файлы: отдаём оригинал, чтобы плитка не пустовала
+      reply.header('Content-Type', f.mime || 'application/octet-stream');
+      return reply.send(createReadStream(f.storage_path));
+    }
+  });
+
   // Агент помечает файл доставленным
   app.post('/files/:id/delivered', async (request, reply) => {
     const token = request.query?.token || request.body?.token;
@@ -155,6 +236,16 @@ export default async function fileRoutes(app) {
         [request.user.id, token, name, deviceKey, role, hostname, platform],
       );
     }
+    // После перехода на постоянный аппаратный ключ убираем старые записи той
+    // же физической роли без ключа. Иначе прежние переустановки снова
+    // появляются в телефоне отдельными «ПК» или «Ноутбук».
+    if (deviceKey && role) {
+      await query(
+        `DELETE FROM pc_tokens
+         WHERE user_id = $1 AND id <> $2 AND device_key IS NULL AND role = $3`,
+        [request.user.id, rec.id, role],
+      );
+    }
     return { pcToken: rec };
   });
 
@@ -213,10 +304,16 @@ export default async function fileRoutes(app) {
         // помечаем, с какого устройства пришло, чтобы телефон мог сопоставить
         msg.deviceId = tokenId;
         relayToClients(userId, msg);
+        if (['screens', 'screen_frame', 'screen_health', 'pc_offline'].includes(msg.type)) {
+          const viewerId = legacyScreenViewer(userId, tokenId);
+          if (viewerId) notifyDevice(userId, viewerId, { ...msg, to: 'pc', sourceDeviceId: tokenId, legacyRoute: true });
+        }
       } else if (msg && msg.to === 'agent') {
         // Noda на ноутбуке может запустить перенос на домашнем ПК и получать
         // ход операции обратно через тот же защищённый канал.
         const targetId = msg.deviceId || null;
+        if (targetId && msg.type === 'screen_start') rememberScreenViewer(userId, targetId, tokenId);
+        if (targetId && msg.type === 'screen_stop') legacyScreenViewers.delete(screenRouteKey(userId, targetId));
         const event = { ...msg, to: 'pc', sourceDeviceId: tokenId };
         delete event.deviceId;
         const delivered = relayToAgents(userId, event, targetId);

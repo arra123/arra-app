@@ -61,6 +61,9 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
   const [pdf, setPdf] = useState<FileRec | null>(null);
   const { width: screenW } = useWindowDimensions();
   const col = (screenW - Spacing.three * 2 - Spacing.two * 2) / 3;
+  // По умолчанию два ряда: полная сетка из сотни плиток грузилась долго
+  // и превращала экран в бесконечную ленту.
+  const [allShown, setAllShown] = useState(false);
 
   useEffect(() => { getToken().then(setTok); }, []);
 
@@ -305,7 +308,7 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
           <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>Пока пусто</ThemedText>
         ) : (
           <View style={styles.grid}>
-            {files.map((f) => {
+            {(allShown ? files : files.slice(0, 6)).map((f) => {
               const isImg = (f.mime || '').startsWith('image');
               const delivered = f.status === 'delivered';
               return (
@@ -324,10 +327,14 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
                   }}
                   style={[styles.gridItem, { width: col, height: col, borderColor: theme.separator }]}>
                   {isImg && token ? (
+                    /* Плитка тянет превью с сервера, а не исходные 3–5 МБ:
+                       раньше сетка прогружалась минутами. */
                     <Image
-                      source={{ uri: `${API_URL}/files/${f.id}/download`, headers: { Authorization: `Bearer ${token}` } }}
+                      source={{ uri: `${API_URL}/files/${f.id}/thumb?w=420`, headers: { Authorization: `Bearer ${token}` } }}
                       style={styles.gridImg}
                       contentFit="cover"
+                      cachePolicy="memory-disk"
+                      transition={120}
                     />
                   ) : (
                     <View style={styles.gridDoc}>
@@ -344,6 +351,15 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
               );
             })}
           </View>
+        )}
+        {!allShown && files.length > 6 && (
+          <AppleButton
+            label={`Показать все · ${files.length}`}
+            onPress={() => setAllShown(true)}
+            variant="glass"
+            size="small"
+            style={styles.showAll}
+          />
         )}
       </ScrollView>
 
@@ -403,6 +419,7 @@ const styles = StyleSheet.create({
   notice: { alignSelf: 'center', paddingHorizontal: Spacing.three, borderRadius: Radius.md },
   empty: { textAlign: 'center', marginTop: Spacing.three },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
+  showAll: { alignSelf: 'center', marginTop: Spacing.three },
   gridItem: { borderRadius: Radius.md, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, backgroundColor: 'rgba(120,120,128,0.12)' },
   gridImg: { width: '100%', height: '100%' },
   gridDoc: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4 },

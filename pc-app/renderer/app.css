@@ -1595,6 +1595,14 @@ body[data-theme="dark"] .fin-row:hover { background: rgba(255, 255, 255, .05); }
   100% { transform: scale(1); }
 }
 
+/* Разделение: живые долги сверху, закрытые ниже и приглушённо */
+.fin-section-head {
+  padding: 10px 4px 2px; font-size: 15px; font-weight: 650; letter-spacing: -.015em;
+}
+.fin-section-head.muted { color: var(--muted); font-weight: 600; }
+.fin-closed { opacity: .62; transition: opacity .18s var(--ease); }
+.fin-closed:hover { opacity: .85; }
+
 /* Периоды в финансах: по умолчанию «Всё», фильтр — по желанию */
 .fin-spans { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin: -4px 0 2px; }
 .fin-span {
@@ -1756,14 +1764,19 @@ body[data-theme="dark"] .shot { background: rgba(255, 255, 255, .07); }
 .shot-broken { display: grid; gap: 3px; padding: 10px; text-align: center; }
 .shot-broken b { font-size: 11.5px; font-weight: 600; color: var(--text-2); }
 .shot-broken small { font-size: 10.5px; color: var(--muted); }
-.shot-acts { display: flex; gap: 6px; margin-top: 7px; }
+.shot-acts { display: flex; gap: 6px; margin-top: 8px; }
 .shot-act {
-  flex: 1; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--hair); border-radius: 8px;
-  background: rgba(120, 120, 128, .08); color: var(--text-2); font: 600 11px/1 inherit; cursor: pointer;
+  flex: 1; min-width: 0; height: 30px; display: grid; place-items: center; padding: 0;
+  border: 1px solid var(--hair); border-radius: 9px;
+  background: rgba(120, 120, 128, .08); color: var(--text-2); cursor: pointer;
   transition: background .14s, color .14s, border-color .14s;
 }
+.shot-act svg {
+  width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+}
 .shot-act:hover { background: var(--tint); border-color: var(--tint); color: #fff; }
-.shot-act.icon { flex: none; width: 28px; padding: 0; }
+.shot-act:active { transform: scale(.94); }
 .files-more { margin: 16px auto 0; display: block; }
 
 /* ---------- Просмотр фото: слои не перекрывают друг друга ---------- */

@@ -991,12 +991,19 @@ function finDraw() {
   const oldest = unpaid.length ? new Date(Math.min(...unpaid.map((d) => finDate(d)))) : null;
   const hidden = sorted.length - allRows.length;
 
-  const days = new Map();
-  for (const d of allRows) {
-    const key = finStartOfDay(finDate(d)).getTime();
-    if (!days.has(key)) days.set(key, []);
-    days.get(key).push(d);
-  }
+  // Сверху то, что ждёт возврата, ниже — закрытые записи. Иначе единственный
+  // живой долг тонет в сотне уже возвращённых.
+  const groupByDay = (list) => {
+    const map = new Map();
+    for (const d of list) {
+      const key = finStartOfDay(finDate(d)).getTime();
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(d);
+    }
+    return map;
+  };
+  const days = groupByDay(unpaid);
+  const closedDays = groupByDay(returned);
 
   app.innerHTML = `
     <div class="page-head">
@@ -1027,9 +1034,11 @@ function finDraw() {
     </div>
 
     ${people ? finPeopleList(unpaid) : `
-      ${days.size ? [...days.entries()].map(([key, rows]) => finDayGroup(key, rows)).join('')
-        : '<div class="empty">Записей пока нет<br><small>Добавь первый ожидаемый возврат</small></div>'}
-      ${returned.length ? `<div class="fin-note">${span === 'all' ? 'За всё время вернули' : 'За период вернули'} ${fmt(finSum(returned))} ₽</div>` : ''}`}
+      ${days.size ? `<div class="fin-section-head">Ждут возврата · ${fmt(total)} ₽</div>
+        ${[...days.entries()].map(([key, rows]) => finDayGroup(key, rows)).join('')}` : ''}
+      ${closedDays.size ? `<div class="fin-section-head muted">Уже вернули · ${fmt(finSum(returned))} ₽${span === 'all' ? '' : ' за период'}</div>
+        <div class="fin-closed">${[...closedDays.entries()].map(([key, rows]) => finDayGroup(key, rows)).join('')}</div>` : ''}
+      ${!days.size && !closedDays.size ? '<div class="empty">Записей пока нет<br><small>Добавь первый ожидаемый возврат</small></div>' : ''}`}
   `;
 
   document.getElementById('fin-add').onclick = () => openDebtModal(null);
@@ -1591,6 +1600,19 @@ let filesShown = FILES_PAGE;
 const thumbCache = new Map();
 let thumbWatcher = null;
 
+// Действия на карточке — только иконки: подписи «Картинка · Путь» съедали строку
+// и читались как текст, а не как кнопки.
+const ACT_ICON = {
+  // фото в буфер
+  image: '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10.5" r="1.6"/><path d="M20 15.5l-4.6-4.6L7 19.5"/></svg>',
+  // сам файл в буфер (две страницы = копировать)
+  file: '<svg viewBox="0 0 24 24"><rect x="8.5" y="3.5" width="11" height="14" rx="2"/><path d="M15.5 20.5H6.5a2 2 0 0 1-2-2V7"/></svg>',
+  // путь: звено цепи
+  path: '<svg viewBox="0 0 24 24"><path d="M10.5 13.5a3.5 3.5 0 0 0 5 0l2.5-2.5a3.54 3.54 0 0 0-5-5l-1 1"/><path d="M13.5 10.5a3.5 3.5 0 0 0-5 0L6 13a3.54 3.54 0 0 0 5 5l1-1"/></svg>',
+  // открыть в системе
+  open: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/><path d="M18.5 14.5v3a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h3"/></svg>',
+};
+
 const isImageFile = (file) => String(file.mime || '').startsWith('image') || /\.(png|jpe?g|gif|webp|bmp|heic|heif|avif|tiff?)$/i.test(file.name || '');
 
 async function renderFiles() {
@@ -1654,9 +1676,9 @@ function fileTile(file) {
         <b>${esc(file.name)}</b>
         <span class="shot-copy">${esc(file.time || '')}</span>
         <span class="shot-acts">
-          <button class="shot-act" data-copy-file="1" title="Скопировать сам файл — вставится в чат или папку">${image ? 'Картинка' : 'Файл'}</button>
-          <button class="shot-act" data-copy-path="1" title="Скопировать путь к файлу">Путь</button>
-          <button class="shot-act icon" data-open="1" title="Открыть в системе">↗</button>
+          <button class="shot-act" data-copy-file="1" title="${image ? 'Скопировать саму картинку' : 'Скопировать сам файл'}">${image ? ACT_ICON.image : ACT_ICON.file}</button>
+          <button class="shot-act" data-copy-path="1" title="Скопировать путь к файлу">${ACT_ICON.path}</button>
+          <button class="shot-act" data-open="1" title="Открыть в системе">${ACT_ICON.open}</button>
         </span>
       </figcaption>
     </figure>`;

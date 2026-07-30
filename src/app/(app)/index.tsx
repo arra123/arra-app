@@ -62,7 +62,13 @@ const purposes = ['Каршеринг', 'Такси', 'Еда', 'Продукт�
 
 const money = (n: number) => `${Math.round(n).toLocaleString('ru-RU')} ₽`;
 const recipient = (d: Debt) => d.note?.match(/\[(Тима|Даня|Женя)\]/)?.[1] || 'Тима';
-const cleanNote = (d: Debt) => (d.note || '').replace(/\[(Тима|Даня|Женя)\]\s*/g, '').trim();
+/** Голосовой ввод слышит «Ozon» как «зон» — приводим к нормальному виду,
+ *  иначе и текст странный, и логотип магазина не подхватывается. */
+const normalizeText = (value: string) => value
+  .replace(/(^|[\s(])зон(?=$|[\s).,])/giu, '$1Ozon')
+  .replace(/(^|[\s(])zone(?=$|[\s).,])/giu, '$1Ozon')
+  .replace(/пополнение баланса озон/giu, 'Пополнение баланса Ozon');
+const cleanNote = (d: Debt) => normalizeText((d.note || '').replace(/\[(Тима|Даня|Женя)\]\s*/g, '')).trim();
 const dateOf = (d: Debt) => new Date(d.occurred_at || d.created_at || Date.now());
 const timeOf = (d: Debt) => dateOf(d).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 const startOfDay = (date: Date) => { const d = new Date(date); d.setHours(0, 0, 0, 0); return d; };
@@ -188,8 +194,9 @@ export default function FinanceScreen() {
 
   const row = (d: Debt) => {
     const purpose = cleanNote(d);
-    const named = !!d.counterparty && !/компан/i.test(d.counterparty);
-    const title = named ? d.counterparty : (purpose || 'Без названия');
+    const counterparty = normalizeText(d.counterparty || '');
+    const named = !!counterparty && !/компан/i.test(counterparty);
+    const title = named ? counterparty : (purpose || 'Без названия');
     const who = recipient(d);
     return (
       <Animated.View key={d.id} layout={LinearTransition.duration(200)} exiting={FadeOut.duration(140)}>
@@ -223,7 +230,7 @@ export default function FinanceScreen() {
           <View style={styles.rowText}>
             <ThemedText type="smallBold" numberOfLines={1}>{title}</ThemedText>
             <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-              {[`должен ${d.counterparty || 'Компания'}`, named ? purpose : '', who !== 'Тима' ? `платил ${who}` : '', timeOf(d)].filter(Boolean).join(' · ')}
+              {[`должен ${counterparty || 'Компания'}`, named ? purpose : '', who !== 'Тима' ? `платил ${who}` : '', timeOf(d)].filter(Boolean).join(' · ')}
             </ThemedText>
           </View>
           <ThemedText type="smallBold" style={d.settled ? { color: theme.textSecondary, textDecorationLine: 'line-through' } : undefined}>

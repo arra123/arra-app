@@ -338,7 +338,18 @@ export default function NotesScreen() {
               tint={theme.tint}
               size={40}
             />
+            {/* Переключатель версий живёт в самой шапке: отдельной строкой он
+                оставлял между кнопками пустую полосу. */}
+            <View style={styles.headSegment}>
+              <AppleSegmented
+                values={['Оригинал', 'AI-версия']}
+                selectedIndex={version === 'original' ? 0 : 1}
+                enabled={!structuring}
+                onChange={(index) => switchVersion(index === 0 ? 'original' : 'structured')}
+              />
+            </View>
             <View style={styles.barRight}>
+              {structuring || transcribing ? <ActivityIndicator size="small" color={theme.tint} /> : null}
               <MenuView
                 title="Заметка"
                 actions={[
@@ -366,16 +377,6 @@ export default function NotesScreen() {
                 size={40}
               />
             </View>
-          </View>
-          <View style={styles.versionBar}>
-            <AppleSegmented
-              values={['Оригинал', 'AI-версия']}
-              selectedIndex={version === 'original' ? 0 : 1}
-              enabled={!structuring}
-              onChange={(index) => switchVersion(index === 0 ? 'original' : 'structured')}
-              style={{ flex: 1 }}
-            />
-            {structuring || transcribing ? <ActivityIndicator size="small" color={theme.tint} /> : null}
           </View>
           <ScrollView
             style={{ flex: 1 }}
@@ -425,7 +426,8 @@ export default function NotesScreen() {
               style={[styles.bodyInput, { color: theme.text }]}
             />
           </ScrollView>
-          <View style={[styles.editorTools, { paddingBottom: keyboard > 0 ? Spacing.two : Math.max(insets.bottom, Spacing.two), borderTopColor: theme.separator, backgroundColor: theme.backgroundElement }]}>
+          {keyboard > 0 && (
+          <View style={[styles.editorTools, { paddingBottom: Spacing.two, borderTopColor: theme.separator, backgroundColor: theme.backgroundElement }]}>
             <MenuView
               title="Формат"
               actions={[
@@ -472,6 +474,7 @@ export default function NotesScreen() {
             />
             <HoldMic onResult={transcribe} disabled={transcribing} size={40} bottomOffset={62} />
           </View>
+          )}
         </Animated.View>
       </GestureDetector>
     </Modal>
@@ -625,8 +628,8 @@ const styles = StyleSheet.create({
   },
   editorBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.three, paddingBottom: Spacing.two },
   barRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  headSegment: { flex: 1, minWidth: 0, marginHorizontal: Spacing.two },
   editorContent: { flexGrow: 1, paddingHorizontal: Spacing.three, paddingBottom: Spacing.four, gap: Spacing.two },
-  versionBar: { paddingHorizontal: Spacing.three, paddingVertical: Spacing.two, flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   categoryMenu: { alignSelf: 'flex-start', marginVertical: 2 },
   titleInput: { fontSize: 26, fontWeight: '700', fontFamily: 'Inter_700Bold', paddingVertical: Spacing.two },
   bodyInput: { flex: 1, fontSize: 17, lineHeight: 25, fontFamily: 'Inter_400Regular', minHeight: 320, textAlignVertical: 'top' },

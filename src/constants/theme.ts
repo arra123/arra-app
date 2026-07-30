@@ -100,4 +100,4 @@ export const BottomTabInset = Platform.select({ ios: 16, android: 24 }) ?? 0;
 export const MaxContentWidth = 800;
 
 /** Номер сборки JS — показывается в углу экрана. Увеличивать при каждом выкате OTA. */
-export const APP_BUILD = 101;
+export const APP_BUILD = 102;
