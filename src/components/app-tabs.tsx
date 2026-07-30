@@ -11,11 +11,10 @@ export default function AppTabs() {
   return (
     <NativeTabs
       backgroundColor="#FFFFFF"
-      // Явно светлый системный материал (не «systemChromeMaterial», который
-      // переключается на тёмный вместе с оформлением системы, и не «none»,
-      // при котором iOS 26 сама решает, чем залить стекло). Из-за этого панель
-      // была тёмной в «Финансах» и «Передаче» и светлой в остальных разделах.
-      blurEffect="systemChromeMaterialLight"
+      // Панель залита сплошным белым без размытия. Со стеклом её оттенок
+      // «плыл» от того, что оказывалось под ней на каждом экране, и панель
+      // выглядела так, будто постоянно меняет цвет.
+      blurEffect="none"
       disableTransparentOnScrollEdge
       minimizeBehavior="never"
       labelVisibilityMode="labeled"

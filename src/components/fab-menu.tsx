@@ -85,9 +85,9 @@ export function FabMenu({ actions, label = 'Быстрые действия' }: 
     setTimeout(action.onPress, 140);
   }
 
-  // Плавающая панель iOS 26 занимает снизу заметно больше, чем safe-area:
-  // с прежним отступом кнопка почти лежала на меню.
-  const bottom = insets.bottom + BottomTabInset + 74;
+  // Плавающая панель iOS 26 занимает снизу больше, чем safe-area, но с запасом
+  // в 74 pt кнопка висела слишком высоко — держим ближе к панели.
+  const bottom = insets.bottom + BottomTabInset + 40;
 
   return (
     <>

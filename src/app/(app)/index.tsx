@@ -13,6 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -104,6 +105,9 @@ export default function FinanceScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [edit, setEdit] = useState<Debt | 'new' | null>(null);
   const [carOpen, setCarOpen] = useState(false);
+  // Пока тянут запись по горизонтали, список стоит на месте: без этого
+  // вертикальная прокрутка перехватывала свайп и страница дёргалась.
+  const listGesture = useMemo(() => Gesture.Native(), []);
 
   const load = useCallback(async () => {
     try {
@@ -139,14 +143,17 @@ export default function FinanceScreen() {
   }, [total, unpaid.length]);
   const oldest = unpaid.length ? new Date(Math.min(...unpaid.map((d) => dateOf(d).getTime()))) : null;
 
-  const days = useMemo(() => {
+  // Сверху активные записи, ниже — уже закрытые. Обе части сгруппированы по дням.
+  const byDays = (list: Debt[]) => {
     const map = new Map<number, Debt[]>();
-    for (const d of feed) {
+    for (const d of list) {
       const key = startOfDay(dateOf(d)).getTime();
       map.set(key, [...(map.get(key) || []), d]);
     }
     return [...map.entries()];
-  }, [feed]);
+  };
+  const days = useMemo(() => byDays(feed.filter((d) => !d.settled)), [feed]);
+  const closedDays = useMemo(() => byDays(feed.filter((d) => d.settled)), [feed]);
 
   const byCounterparty = useMemo(() => {
     const map = new Map<string, Debt[]>();
@@ -190,6 +197,9 @@ export default function FinanceScreen() {
         friction={1.1}
         rightThreshold={30}
         overshootRight={false}
+        // Свайп по записи не должен тянуть список и pull-to-refresh.
+        blocksExternalGesture={listGesture}
+        dragOffsetFromRightEdge={18}
         renderRightActions={() => (
           <View style={styles.swipeActions}>
             <Pressable
@@ -242,6 +252,7 @@ export default function FinanceScreen() {
 
   return (
     <ThemedView style={styles.root}>
+      <GestureDetector gesture={listGesture}>
       <ScrollView
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Spacing.two }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={theme.textSecondary} />}
@@ -313,41 +324,58 @@ export default function FinanceScreen() {
               </View>
             )}
           </>
-        ) : days.length === 0 ? (
+        ) : days.length === 0 && closedDays.length === 0 ? (
           <View style={styles.empty}>
             <Glyph name="tray" fallback="—" color={theme.textSecondary} size={28} />
             <ThemedText themeColor="textSecondary">{span === 'all' ? 'Записей пока нет' : 'За этот период записей нет'}</ThemedText>
           </View>
         ) : (
           <>
-            {days.map(([key, items]) => {
-              const daySum = items.filter((d) => !d.settled).reduce((s, d) => s + Number(d.amount), 0);
-              const dayClosed = items.filter((d) => d.settled).length;
-              return (
-                <Animated.View
-                  key={key}
-                  style={styles.group}
-                  entering={FadeIn.duration(180)}
-                  exiting={FadeOut.duration(140)}
-                  layout={LinearTransition.duration(220)}>
-                  <ThemedText type="small" themeColor="textSecondary" style={styles.groupHead}>
-                    {dayTitle(key)} · {daySum ? money(daySum) : 'закрыто'}
-                    {daySum > 0 && dayClosed > 0 ? ` · вернули ${dayClosed}` : ''}
-                  </ThemedText>
-                  <GlassCard radius={Radius.lg} style={styles.list}>{items.map(row)}</GlassCard>
-                </Animated.View>
-              );
-            })}
-            {closed.length > 0 && (
-              <ThemedText type="small" themeColor="textSecondary" style={styles.groupHead}>
-                {span === 'all' ? 'За всё время вернули' : 'За период вернули'} {money(closed.reduce((s, d) => s + Number(d.amount), 0))}
+            {days.length > 0 && (
+              <ThemedText type="smallBold" style={styles.sectionHead}>
+                Ждут возврата · {money(total)}
               </ThemedText>
+            )}
+            {days.map(([key, items]) => (
+              <Animated.View
+                key={key}
+                style={styles.group}
+                entering={FadeIn.duration(180)}
+                exiting={FadeOut.duration(140)}
+                layout={LinearTransition.duration(220)}>
+                <ThemedText type="small" themeColor="textSecondary" style={styles.groupHead}>
+                  {dayTitle(key)} · {money(items.reduce((s, d) => s + Number(d.amount), 0))}
+                </ThemedText>
+                <GlassCard radius={Radius.lg} style={styles.list}>{items.map(row)}</GlassCard>
+              </Animated.View>
+            ))}
+
+            {/* Закрытые записи никуда не исчезают — просто уходят вниз и гаснут. */}
+            {closedDays.length > 0 && (
+              <>
+                <ThemedText type="smallBold" themeColor="textSecondary" style={styles.sectionHead}>
+                  Уже вернули · {money(closed.reduce((s, d) => s + Number(d.amount), 0))}
+                </ThemedText>
+                {closedDays.map(([key, items]) => (
+                  <Animated.View
+                    key={`closed-${key}`}
+                    style={[styles.group, styles.closedGroup]}
+                    entering={FadeIn.duration(180)}
+                    layout={LinearTransition.duration(220)}>
+                    <ThemedText type="small" themeColor="textSecondary" style={styles.groupHead}>
+                      {dayTitle(key)} · {money(items.reduce((s, d) => s + Number(d.amount), 0))}
+                    </ThemedText>
+                    <GlassCard radius={Radius.lg} style={styles.list}>{items.map(row)}</GlassCard>
+                  </Animated.View>
+                ))}
+              </>
             )}
           </>
         )}
 
         <ThemedText type="small" themeColor="textSecondary" style={styles.version}>v{APP_BUILD}</ThemedText>
       </ScrollView>
+      </GestureDetector>
 
       <FabMenu
         label="Добавить запись"
@@ -627,6 +655,8 @@ const styles = StyleSheet.create({
   total: { fontSize: 38, lineHeight: 44, fontWeight: '800', letterSpacing: -1.4 },
   group: { gap: Spacing.two },
   groupHead: { paddingHorizontal: 4 },
+  sectionHead: { paddingHorizontal: 4, paddingTop: Spacing.two, fontSize: 15 },
+  closedGroup: { opacity: 0.62 },
   spanRow: { gap: Spacing.two, alignItems: 'center', paddingRight: Spacing.three },
   spanChip: { minHeight: 34, justifyContent: 'center', paddingHorizontal: Spacing.three, borderRadius: Radius.pill, borderWidth: StyleSheet.hairlineWidth },
   spanNote: { paddingLeft: Spacing.one, maxWidth: 190 },

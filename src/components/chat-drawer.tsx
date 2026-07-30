@@ -1,5 +1,5 @@
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
@@ -59,12 +59,16 @@ export function ChatDrawer({ visible, threads, activeId, onClose, onPick, onCrea
   const progress = useSharedValue(0);
 
   const unmount = useCallback(() => setMounted(false), []);
+  // Анимацию открытия запускаем не по кадру-таймеру, а после первой раскладки
+  // панели: иначе Modal успевал показать её уже на месте, и панель «выскакивала»
+  // без движения.
+  const opened = useRef(false);
 
   useEffect(() => {
     if (visible) {
-      setMounted(true);
+      opened.current = false;
       progress.value = 0;
-      requestAnimationFrame(() => { progress.value = withTiming(1, OPEN); });
+      setMounted(true);
       return;
     }
     if (!mounted) return;
@@ -72,6 +76,12 @@ export function ChatDrawer({ visible, threads, activeId, onClose, onPick, onCrea
       if (finished) runOnJS(unmount)();
     });
   }, [visible, mounted, progress, unmount]);
+
+  const startOpen = useCallback(() => {
+    if (opened.current || !visible) return;
+    opened.current = true;
+    progress.value = withTiming(1, OPEN);
+  }, [progress, visible]);
 
   const drag = Gesture.Pan()
     .activeOffsetX([-9999, -10])
@@ -104,6 +114,7 @@ export function ChatDrawer({ visible, threads, activeId, onClose, onPick, onCrea
 
         <GestureDetector gesture={drag}>
           <Animated.View
+            onLayout={startOpen}
             style={[
               styles.panel,
               { width, backgroundColor: theme.background, paddingTop: insets.top + Spacing.two, paddingBottom: insets.bottom + Spacing.two },

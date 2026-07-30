@@ -1,7 +1,7 @@
 import { MenuView } from '@expo/ui/community/menu';
 import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -78,6 +78,9 @@ export default function NotesScreen() {
   // открытии другой заметки / вставке надиктованного.
   const bodyRef = useRef('');
   const structuredRef = useRef('');
+  // Пока тянут карточку по горизонтали, список стоит на месте: иначе
+  // прокрутка перехватывала свайп и страница дёргалась туда-сюда.
+  const listGesture = useMemo(() => Gesture.Native(), []);
   const titleInputRef = useRef<TextInput>(null);
   const bodyInputRef = useRef<TextInput>(null);
   const [bodyKey, setBodyKey] = useState(0);
@@ -490,6 +493,7 @@ export default function NotesScreen() {
 
   return (
     <ThemedView style={styles.container}>
+      <GestureDetector gesture={listGesture}>
       <ScrollView
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Spacing.two }]}
         showsVerticalScrollIndicator={false}
@@ -543,6 +547,10 @@ export default function NotesScreen() {
                     friction={1.1}
                     rightThreshold={30}
                     overshootRight={false}
+                    // Пока идёт свайп, список не прокручивается и не тянет
+                    // pull-to-refresh — иначе страница дёргалась и перезагружалась.
+                    blocksExternalGesture={listGesture}
+                    dragOffsetFromRightEdge={18}
                     renderRightActions={() => (
                       <TouchableOpacity onPress={() => { haptic.warning(); deleteNote(n.id); }} activeOpacity={0.8} style={[styles.swipeDelete, { backgroundColor: theme.danger }]}>
                         <SymbolView name="trash.fill" tintColor="#fff" size={22} />
@@ -579,6 +587,7 @@ export default function NotesScreen() {
           ))
         )}
       </ScrollView>
+      </GestureDetector>
       {editor}
     </ThemedView>
   );

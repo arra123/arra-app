@@ -42,6 +42,9 @@ type SyncState = {
   error: string;
   stalled: boolean;
   blocked: { project?: string; file?: string; reason?: string }[];
+  /** Что реально перенеслось: по проектам, как в проводнике на компьютере. */
+  moved: Record<string, { files: number; bytes: number; direction: string }>;
+  result: { direction: string; files: number; bytes: number; errors: number } | null;
 };
 
 const WS_URL = API_URL.replace(/^http/, 'ws') + '/client';
@@ -51,6 +54,15 @@ const STALL_MS = 45_000;
 const emptySync: SyncState = {
   busy: false, mode: null, pct: 0, speed: 0, eta: null, done: 0, total: 0,
   currentFile: '', phase: 'Готово к команде', message: '', error: '', stalled: false, blocked: [],
+  moved: {}, result: null,
+};
+
+const formatBytes = (value: number) => {
+  if (!value) return '0 Б';
+  if (value < 1024) return `${value} Б`;
+  if (value < 1048576) return `${Math.round(value / 1024)} КБ`;
+  if (value < 1073741824) return `${(value / 1048576).toFixed(1)} МБ`;
+  return `${(value / 1073741824).toFixed(2)} ГБ`;
 };
 
 const formatSpeed = (value: number) => {
@@ -94,6 +106,9 @@ export function SyncPanel() {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [sync, setSync] = useState<SyncState>(emptySync);
   const [info, setInfo] = useState<SyncInfo | null>(null);
+  // Сервер считаем доступным, пока держится сокет с бэкендом: через него и
+  // идут все команды переноса, так что это ровно тот признак, который нужен.
+  const [serverOnline, setServerOnline] = useState(false);
 
   const selected = devices.find((device) => device.id === deviceId) || null;
 
@@ -139,12 +154,21 @@ export function SyncPanel() {
       setSync((current) => ({ ...alive(current), phase: 'Проверяю открытые файлы', done: event.checked || 0, total: event.total || current.total }));
     } else if (event.type === 'progress') {
       const pct = event.totalBytes ? Math.round((event.bytes || 0) / event.totalBytes * 100) : 0;
-      setSync((current) => ({
-        ...alive(current), pct, speed: event.speed || 0, eta: event.eta ?? null,
-        done: event.done || 0, total: event.total || 0, currentFile: event.file || '',
-        phase: event.direction === 'pull' ? 'Получаю с сервера' : 'Отправляю на сервер',
-        message: event.project || event.scope || '', error: '',
-      }));
+      setSync((current) => {
+        // Складываем перенесённое по проектам — из этого потом строится итог.
+        const moved = { ...current.moved };
+        if (event.state === 'done') {
+          const key = event.project || event.scope || 'Прочее';
+          const row = moved[key] || { files: 0, bytes: 0, direction: event.direction || 'push' };
+          moved[key] = { files: row.files + 1, bytes: row.bytes + Number(event.fileTotal || 0), direction: event.direction || row.direction };
+        }
+        return {
+          ...alive(current), pct, speed: event.speed || 0, eta: event.eta ?? null,
+          done: event.done || 0, total: event.total || 0, currentFile: event.file || '',
+          phase: event.direction === 'pull' ? 'Получаю с сервера' : 'Отправляю на сервер',
+          message: event.project || event.scope || '', error: '', moved,
+        };
+      });
     } else if (event.type === 'retry') {
       setSync((current) => ({
         ...alive(current),
@@ -170,6 +194,12 @@ export function SyncPanel() {
         phase: event.msg || 'Синхронизация завершена',
         message: `${files(event.transferred || 0)} подтверждено`,
         error: '',
+        result: {
+          direction: event.direction || 'push',
+          files: Number(event.transferred || 0),
+          bytes: Number(event.bytes || 0),
+          errors: Number(event.errors || 0),
+        },
       }));
       haptic.success();
       // После передачи сразу пересверяем — иначе на экране остаются старые цифры.
@@ -193,10 +223,12 @@ export function SyncPanel() {
       wsRef.current = socket;
       socket.onopen = () => {
         if (!alive) return;
+        setServerOnline(true);
         socket.send(JSON.stringify({ type: 'list_devices' }));
       };
       socket.onclose = () => {
         if (!alive) return;
+        setServerOnline(false);
         reconnectRef.current = setTimeout(connect, 2500);
       };
       socket.onerror = () => { try { socket.close(); } catch {} };
@@ -301,6 +333,9 @@ export function SyncPanel() {
   const lastPush = whenText(info?.lastPush);
   const lastPull = whenText(info?.lastPull);
   const canRun = !!selected?.online && !sync.busy;
+  const movedRows = Object.entries(sync.moved)
+    .map(([name, row]) => ({ name, ...row }))
+    .sort((left, right) => right.files - left.files);
 
   return (
     <ScrollView
@@ -324,9 +359,15 @@ export function SyncPanel() {
         </View>
         <SymbolView name="arrow.left.arrow.right" tintColor={theme.tint} size={18} />
         <View style={styles.routeNode}>
-          <SymbolView name="externaldrive.connected.to.line.below" tintColor={theme.success} size={24} />
+          <SymbolView
+            name="externaldrive.connected.to.line.below"
+            tintColor={serverOnline ? theme.success : theme.textSecondary}
+            size={24}
+          />
           <ThemedText type="smallBold">Сервер</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">{info ? files(info.remoteFiles) : '—'}</ThemedText>
+          <ThemedText type="small" themeColor={serverOnline ? 'success' : 'textSecondary'}>
+            {serverOnline ? 'в сети' : 'не в сети'}
+          </ThemedText>
         </View>
         <DeviceSwitcher
           devices={devices}
@@ -364,27 +405,74 @@ export function SyncPanel() {
               <ThemedText type="small" themeColor="textSecondary">Последний раз забирали</ThemedText>
               <ThemedText type="small" numberOfLines={1} style={styles.historyValue}>{lastPull || 'ещё не забирали'}</ThemedText>
             </View>
+            {!!info && (
+              <View style={styles.historyRow}>
+                <ThemedText type="small" themeColor="textSecondary">Файлов</ThemedText>
+                <ThemedText type="small" numberOfLines={1} style={styles.historyValue}>
+                  {files(info.localFiles)} здесь · {info.remoteFiles} на сервере
+                </ThemedText>
+              </View>
+            )}
           </View>
         )}
       </GlassCard>
 
+      {/* Зелёным горит та кнопка, которую надо нажать сейчас — как на компьютере. */}
       <View style={styles.actions}>
         <AppleButton
           label={upload ? `Отправить на сервер · ${files(upload)}` : 'Отправить на сервер'}
           onPress={() => run('push')}
-          disabled={!canRun}
-          variant="prominent"
+          disabled={!canRun || !upload}
+          variant={upload ? 'prominent' : 'glass'}
+          tint={upload ? theme.success : undefined}
           full
         />
         <AppleButton
           label={download ? `Забрать с сервера · ${files(download)}` : 'Забрать с сервера'}
           onPress={() => run('pull')}
-          disabled={!canRun}
-          variant="glass"
-          tint={theme.success}
+          disabled={!canRun || !download}
+          variant={download && !upload ? 'prominent' : 'glass'}
+          tint={download && !upload ? theme.success : undefined}
           full
         />
       </View>
+
+      {/* Итог: что именно уехало, по проектам. */}
+      {movedRows.length > 0 && (
+        <GlassCard radius={Radius.lg} style={styles.movedCard}>
+          <View style={styles.movedHead}>
+            <SymbolView
+              name={sync.result?.errors ? 'exclamationmark.triangle.fill' : 'checkmark.circle.fill'}
+              tintColor={sync.result?.errors ? theme.warning : theme.success}
+              size={20}
+            />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <ThemedText type="smallBold">
+                {sync.result
+                  ? (sync.result.direction === 'pull' ? 'Забрано с сервера' : 'Отправлено на сервер')
+                  : 'Идёт передача'}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {files(sync.result?.files ?? movedRows.reduce((sum, row) => sum + row.files, 0))}
+                {' · '}
+                {formatBytes(sync.result?.bytes ?? movedRows.reduce((sum, row) => sum + row.bytes, 0))}
+                {sync.result?.errors ? ` · ошибок ${sync.result.errors}` : ''}
+              </ThemedText>
+            </View>
+          </View>
+          {movedRows.map((row) => (
+            <View key={row.name} style={styles.movedRow}>
+              <SymbolView
+                name={row.direction === 'pull' ? 'arrow.down' : 'arrow.up'}
+                tintColor={row.direction === 'pull' ? theme.tint : theme.success}
+                size={13}
+              />
+              <ThemedText type="small" numberOfLines={1} style={{ flex: 1 }}>{row.name}</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">{row.files} · {formatBytes(row.bytes)}</ThemedText>
+            </View>
+          ))}
+        </GlassCard>
+      )}
 
       {/* Прогресс показываем только когда есть что показывать. */}
       {(sync.busy || sync.error || sync.pct > 0) && (
@@ -468,6 +556,9 @@ const styles = StyleSheet.create({
   historyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
   historyValue: { flex: 1, minWidth: 0, textAlign: 'right', fontWeight: '600' },
   actions: { gap: Spacing.two },
+  movedCard: { padding: Spacing.three, gap: Spacing.two },
+  movedHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  movedRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingLeft: 2 },
   progressCard: { padding: Spacing.three, gap: Spacing.three },
   progressHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   track: { height: 7, overflow: 'hidden', borderRadius: Radius.pill },
