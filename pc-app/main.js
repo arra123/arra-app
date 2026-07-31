@@ -97,6 +97,11 @@ function winSend(channel, payload) {
 }
 let ws = null;
 let reconnectTimer = null;
+let heartbeatTimer = null;
+let lastPongAt = 0;
+/** Как часто спрашиваем сервер, жив ли канал, и сколько ждём ответа. */
+const HEARTBEAT_MS = 30_000;
+const HEARTBEAT_DEAD_MS = 75_000;
 let online = false;
 let manualClose = false;
 let phoneOnline = false;
@@ -996,7 +1001,7 @@ function connectWS() {
   if (!settings.token) return;
   try { ws?.close(); } catch {}
   ws = new WebSocket(`${WS_URL}?token=${settings.token}`, { family: 4 });
-  ws.on('open', () => { online = true; pushStatus(); });
+  ws.on('open', () => { online = true; startHeartbeat(); pushStatus(); });
   ws.on('message', (raw) => {
     try {
       const msg = JSON.parse(raw.toString());
@@ -1026,14 +1031,44 @@ function connectWS() {
       }
     } catch (error) { writeLog('error', 'websocket.message', error); }
   });
+  ws.on('pong', () => { lastPongAt = Date.now(); });
   ws.on('close', () => {
     online = false;
     phoneOnline = false;
+    stopHeartbeat();
     stopScreen();
     pushStatus();
     if (!manualClose) reconnectTimer = setTimeout(connectWS, 3000);
   });
   ws.on('error', (error) => { writeLog('error', 'websocket.agent', error); /* close последует */ });
+}
+
+/**
+ * Проверка живости соединения.
+ *
+ * Обрыв канала не всегда доходит до нас событием: сервер закрывает сокет, а на
+ * нашей стороне он остаётся «открытым». Телефон при этом видит компьютер не в
+ * сети, переслать на него ничего нельзя, а приложение уверено, что всё хорошо
+ * и переподключаться не собирается. Поэтому раз в полминуты спрашиваем сервер
+ * и, если он молчит слишком долго, рвём соединение сами — дальше сработает
+ * обычное переподключение.
+ */
+function startHeartbeat() {
+  stopHeartbeat();
+  lastPongAt = Date.now();
+  heartbeatTimer = setInterval(() => {
+    if (!ws || ws.readyState !== 1) return;
+    if (Date.now() - lastPongAt > HEARTBEAT_DEAD_MS) {
+      writeLog('warn', 'websocket.stale', { silentFor: Date.now() - lastPongAt });
+      try { ws.terminate(); } catch {}
+      return;
+    }
+    try { ws.ping(); } catch {}
+  }, HEARTBEAT_MS);
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
 }
 
 // ---- Окно ----
