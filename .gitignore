@@ -57,6 +57,7 @@ AGENTS.md
 /*.png
 /*.jpg
 /*.log
+/*.pdf
 .playwright-mcp/
 
 # локальные QA-профили, сборки и временные файлы
