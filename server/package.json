@@ -1,7 +1,7 @@
 {
-  "name": "aura-server",
+  "name": "noda-server",
   "version": "1.0.0",
-  "description": "Бэкенд приложения Aura (финансы + перенос файлов)",
+  "description": "Бэкенд Ноды (финансы + перенос файлов)",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

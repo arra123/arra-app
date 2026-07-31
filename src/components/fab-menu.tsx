@@ -11,11 +11,10 @@ import Animated, {
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
 import { ThemedText } from '@/components/themed-text';
-import { BottomTabInset, Radius, Spacing } from '@/constants/theme';
+import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { haptic } from '@/lib/haptics';
 
@@ -47,7 +46,6 @@ const SPRING = { damping: 18, stiffness: 240, mass: 0.7 };
  */
 export function FabMenu({ actions, label = 'Быстрые действия' }: Props) {
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
   // Держим плитки в дереве, пока играет анимация закрытия, но не дольше —
   // иначе невидимый слой перехватывает нажатия по списку.
@@ -85,9 +83,8 @@ export function FabMenu({ actions, label = 'Быстрые действия' }: 
     setTimeout(action.onPress, 140);
   }
 
-  // Плавающая панель iOS 26 занимает снизу больше, чем safe-area, но с запасом
-  // в 74 pt кнопка висела слишком высоко — держим ближе к панели.
-  const bottom = insets.bottom + BottomTabInset + 40;
+  // Экран уже заканчивается над фиксированной панелью вкладок.
+  const bottom = Spacing.three;
 
   return (
     <>

@@ -1,9 +1,8 @@
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 
 import { Sheet } from '@/components/sheet';
 import { ThemedText } from '@/components/themed-text';
@@ -21,14 +20,14 @@ type Props = {
   title?: string;
 };
 
-const LIMIT = 30;
+const LIMIT = 60;
 const COLUMNS = 3;
 
 /**
  * Выбор последних фото — сеткой настоящих превью.
  *
- * Выделять можно и тапом, и протаскиванием пальца по сетке: подряд идущие
- * снимки набираются одним движением.
+ * Выделение только тапом: отдельный drag-жест перехватывал вертикальную
+ * прокрутку, поэтому до предыдущих снимков нельзя было добраться.
  */
 export function RecentPhotosSheet({ visible, onClose, onSend, title = 'Последние фото' }: Props) {
   const theme = useTheme();
@@ -36,14 +35,12 @@ export function RecentPhotosSheet({ visible, onClose, onSend, title = 'Посл�
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [denied, setDenied] = useState(false);
-  const scrollY = useRef(0);
-  // Режим протаскивания: выделяем или снимаем — решает первая задетая ячейка.
-  const dragAdds = useRef(true);
-  const dragSeen = useRef(new Set<string>());
+  const [cursor, setCursor] = useState<string | undefined>();
+  const [hasNextPage, setHasNextPage] = useState(false);
 
   const cell = (width - Spacing.three * 2 - Spacing.two * (COLUMNS - 1)) / COLUMNS;
-  const step = cell + Spacing.two;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -57,6 +54,8 @@ export function RecentPhotosSheet({ visible, onClose, onSend, title = 'Посл�
         sortBy: [['creationTime', false]],
       });
       setPhotos((result.assets || []).map((asset) => ({ id: asset.id, uri: asset.uri })));
+      setCursor(result.endCursor);
+      setHasNextPage(result.hasNextPage);
     } catch {
       setDenied(true);
     } finally {
@@ -75,30 +74,28 @@ export function RecentPhotosSheet({ visible, onClose, onSend, title = 'Посл�
     setPicked((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }, []);
 
-  /** Ячейка под пальцем: сетка фиксированная, поэтому считаем по координатам. */
-  const applyAt = useCallback((x: number, y: number, first: boolean) => {
-    const column = Math.floor(x / step);
-    const row = Math.floor((y + scrollY.current) / step);
-    if (column < 0 || column >= COLUMNS || row < 0) return;
-    const index = row * COLUMNS + column;
-    const photo = photos[index];
-    if (!photo || dragSeen.current.has(photo.id)) return;
-    dragSeen.current.add(photo.id);
-    setPicked((current) => {
-      const has = current.includes(photo.id);
-      if (first) dragAdds.current = !has;
-      if (dragAdds.current) return has ? current : [...current, photo.id];
-      return has ? current.filter((item) => item !== photo.id) : current;
-    });
-    haptic.select();
-  }, [photos, step]);
-
-  const dragSelect = Gesture.Pan()
-    .minDistance(12)
-    .onBegin(() => { dragSeen.current = new Set(); })
-    .onStart((event) => { applyAt(event.x, event.y, true); })
-    .onUpdate((event) => { applyAt(event.x, event.y, false); })
-    .runOnJS(true);
+  const loadMore = useCallback(async () => {
+    if (!hasNextPage || !cursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const result = await MediaLibrary.getAssetsAsync({
+        first: LIMIT,
+        after: cursor,
+        mediaType: 'photo',
+        sortBy: [['creationTime', false]],
+      });
+      setPhotos((current) => {
+        const known = new Set(current.map((photo) => photo.id));
+        return [...current, ...(result.assets || [])
+          .filter((asset) => !known.has(asset.id))
+          .map((asset) => ({ id: asset.id, uri: asset.uri }))];
+      });
+      setCursor(result.endCursor);
+      setHasNextPage(result.hasNextPage);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [cursor, hasNextPage, loadingMore]);
 
   function send() {
     const chosen = picked
@@ -129,36 +126,42 @@ export function RecentPhotosSheet({ visible, onClose, onSend, title = 'Посл�
       ) : (
         <>
           <ThemedText type="small" themeColor="textSecondary" style={styles.hint}>
-            Тапни или проведи пальцем по нескольким снимкам подряд
+            Тапни по нужным снимкам. Листай вверх, чтобы открыть более ранние.
           </ThemedText>
-          <ScrollView
+          <FlatList
+            data={photos}
+            keyExtractor={(photo) => photo.id}
+            numColumns={COLUMNS}
             style={styles.scroll}
             contentContainerStyle={styles.grid}
+            columnWrapperStyle={styles.row}
             showsVerticalScrollIndicator={false}
-            scrollEventThrottle={16}
-            onScroll={(event) => { scrollY.current = event.nativeEvent.contentOffset.y; }}>
-            <GestureDetector gesture={dragSelect}>
-              <View style={styles.gridInner}>
-                {photos.map((photo) => {
-                  const index = picked.indexOf(photo.id);
-                  const on = index >= 0;
-                  return (
-                    <Pressable
-                      key={photo.id}
-                      onPress={() => toggle(photo.id)}
-                      accessibilityRole="checkbox"
-                      accessibilityState={{ checked: on }}
-                      style={[styles.cell, { width: cell, height: cell, borderColor: on ? theme.tint : 'transparent' }]}>
-                      <Image source={{ uri: photo.uri }} style={styles.image} contentFit="cover" />
-                      <View style={[styles.mark, { backgroundColor: on ? theme.tint : 'rgba(12,16,24,0.42)', borderColor: on ? theme.tint : 'rgba(255,255,255,0.7)' }]}>
-                        {on && <ThemedText style={styles.markText}>{index + 1}</ThemedText>}
-                      </View>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </GestureDetector>
-          </ScrollView>
+            onEndReachedThreshold={0.45}
+            onEndReached={() => void loadMore()}
+            ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.more} color={theme.tint} /> : null}
+            renderItem={({ item: photo }) => {
+              const index = picked.indexOf(photo.id);
+              const on = index >= 0;
+              return (
+                <Pressable
+                  onPress={() => toggle(photo.id)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: on }}
+                  style={[styles.cell, { width: cell, height: cell, borderColor: on ? theme.tint : 'transparent' }]}>
+                  <Image
+                    source={{ uri: photo.uri }}
+                    style={styles.image}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    recyclingKey={photo.id}
+                  />
+                  <View style={[styles.mark, { backgroundColor: on ? theme.tint : 'rgba(12,16,24,0.42)', borderColor: on ? theme.tint : 'rgba(255,255,255,0.7)' }]}>
+                    {on && <ThemedText style={styles.markText}>{index + 1}</ThemedText>}
+                  </View>
+                </Pressable>
+              );
+            }}
+          />
         </>
       )}
     </Sheet>
@@ -167,9 +170,10 @@ export function RecentPhotosSheet({ visible, onClose, onSend, title = 'Посл�
 
 const styles = StyleSheet.create({
   hint: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two },
-  scroll: { maxHeight: 400 },
-  grid: { padding: Spacing.three },
-  gridInner: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
+  scroll: { height: 460, maxHeight: '70%' },
+  grid: { padding: Spacing.three, gap: Spacing.two },
+  row: { gap: Spacing.two },
+  more: { paddingVertical: Spacing.three },
   cell: { borderRadius: Radius.md, overflow: 'hidden', borderWidth: 2, backgroundColor: 'rgba(120,120,128,0.14)' },
   image: { width: '100%', height: '100%' },
   mark: {

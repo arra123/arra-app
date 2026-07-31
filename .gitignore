@@ -37,39 +37,29 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
-example
-
 # generated native folders
 /ios
 /android
 credentials/
-_codemagic_secrets/
 
-# доп. исключения для публикации в git
+# секреты и приватные данные — НИКОГДА в git (репозиторий публичный)
 credentials.json
-.playwright-mcp/
-web*.log
-build*.log
-tabs-check.png
-tabs-after-login.png
-fin*.png
-debts*.png
-debt*.png
-catdetail.png
-notes*.png
+hub-api/private.json
+hub-api/config.json
+server/scripts/*.cjs
 
 # не публиковать в открытый репозиторий
 CLAUDE.md
 AGENTS.md
-# хаб-API: приватные данные проектов и креды входа — НИКОГДА в git (репо публичный)
-hub-api/private.json
-hub-api/config.json
-live-hub.png
-server/scripts/*.cjs
-SETUP_CODEMAGIC.md
 .claude/
 
-# локальные QA-профили, сборки и временные диагностические файлы
+# скриншоты и логи проверок в корне — рабочий мусор, в git им не место
+/*.png
+/*.jpg
+/*.log
+.playwright-mcp/
+
+# локальные QA-профили, сборки и временные файлы
 .audit-*/
 .chrome-*/
 tmp/

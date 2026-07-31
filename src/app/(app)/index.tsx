@@ -13,8 +13,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -43,8 +41,30 @@ type Debt = {
   occurred_at?: string | null;
   created_at?: string | null;
 };
-type ViewKind = 'period' | 'people';
+type ViewKind = 'period' | 'summary' | 'people';
 type SpanKind = 'all' | 'month' | 'week' | 'year';
+type SummaryCategoryId = 'carsharing' | 'online' | 'purchases' | 'other';
+
+type SummaryMeta = {
+  id: SummaryCategoryId;
+  title: string;
+  merchant: string;
+  systemImage: string;
+  fallback: string;
+  tint: string;
+};
+
+type SummaryService = {
+  name: string;
+  items: Debt[];
+  total: number;
+};
+
+type SummaryGroup = SummaryMeta & {
+  services: SummaryService[];
+  total: number;
+  count: number;
+};
 
 /** Период — необязательный фильтр. По умолчанию всегда «Всё»: экран
  *  открывается на всей истории, которую можно листать, как в банке. */
@@ -56,11 +76,15 @@ const spans: { id: SpanKind; label: string }[] = [
 ];
 
 const people = ['Тима', 'Даня', 'Женя'] as const;
-const cars = ['Ситидрайв', 'Делимобиль', 'БелкаКар', 'Яндекс Драйв'] as const;
+const cars = ['Ситидрайв', 'Делимобиль', 'BelkaCar', 'Яндекс Драйв'] as const;
 /** Частые назначения — чтобы не набирать руками каждый раз. */
 const purposes = ['Каршеринг', 'Такси', 'Еда', 'Продукты', 'Подписка', 'Дом', 'Заправка'] as const;
 
-const money = (n: number) => `${Math.round(n).toLocaleString('ru-RU')} ₽`;
+const money = (n: number) => `${n.toLocaleString('ru-RU', {
+  minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
+  maximumFractionDigits: 2,
+})} ₽`;
+const parseAmount = (value: string) => Number(value.replace(',', '.'));
 const recipient = (d: Debt) => d.note?.match(/\[(Тима|Даня|Женя)\]/)?.[1] || 'Тима';
 /** Голосовой ввод слышит «Ozon» как «зон» — приводим к нормальному виду,
  *  иначе и текст странный, и логотип магазина не подхватывается. */
@@ -68,7 +92,78 @@ const normalizeText = (value: string) => value
   .replace(/(^|[\s(])зон(?=$|[\s).,])/giu, '$1Ozon')
   .replace(/(^|[\s(])zone(?=$|[\s).,])/giu, '$1Ozon')
   .replace(/пополнение баланса озон/giu, 'Пополнение баланса Ozon');
+const normalizeCounterparty = (value: string) => {
+  const normalized = normalizeText(value).trim();
+  if (/^(belka\s*car|белка\s*кар|белкакар)$/i.test(normalized)) return 'BelkaCar';
+  return normalized;
+};
 const cleanNote = (d: Debt) => normalizeText((d.note || '').replace(/\[(Тима|Даня|Женя)\]\s*/g, '')).trim();
+const summaryText = (d: Debt) => normalizeText(`${d.counterparty || ''} ${cleanNote(d)}`).toLowerCase();
+const SUMMARY_META: Record<SummaryCategoryId, SummaryMeta> = {
+  carsharing: {
+    id: 'carsharing',
+    title: 'Каршеринг',
+    merchant: 'Каршеринг',
+    systemImage: 'car.2.fill',
+    fallback: '▰',
+    tint: '#4F78C8',
+  },
+  online: {
+    id: 'online',
+    title: 'Онлайн-сервисы',
+    merchant: 'OpenAI Anthropic ProxyAPI',
+    systemImage: 'network',
+    fallback: '⌘',
+    tint: '#6966B3',
+  },
+  purchases: {
+    id: 'purchases',
+    title: 'Покупки и материалы',
+    merchant: 'Ozon покупки',
+    systemImage: 'shippingbox.fill',
+    fallback: '□',
+    tint: '#B2763D',
+  },
+  other: {
+    id: 'other',
+    title: 'Остальное',
+    merchant: 'Прочее',
+    systemImage: 'ellipsis',
+    fallback: '•••',
+    tint: '#747983',
+  },
+};
+const SUMMARY_ORDER: SummaryCategoryId[] = ['carsharing', 'online', 'purchases', 'other'];
+const carsharingPattern = /каршер|ситидрайв|city\s*drive|belka|белка|делимоб|яндекс[.\s-]*драйв/i;
+const onlinePattern = /openai|chatgpt|chat gpt|claude|anthropic|proxy\s*api|proxyapi|muapi|hexfield|github|figma|notion|adobe|jetbrains|подписк|хостинг|сервер|домен|облач/i;
+const purchasePattern = /ozon|озон|wildberries|вайлдбер|покуп|товар|материал|ингредиент|печат|фото|скотч|бад|витамин|курьер|достав/i;
+const categoryOf = (d: Debt): SummaryCategoryId => {
+  const text = summaryText(d);
+  if (carsharingPattern.test(text)) return 'carsharing';
+  if (onlinePattern.test(text)) return 'online';
+  if (purchasePattern.test(text)) return 'purchases';
+  return 'other';
+};
+const serviceOf = (d: Debt, category: SummaryCategoryId) => {
+  const text = summaryText(d);
+  if (category === 'carsharing') {
+    if (/ситидрайв|city\s*drive/i.test(text)) return 'Ситидрайв';
+    if (/belka|белка/i.test(text)) return 'BelkaCar';
+    if (/делимоб/i.test(text)) return 'Делимобиль';
+    if (/яндекс[.\s-]*драйв/i.test(text)) return 'Яндекс Драйв';
+    return 'Другой каршеринг';
+  }
+  if (category === 'online') {
+    if (/openai|chatgpt|chat gpt/i.test(text)) return 'OpenAI';
+    if (/claude|anthropic/i.test(text)) return 'Anthropic';
+    if (/proxy\s*api|proxyapi/i.test(text)) return 'Proxy API';
+    if (/muapi/i.test(text)) return 'MuAPI';
+    if (/hexfield/i.test(text)) return 'Hexfield';
+  }
+  const counterparty = normalizeCounterparty(d.counterparty || '');
+  if (counterparty && !/компан/i.test(counterparty)) return counterparty;
+  return cleanNote(d) || SUMMARY_META[category].title;
+};
 const dateOf = (d: Debt) => new Date(d.occurred_at || d.created_at || Date.now());
 const timeOf = (d: Debt) => dateOf(d).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 const startOfDay = (date: Date) => { const d = new Date(date); d.setHours(0, 0, 0, 0); return d; };
@@ -86,6 +181,7 @@ const plural = (n: number, one: string, few: string, many: string) => {
   if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
   return many;
 };
+const dativePerson = (person: string) => ({ Тима: 'Тиме', Даня: 'Дане', Женя: 'Жене' }[person] || person);
 const dayTitle = (value: number) => {
   const date = startOfDay(new Date(value));
   const diff = Math.round((startOfDay(new Date()).getTime() - date.getTime()) / 86400000);
@@ -107,20 +203,19 @@ export default function FinanceScreen() {
   const [mine, setMine] = useState<Debt[]>([]);
   const [view, setView] = useState<ViewKind>('period');
   const [span, setSpan] = useState<SpanKind>('all');
+  const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
+  const [expandedServices, setExpandedServices] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [edit, setEdit] = useState<Debt | 'new' | null>(null);
   const [carOpen, setCarOpen] = useState(false);
-  // Пока тянут запись по горизонтали, список стоит на месте: без этого
-  // вертикальная прокрутка перехватывала свайп и страница дёргалась.
-  const listGesture = useMemo(() => Gesture.Native(), []);
-
   const load = useCallback(async () => {
     try {
       const r = await api<{ debts: Debt[] }>('/debts?all=true');
       const all = r.debts || [];
-      setDebts(all.filter((d) => d.direction !== 'i_owe'));
-      setMine(all.filter((d) => d.direction === 'i_owe' && !d.settled));
+      // Нулевая операция не является долгом и только засоряет ленту.
+      setDebts(all.filter((d) => d.direction !== 'i_owe' && Number(d.amount) > 0));
+      setMine(all.filter((d) => d.direction === 'i_owe' && !d.settled && Number(d.amount) > 0));
     } catch (e: any) { Alert.alert('Не загрузилось', e?.message || ''); }
     finally { setLoading(false); setRefreshing(false); }
   }, []);
@@ -164,7 +259,7 @@ export default function FinanceScreen() {
   const byCounterparty = useMemo(() => {
     const map = new Map<string, Debt[]>();
     for (const d of unpaid) {
-      const key = (d.counterparty || 'Без имени').trim();
+      const key = normalizeCounterparty(d.counterparty || '') || 'Без имени';
       map.set(key, [...(map.get(key) || []), d]);
     }
     return [...map.entries()]
@@ -175,6 +270,45 @@ export default function FinanceScreen() {
       }))
       .sort((a, b) => b.total - a.total);
   }, [unpaid]);
+
+  const summaryGroups = useMemo<SummaryGroup[]>(() => {
+    const categories = new Map<SummaryCategoryId, Map<string, Debt[]>>();
+    for (const debt of unpaid) {
+      const category = categoryOf(debt);
+      const service = serviceOf(debt, category);
+      const services = categories.get(category) || new Map<string, Debt[]>();
+      services.set(service, [...(services.get(service) || []), debt]);
+      categories.set(category, services);
+    }
+
+    return SUMMARY_ORDER.flatMap((category) => {
+      const services = categories.get(category);
+      if (!services) return [];
+      const groupedServices = [...services.entries()]
+        .map(([name, items]) => ({
+          name,
+          items: [...items].sort((a, b) => dateOf(b).getTime() - dateOf(a).getTime()),
+          total: items.reduce((sum, debt) => sum + Number(debt.amount), 0),
+        }))
+        .sort((a, b) => b.total - a.total);
+      return [{
+        ...SUMMARY_META[category],
+        services: groupedServices,
+        total: groupedServices.reduce((sum, service) => sum + service.total, 0),
+        count: groupedServices.reduce((sum, service) => sum + service.items.length, 0),
+      }];
+    });
+  }, [unpaid]);
+
+  const toggleCategory = (category: string) => {
+    haptic.select();
+    setExpandedCategories((current) => ({ ...current, [category]: !current[category] }));
+  };
+
+  const toggleService = (service: string) => {
+    haptic.select();
+    setExpandedServices((current) => ({ ...current, [service]: !current[service] }));
+  };
 
   // Оптимистично: сначала меняем список, потом сеть. Иначе экран «моргает».
   async function settle(d: Debt) {
@@ -194,72 +328,88 @@ export default function FinanceScreen() {
 
   const row = (d: Debt) => {
     const purpose = cleanNote(d);
-    const counterparty = normalizeText(d.counterparty || '');
+    const counterparty = normalizeCounterparty(d.counterparty || '');
     const named = !!counterparty && !/компан/i.test(counterparty);
     const title = named ? counterparty : (purpose || 'Без названия');
     const who = recipient(d);
+    const relation = d.direction === 'i_owe' ? 'я должен' : `вернуть ${dativePerson(who)}`;
     return (
-      <Animated.View key={d.id} layout={LinearTransition.duration(200)} exiting={FadeOut.duration(140)}>
-      <ReanimatedSwipeable
-        friction={1.1}
-        rightThreshold={30}
-        overshootRight={false}
-        // Свайп по записи не должен тянуть список и pull-to-refresh.
-        blocksExternalGesture={listGesture}
-        dragOffsetFromRightEdge={18}
-        renderRightActions={() => (
-          <View style={styles.swipeActions}>
-            <Pressable
-              onPress={() => settle(d)}
-              style={[styles.swipeButton, { backgroundColor: d.settled ? theme.warning : theme.success }]}>
-              <Glyph name={d.settled ? 'arrow.uturn.backward' : 'checkmark'} fallback="✓" color="#fff" size={20} />
-            </Pressable>
-            <Pressable onPress={() => remove(d)} style={[styles.swipeButton, { backgroundColor: theme.danger }]}>
-              <Glyph name="trash.fill" fallback="✕" color="#fff" size={19} />
-            </Pressable>
-          </View>
-        )}>
-        <Pressable
-          onPress={() => { haptic.tap(); setEdit(d); }}
-          style={({ pressed }) => [
-            styles.row,
-            { backgroundColor: pressed ? theme.backgroundSelected : theme.glass },
-            d.settled && styles.settled,
-          ]}>
-          <MerchantLogo merchant={`${d.counterparty} ${d.note || ''}`} size={38} />
-          <View style={styles.rowText}>
-            <ThemedText type="smallBold" numberOfLines={1}>{title}</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-              {[`должен ${counterparty || 'Компания'}`, named ? purpose : '', who !== 'Тима' ? `платил ${who}` : '', timeOf(d)].filter(Boolean).join(' · ')}
-            </ThemedText>
-          </View>
-          <ThemedText type="smallBold" style={d.settled ? { color: theme.textSecondary, textDecorationLine: 'line-through' } : undefined}>
-            {money(Number(d.amount))}
+      <Pressable
+        key={d.id}
+        onPress={() => { haptic.tap(); setEdit(d); }}
+        style={({ pressed }) => [
+          styles.row,
+          { backgroundColor: pressed ? theme.backgroundSelected : theme.glass },
+          d.settled && styles.settled,
+        ]}>
+        <MerchantLogo merchant={`${counterparty} ${d.note || ''}`} size={38} />
+        <View style={styles.rowText}>
+          <ThemedText type="smallBold" numberOfLines={1}>{title}</ThemedText>
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+            {[purpose, relation, timeOf(d)].filter(Boolean).join(' · ')}
           </ThemedText>
-          {/* Отметить возврат одним касанием — без свайпа. */}
-          <Pressable
-            onPress={() => settle(d)}
-            hitSlop={10}
-            accessibilityLabel={d.settled ? 'Вернуть в долги' : 'Уже вернули'}
-            style={({ pressed }) => [
-              styles.rowCheck,
-              {
-                borderColor: d.settled ? theme.success : theme.separator,
-                backgroundColor: d.settled ? theme.success : 'transparent',
-                opacity: pressed ? 0.6 : 1,
-              },
-            ]}>
-            <Glyph name="checkmark" fallback="✓" color={d.settled ? '#fff' : theme.separator} size={14} />
-          </Pressable>
+        </View>
+        <ThemedText type="smallBold" style={d.settled ? { color: theme.textSecondary, textDecorationLine: 'line-through' } : undefined}>
+          {money(Number(d.amount))}
+        </ThemedText>
+        <Pressable
+          onPress={() => settle(d)}
+          hitSlop={10}
+          accessibilityLabel={d.settled ? 'Вернуть в долги' : 'Уже вернули'}
+          style={({ pressed }) => [
+            styles.rowCheck,
+            {
+              borderColor: d.settled ? theme.success : theme.separator,
+              backgroundColor: d.settled ? theme.success : 'transparent',
+              opacity: pressed ? 0.6 : 1,
+            },
+          ]}>
+          <Glyph name="checkmark" fallback="✓" color={d.settled ? '#fff' : theme.separator} size={14} />
         </Pressable>
-      </ReanimatedSwipeable>
-      </Animated.View>
+      </Pressable>
+    );
+  };
+
+  const summaryDebtRow = (d: Debt) => {
+    const when = dateOf(d);
+    const note = cleanNote(d);
+    const detail = /^каршеринг$/i.test(note) ? '' : note;
+    return (
+      <Pressable
+        key={d.id}
+        onPress={() => { haptic.tap(); setEdit(d); }}
+        style={({ pressed }) => [
+          styles.summaryDebtRow,
+          { backgroundColor: pressed ? theme.backgroundSelected : theme.glass },
+        ]}>
+        <View style={[styles.summaryTimelineDot, { backgroundColor: theme.separator }]} />
+        <View style={styles.rowText}>
+          <ThemedText type="smallBold" numberOfLines={1}>
+            {when.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })} · {timeOf(d)}
+          </ThemedText>
+          {!!detail && <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>{detail}</ThemedText>}
+        </View>
+        <ThemedText type="smallBold">{money(Number(d.amount))}</ThemedText>
+        <Pressable
+          onPress={() => settle(d)}
+          hitSlop={10}
+          accessibilityLabel="Уже вернули"
+          style={({ pressed }) => [
+            styles.summaryRowCheck,
+            {
+              borderColor: theme.separator,
+              backgroundColor: 'transparent',
+              opacity: pressed ? 0.55 : 1,
+            },
+          ]}>
+          <Glyph name="checkmark" fallback="✓" color={theme.separator} size={12} />
+        </Pressable>
+      </Pressable>
     );
   };
 
   return (
     <ThemedView style={styles.root}>
-      <GestureDetector gesture={listGesture}>
       <ScrollView
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Spacing.two }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={theme.textSecondary} />}
@@ -277,9 +427,9 @@ export default function FinanceScreen() {
         </GlassCard>
 
         <AppleSegmented
-          values={['Лента', 'Кто должен']}
-          selectedIndex={view === 'period' ? 0 : 1}
-          onChange={(index) => setView(index === 0 ? 'period' : 'people')}
+          values={['Лента', 'Сводка', 'Кто должен']}
+          selectedIndex={view === 'period' ? 0 : view === 'summary' ? 1 : 2}
+          onChange={(index) => setView(index === 0 ? 'period' : index === 1 ? 'summary' : 'people')}
         />
 
         {/* Период — необязательный: «Всё» стоит всегда, пока не выберешь другое. */}
@@ -307,7 +457,93 @@ export default function FinanceScreen() {
           </View>
         </ScrollView>
 
-        {loading ? <ActivityIndicator style={{ marginTop: 60 }} color={theme.tint} /> : view === 'people' ? (
+        {loading ? <ActivityIndicator style={{ marginTop: 60 }} color={theme.tint} /> : view === 'summary' ? (
+          <>
+            {summaryGroups.length === 0 ? (
+              <View style={styles.empty}><ThemedText themeColor="textSecondary">Все долги закрыты</ThemedText></View>
+            ) : summaryGroups.map((category) => {
+              const categoryOpen = !!expandedCategories[category.id];
+              return (
+                <Animated.View
+                  key={category.id}
+                  style={styles.group}
+                  entering={FadeIn.duration(160)}
+                  layout={LinearTransition.duration(220)}>
+                  <GlassCard radius={Radius.lg} style={styles.summaryGroupCard}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded: categoryOpen }}
+                      accessibilityLabel={`${category.title}, ${money(category.total)}`}
+                      onPress={() => toggleCategory(category.id)}
+                      style={({ pressed }) => [
+                        styles.summaryCategoryRow,
+                        { backgroundColor: pressed ? theme.backgroundSelected : theme.glass },
+                      ]}>
+                      <View style={[styles.summaryCategoryIcon, { backgroundColor: category.tint }]}>
+                        <Glyph name={category.systemImage} fallback={category.fallback} color="#fff" size={19} />
+                      </View>
+                      <View style={styles.rowText}>
+                        <ThemedText type="smallBold" numberOfLines={1}>{category.title}</ThemedText>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {category.services.length} {plural(category.services.length, 'сервис', 'сервиса', 'сервисов')} · {category.count} {plural(category.count, 'запись', 'записи', 'записей')}
+                        </ThemedText>
+                      </View>
+                      <ThemedText type="smallBold">{money(category.total)}</ThemedText>
+                      <View style={[styles.summaryChevron, categoryOpen && styles.summaryChevronOpen]}>
+                        <Glyph name="chevron.right" fallback="›" color={theme.textSecondary} size={14} />
+                      </View>
+                    </Pressable>
+
+                    {categoryOpen && (
+                      <Animated.View entering={FadeIn.duration(150)} layout={LinearTransition.duration(220)}>
+                        {category.services.map((service) => {
+                          const serviceKey = `${category.id}:${service.name}`;
+                          const serviceOpen = !!expandedServices[serviceKey];
+                          return (
+                            <Animated.View key={serviceKey} layout={LinearTransition.duration(200)}>
+                              <Pressable
+                                accessibilityRole="button"
+                                accessibilityState={{ expanded: serviceOpen }}
+                                accessibilityLabel={`${service.name}, ${money(service.total)}`}
+                                onPress={() => toggleService(serviceKey)}
+                                style={({ pressed }) => [
+                                  styles.summaryServiceRow,
+                                  {
+                                    borderTopColor: theme.separator,
+                                    backgroundColor: pressed ? theme.backgroundSelected : theme.glass,
+                                  },
+                                ]}>
+                                <MerchantLogo merchant={`${service.name} ${category.merchant}`} size={34} />
+                                <View style={styles.rowText}>
+                                  <ThemedText type="smallBold" numberOfLines={1}>{service.name}</ThemedText>
+                                  <ThemedText type="small" themeColor="textSecondary">
+                                    {service.items.length} {plural(service.items.length, 'запись', 'записи', 'записей')}
+                                  </ThemedText>
+                                </View>
+                                <ThemedText type="smallBold">{money(service.total)}</ThemedText>
+                                <View style={[styles.summaryChevron, serviceOpen && styles.summaryChevronOpen]}>
+                                  <Glyph name="chevron.right" fallback="›" color={theme.textSecondary} size={13} />
+                                </View>
+                              </Pressable>
+                              {serviceOpen && (
+                                <Animated.View
+                                  entering={FadeIn.duration(140)}
+                                  layout={LinearTransition.duration(200)}
+                                  style={[styles.summaryDebtList, { borderTopColor: theme.separator }]}>
+                                  {service.items.map(summaryDebtRow)}
+                                </Animated.View>
+                              )}
+                            </Animated.View>
+                          );
+                        })}
+                      </Animated.View>
+                    )}
+                  </GlassCard>
+                </Animated.View>
+              );
+            })}
+          </>
+        ) : view === 'people' ? (
           <>
             {byCounterparty.length === 0 && mine.length === 0 ? (
               <View style={styles.empty}><ThemedText themeColor="textSecondary">Все долги закрыты</ThemedText></View>
@@ -382,7 +618,6 @@ export default function FinanceScreen() {
 
         <ThemedText type="small" themeColor="textSecondary" style={styles.version}>v{APP_BUILD}</ThemedText>
       </ScrollView>
-      </GestureDetector>
 
       <FabMenu
         label="Добавить запись"
@@ -416,16 +651,20 @@ function CarSheet({ visible, onClose, onSaved }: { visible: boolean; onClose: ()
   useEffect(() => {
     if (!visible) return;
     setAmount('');
-    loadLastCarService().then((last) => { if (last && cars.includes(last as (typeof cars)[number])) setPicked(last); });
+    loadLastCarService().then((last) => {
+      const normalized = normalizeCounterparty(last || '');
+      if (normalized && cars.includes(normalized as (typeof cars)[number])) setPicked(normalized);
+    });
   }, [visible]);
 
   async function save() {
-    if (!Number(amount)) { haptic.error(); Alert.alert('Впиши сумму'); return; }
+    const parsedAmount = parseAmount(amount);
+    if (!parsedAmount) { haptic.error(); Alert.alert('Впиши сумму'); return; }
     setSaving(true);
     try {
       await api('/debts', {
         method: 'POST',
-        body: { counterparty: picked, note: '[Тима] Каршеринг', amount: Number(amount), direction: 'owes_me', occurred_at: new Date().toISOString() },
+        body: { counterparty: picked, note: '[Тима] Каршеринг', amount: parsedAmount, direction: 'owes_me', occurred_at: new Date().toISOString() },
       });
       await saveLastCarService(picked);
       haptic.success();
@@ -442,7 +681,7 @@ function CarSheet({ visible, onClose, onSaved }: { visible: boolean; onClose: ()
       title="Каршеринг"
       rightLabel={saving ? 'Пишу…' : 'Записать'}
       onRight={save}
-      rightDisabled={saving || !Number(amount)}>
+      rightDisabled={saving || !parseAmount(amount)}>
       <View style={styles.sheetBody}>
         <View style={styles.carGrid}>
           {cars.map((car) => {
@@ -485,17 +724,18 @@ function DebtEditor({
   const item = debt && debt !== 'new' ? debt : null;
   const [counterparty, setCounterparty] = useState(item?.counterparty && !/компан/i.test(item.counterparty) ? item.counterparty : '');
   const [note, setNote] = useState(item ? cleanNote(item) : '');
-  const [amount, setAmount] = useState(item?.amount ? String(Math.round(Number(item.amount))) : '');
+  const [amount, setAmount] = useState(item?.amount ? String(Number(item.amount)).replace('.', ',') : '');
   const [person, setPerson] = useState<string>(item ? recipient(item) : 'Тима');
   const [when, setWhen] = useState<Date>(() => (item ? dateOf(item) : new Date()));
   const [saving, setSaving] = useState(false);
 
   async function save() {
-    if (!Number(amount)) { haptic.error(); Alert.alert('Впиши сумму'); return; }
+    const parsedAmount = parseAmount(amount);
+    if (!parsedAmount) { haptic.error(); Alert.alert('Впиши сумму'); return; }
     setSaving(true);
     const body = {
       counterparty: counterparty.trim() || note.trim() || 'Компания',
-      amount: Number(amount),
+      amount: parsedAmount,
       direction: item?.direction || 'owes_me',
       note: `[${person}] ${note.trim()}`.trim(),
       occurred_at: when.toISOString(),
@@ -515,7 +755,7 @@ function DebtEditor({
       title={item ? 'Запись' : 'Новая запись'}
       rightLabel={saving ? 'Пишу…' : 'Сохранить'}
       onRight={save}
-      rightDisabled={saving || !Number(amount)}>
+      rightDisabled={saving || !parseAmount(amount)}>
       <ScrollView
         style={styles.sheetScroll}
         contentContainerStyle={styles.sheetBody}
@@ -536,7 +776,7 @@ function DebtEditor({
 
         <AmountField value={amount} onChange={setAmount} autoFocus={!item} />
 
-        <Field label="Кто">
+        <Field label="Сервис или человек">
           <TextInput
             value={counterparty}
             onChangeText={setCounterparty}
@@ -574,7 +814,7 @@ function DebtEditor({
           </ScrollView>
         </Field>
 
-        <Field label="Кто платил">
+        <Field label="Кому вернуть">
           <AppleSegmented
             values={[...people]}
             selectedIndex={Math.max(0, people.indexOf(person as (typeof people)[number]))}
@@ -636,8 +876,13 @@ function AmountField({ value, onChange, autoFocus = false }: { value: string; on
     <View style={[styles.amountBox, { borderColor: theme.separator, backgroundColor: theme.backgroundElement }]}>
       <TextInput
         value={value}
-        onChangeText={(text) => onChange(text.replace(/[^0-9]/g, ''))}
-        keyboardType="number-pad"
+        onChangeText={(text) => {
+          const normalized = text.replace('.', ',').replace(/[^0-9,]/g, '');
+          const [rubles, ...fractionParts] = normalized.split(',');
+          const fraction = fractionParts.join('').slice(0, 2);
+          onChange(fractionParts.length ? `${rubles},${fraction}` : rubles);
+        }}
+        keyboardType="decimal-pad"
         autoFocus={autoFocus}
         placeholder="0"
         placeholderTextColor={theme.separator}
@@ -656,7 +901,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const styles = StyleSheet.create({
   root: { flex: 1 },
   // Снизу оставляем место под плавающую кнопку, иначе она накрывает последнюю запись.
-  content: { paddingHorizontal: Spacing.three, paddingBottom: BottomTabInset + 110, gap: Spacing.three },
+  content: { paddingHorizontal: Spacing.three, paddingBottom: BottomTabInset + 82, gap: Spacing.three },
   title: { fontSize: 30, lineHeight: 36, fontWeight: '700', letterSpacing: -0.8 },
   summary: { padding: Spacing.three, gap: Spacing.two },
   total: { fontSize: 38, lineHeight: 44, fontWeight: '800', letterSpacing: -1.4 },
@@ -671,10 +916,59 @@ const styles = StyleSheet.create({
   row: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three },
   personHead: { minHeight: 66, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three },
   rowText: { flex: 1, gap: 3 },
+  summaryGroupCard: { overflow: 'hidden' },
+  summaryCategoryRow: {
+    minHeight: 76,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
+  summaryCategoryIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  summaryServiceRow: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingLeft: Spacing.four,
+    paddingRight: Spacing.three,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  summaryChevron: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    transform: [{ rotate: '0deg' }],
+  },
+  summaryChevronOpen: { transform: [{ rotate: '90deg' }] },
+  summaryDebtList: { borderTopWidth: StyleSheet.hairlineWidth },
+  summaryDebtRow: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingLeft: Spacing.four + 14,
+    paddingRight: Spacing.three,
+  },
+  summaryTimelineDot: { width: 6, height: 6, borderRadius: 3 },
+  summaryRowCheck: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1.25,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   settled: { opacity: 0.5 },
   rowCheck: { width: 28, height: 28, borderRadius: 14, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
-  swipeActions: { flexDirection: 'row' },
-  swipeButton: { width: 62, alignItems: 'center', justifyContent: 'center' },
   empty: { alignItems: 'center', gap: Spacing.three, paddingVertical: 70 },
   version: { textAlign: 'center', opacity: 0.4 },
 

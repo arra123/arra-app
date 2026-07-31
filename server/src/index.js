@@ -29,7 +29,7 @@ await app.register(websocket);
 app.decorate('auth', makeAuthHook(app));
 
 // Здоровье сервиса
-app.get('/health', async () => ({ ok: true, service: 'aura', time: new Date().toISOString() }));
+app.get('/health', async () => ({ ok: true, service: 'noda', time: new Date().toISOString() }));
 
 await app.register(authRoutes);
 await app.register(transactionRoutes);
@@ -44,7 +44,7 @@ await app.register(ulyanaRoutes);
 
 try {
   await app.listen({ port: config.port, host: config.host });
-  app.log.info(`Aura backend на порту ${config.port}, схема БД: ${config.db.schema}`);
+  app.log.info(`Бэкенд Ноды на порту ${config.port}, схема БД: ${config.db.schema}`);
 } catch (err) {
   app.log.error(err);
   process.exit(1);

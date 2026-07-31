@@ -8,8 +8,9 @@ import { resolve } from 'node:path';
 const KEY_ID = process.env.ASC_KEY_ID;
 const ISSUER_ID = process.env.ASC_ISSUER_ID;
 const P8_PATH = process.env.ASC_P8_PATH;
-const BUNDLE_ID = process.env.BUNDLE_ID || 'com.aura.app';
-const APP_NAME = 'Aura';
+const BUNDLE_ID = process.env.BUNDLE_ID || 'com.arratima.aura';
+const APP_NAME = 'Noda';
+// Пароль от .p12 менять нельзя: он записан в credentials.json рядом с готовым сертификатом.
 const P12_PASSWORD = 'aura-dist';
 
 const dir = resolve(process.cwd(), 'credentials');

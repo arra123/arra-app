@@ -346,35 +346,49 @@ export function SyncPanel() {
       {/* Маршрут: устройство ↔ сервер. Подписи «Устройство / выбери где запустить»
           убраны — переключатель и так показывает, что выбрано. */}
       <GlassCard radius={Radius.lg} style={styles.routeCard}>
-        <View style={styles.routeNode}>
-          <SymbolView
-            name={(deviceRole(selected) === 'laptop' ? 'laptopcomputer' : 'desktopcomputer') as never}
-            tintColor={theme.text}
-            size={24}
+        <View style={styles.routeTop}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <ThemedText type="smallBold" numberOfLines={1}>{selected?.name || deviceLabel(selected)}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">Откуда запускать синхронизацию</ThemedText>
+          </View>
+          <DeviceSwitcher
+            devices={devices}
+            value={deviceId}
+            onChange={(id) => { setDeviceId(id); setSync(emptySync); setInfo(null); }}
+            compact
           />
-          <ThemedText type="smallBold" numberOfLines={1}>{deviceLabel(selected)}</ThemedText>
-          <ThemedText type="small" themeColor={selected?.online ? 'success' : 'textSecondary'}>
-            {selected?.online ? 'в сети' : 'не в сети'}
-          </ThemedText>
         </View>
-        <SymbolView name="arrow.left.arrow.right" tintColor={theme.tint} size={18} />
-        <View style={styles.routeNode}>
-          <SymbolView
-            name="externaldrive.connected.to.line.below"
-            tintColor={serverOnline ? theme.success : theme.textSecondary}
-            size={24}
-          />
-          <ThemedText type="smallBold">Сервер</ThemedText>
-          <ThemedText type="small" themeColor={serverOnline ? 'success' : 'textSecondary'}>
-            {serverOnline ? 'в сети' : 'не в сети'}
-          </ThemedText>
+        <View style={styles.routeLine}>
+          <View style={styles.routeNode}>
+            <View style={[styles.routeIcon, { backgroundColor: theme.backgroundSelected }]}>
+              <SymbolView
+                name={(deviceRole(selected) === 'laptop' ? 'laptopcomputer' : 'desktopcomputer') as never}
+                tintColor={theme.tint}
+                size={24}
+              />
+            </View>
+            <ThemedText type="smallBold" numberOfLines={1}>{deviceLabel(selected)}</ThemedText>
+            <ThemedText type="small" themeColor={selected?.online ? 'success' : 'textSecondary'}>
+              {selected?.online ? 'в сети' : 'не в сети'}
+            </ThemedText>
+          </View>
+          <View style={[styles.routeArrow, { backgroundColor: theme.backgroundSelected }]}>
+            <SymbolView name="arrow.left.arrow.right" tintColor={theme.tint} size={17} />
+          </View>
+          <View style={styles.routeNode}>
+            <View style={[styles.routeIcon, { backgroundColor: serverOnline ? '#E7F6EC' : theme.disabled }]}>
+              <SymbolView
+                name="externaldrive.connected.to.line.below"
+                tintColor={serverOnline ? theme.success : theme.textSecondary}
+                size={24}
+              />
+            </View>
+            <ThemedText type="smallBold">Сервер</ThemedText>
+            <ThemedText type="small" themeColor={serverOnline ? 'success' : 'textSecondary'}>
+              {serverOnline ? 'в сети' : 'не в сети'}
+            </ThemedText>
+          </View>
         </View>
-        <DeviceSwitcher
-          devices={devices}
-          value={deviceId}
-          onChange={(id) => { setDeviceId(id); setSync(emptySync); setInfo(null); }}
-          compact
-        />
       </GlassCard>
 
       {/* Что происходит и что делать. */}
@@ -548,8 +562,12 @@ export function SyncPanel() {
 
 const styles = StyleSheet.create({
   content: { paddingHorizontal: Spacing.three, paddingTop: Spacing.two, gap: Spacing.three },
-  routeCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, padding: Spacing.three },
+  routeCard: { gap: Spacing.three, padding: Spacing.three },
+  routeTop: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  routeLine: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   routeNode: { flex: 1, minWidth: 0, alignItems: 'center', gap: 2 },
+  routeIcon: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
+  routeArrow: { width: 36, height: 28, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
   stateCard: { padding: Spacing.three, gap: Spacing.three },
   stateHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   history: { gap: 6, paddingTop: Spacing.three, borderTopWidth: StyleSheet.hairlineWidth },

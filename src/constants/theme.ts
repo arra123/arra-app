@@ -56,7 +56,6 @@ export const Radius = {
 
 /** Палитра градиентов в стиле iOS 26 Liquid Glass */
 export const Gradients = {
-  aura: ['#2B93FF', '#007AFF', '#30B0C7'] as const,
   finance: ['#5FD97E', '#34C759'] as const,
   files: ['#C79BFF', '#AF52DE'] as const,
 };
@@ -100,4 +99,4 @@ export const BottomTabInset = Platform.select({ ios: 16, android: 24 }) ?? 0;
 export const MaxContentWidth = 800;
 
 /** Номер сборки JS — показывается в углу экрана. Увеличивать при каждом выкате OTA. */
-export const APP_BUILD = 102;
+export const APP_BUILD = 103;

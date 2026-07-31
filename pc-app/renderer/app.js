@@ -895,7 +895,7 @@ const FIN_PEOPLE = ['Тима', 'Даня', 'Женя'];
 const FIN_CARS = [
   { name: 'Ситидрайв', icon: 'citydrive' },
   { name: 'Делимобиль', icon: 'delimobil' },
-  { name: 'БелкаКар', icon: 'belkacar' },
+  { name: 'BelkaCar', icon: 'belkacar' },
   { name: 'Яндекс Драйв', icon: 'yandexdrive' },
 ];
 const finPerson = (d) => (String(d.note || '').match(/\[(Тима|Даня|Женя)\]/) || [])[1] || 'Тима';
@@ -903,6 +903,10 @@ const normalizeFinanceText = (value) => String(value || '')
   .replace(/(^|[\s(])зон(?=$|[\s).,])/giu, '$1Ozon')
   .replace(/(^|[\s(])zone(?=$|[\s).,])/giu, '$1Ozon')
   .replace(/пополнение баланса озон/giu, 'Пополнение баланса Ozon');
+const normalizeFinanceCounterparty = (value) => {
+  const normalized = normalizeFinanceText(value).trim();
+  return /^(belka\s*car|белка\s*кар|белкакар)$/i.test(normalized) ? 'BelkaCar' : normalized;
+};
 const finPurpose = (d) => normalizeFinanceText(String(d.note || '').replace(/\[(Тима|Даня|Женя)\]\s*/g, '')).trim();
 const finDate = (d) => new Date(d.occurred_at || d.created_at || Date.now());
 const finPlural = (n, one, few, many) => {
@@ -972,8 +976,8 @@ async function renderFin() {
   try { result = await api('GET', '/debts?all=true'); }
   catch (e) { app.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const all = result.debts || [];
-  state.debtList = all.filter((d) => d.direction !== 'i_owe');
-  state.myDebts = all.filter((d) => d.direction === 'i_owe' && !d.settled);
+  state.debtList = all.filter((d) => d.direction !== 'i_owe' && Number(d.amount) > 0);
+  state.myDebts = all.filter((d) => d.direction === 'i_owe' && !d.settled && Number(d.amount) > 0);
   state.finView = state.finView || localStorage.getItem('noda_pc_fin_view') || 'period';
   state.finSpan = state.finSpan || 'all';
   finDraw();
@@ -1089,19 +1093,19 @@ function finDayGroup(key, rows) {
 
 function finRow(d) {
   const purpose = finPurpose(d);
-  const counterparty = normalizeFinanceText(d.counterparty);
+  const counterparty = normalizeFinanceCounterparty(d.counterparty);
   const named = counterparty && !/компан/i.test(counterparty);
   const title = named ? counterparty : (purpose || 'Без названия');
-  const owes = counterparty || 'Компания';
-  const subtitle = named ? purpose : '';
   const who = finPerson(d);
+  const whom = ({ Тима: 'Тиме', Даня: 'Дане', Женя: 'Жене' })[who] || who;
+  const relation = d.direction === 'i_owe' ? 'я должен' : `вернуть ${whom}`;
   const when = finDate(d).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
   return `
     <div class="fin-row${d.settled ? ' settled' : ''}" data-entry="${d.id}">
       ${financeDebtIcon(d, purpose)}
       <div class="fin-main">
         <b>${esc(title)}</b>
-        <small>должен ${esc(owes)}${subtitle ? ' · ' + esc(subtitle) : ''}${who !== 'Тима' ? ' · платил ' + esc(who) : ''} · ${esc(when)}</small>
+        <small>${purpose ? esc(purpose) + ' · ' : ''}${esc(relation)} · ${esc(when)}</small>
       </div>
       <strong class="fin-amount">${fmt(d.amount)} ₽</strong>
       <button class="fin-check${d.settled ? ' on' : ''}" data-settle="${d.id}" title="Вернули">✓</button>
@@ -1119,7 +1123,7 @@ function finGroupBy(list) {
   if (!list.length) return '';
   const groups = new Map();
   for (const d of list) {
-    const key = (d.counterparty || 'Без имени').trim();
+    const key = normalizeFinanceCounterparty(d.counterparty || 'Без имени');
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(d);
   }

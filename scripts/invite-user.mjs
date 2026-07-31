@@ -8,7 +8,7 @@ const ISSUER_ID = process.env.ASC_ISSUER_ID;
 const P8_PATH = process.env.ASC_P8_PATH;
 const EMAIL = process.env.INVITE_EMAIL;
 const FIRST = process.env.INVITE_FIRST || 'Tima';
-const LAST = process.env.INVITE_LAST || 'Aura';
+const LAST = process.env.INVITE_LAST || 'Noda';
 const API = 'https://api.appstoreconnect.apple.com';
 
 const b64url = (b) => Buffer.from(b).toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');

@@ -7,8 +7,8 @@ const KEY_ID = process.env.ASC_KEY_ID;
 const ISSUER_ID = process.env.ASC_ISSUER_ID;
 const P8_PATH = process.env.ASC_P8_PATH;
 const BUNDLE_ID = process.env.BUNDLE_ID || 'com.arratima.aura';
-const NAME = process.env.APP_NAME || 'Aura';
-const SKU = process.env.APP_SKU || 'aura-2026';
+const NAME = process.env.APP_NAME || 'Noda';
+const SKU = process.env.APP_SKU || 'noda-2026';
 const API = 'https://api.appstoreconnect.apple.com';
 
 function b64url(b) {

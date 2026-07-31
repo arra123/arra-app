@@ -9,12 +9,10 @@ import {
 import * as Linking from 'expo-linking';
 import { DefaultTheme, router, Stack, ThemeProvider } from 'expo-router';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import * as Updates from 'expo-updates';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { parseQuickAction, setQuickAction } from '@/lib/quick-action';
 
@@ -72,29 +70,11 @@ export default function RootLayout() {
     return () => sub.remove();
   }, []);
 
-  // Жёсткая авто-проверка апдейта при каждом запуске: качаем и применяем сразу,
-  // не полагаясь на капризное нативное поведение expo-updates (из-за него версия «застревала»).
-  useEffect(() => {
-    if (__DEV__) return;
-    (async () => {
-      try {
-        const res = await Updates.checkForUpdateAsync();
-        if (res.isAvailable) {
-          await Updates.fetchUpdateAsync();
-          await Updates.reloadAsync();
-        }
-      } catch {
-        // нет сети / уже последняя — молча
-      }
-    })();
-  }, []);
-
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider value={{ ...DefaultTheme, colors: { ...DefaultTheme.colors, background: '#F2F3F7', card: '#FFFFFF', primary: '#007AFF', border: '#D7D9E0' } }}>
           <AuthProvider>
-            <AnimatedSplashOverlay />
             <Gate />
           </AuthProvider>
         </ThemeProvider>

@@ -32,7 +32,7 @@ const QuickAdd = (props: QuickAddProps, environment: WidgetEnvironment) => {
 
   if (family === 'accessoryCircular') {
     return (
-      <Link destination="aura://quick/car">
+      <Link destination="noda://quick/car">
         <VStack spacing={0}>
           <Image systemName="car.fill" modifiers={[font({ size: 15 })]} />
           <Text modifiers={[font({ size: 11, weight: 'semibold' })]}>Поездка</Text>
@@ -43,7 +43,7 @@ const QuickAdd = (props: QuickAddProps, environment: WidgetEnvironment) => {
 
   if (family === 'accessoryRectangular') {
     return (
-      <Link destination="aura://quick/car">
+      <Link destination="noda://quick/car">
         <VStack alignment="leading" spacing={1}>
           <Text modifiers={[font({ size: 12, weight: 'semibold' })]}>Не вернули</Text>
           <Text modifiers={[font({ size: 17, weight: 'bold' })]}>{money(props.total)}</Text>
@@ -71,7 +71,7 @@ const QuickAdd = (props: QuickAddProps, environment: WidgetEnvironment) => {
       <Spacer />
 
       {compact ? (
-        <Link destination="aura://quick/car">
+        <Link destination="noda://quick/car">
           <HStack spacing={6} modifiers={[frame({ maxWidth: 1000 }), padding({ vertical: 7 })]}>
             <Image systemName="car.fill" modifiers={[font({ size: 13 }), foregroundStyle(GREEN)]} />
             <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundStyle(GREEN)]}>Каршеринг</Text>
@@ -79,13 +79,13 @@ const QuickAdd = (props: QuickAddProps, environment: WidgetEnvironment) => {
         </Link>
       ) : (
         <HStack spacing={8} modifiers={[frame({ maxWidth: 1000 })]}>
-          <Link destination="aura://quick/car">
+          <Link destination="noda://quick/car">
             <HStack spacing={6} modifiers={[padding({ vertical: 7, horizontal: 10 })]}>
               <Image systemName="car.fill" modifiers={[font({ size: 13 }), foregroundStyle(GREEN)]} />
               <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundStyle(GREEN)]}>Каршеринг</Text>
             </HStack>
           </Link>
-          <Link destination="aura://quick/note">
+          <Link destination="noda://quick/note">
             <HStack spacing={6} modifiers={[padding({ vertical: 7, horizontal: 10 })]}>
               <Image systemName="square.and.pencil" modifiers={[font({ size: 13 }), foregroundStyle(ACCENT)]} />
               <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundStyle(ACCENT)]}>Заметка</Text>

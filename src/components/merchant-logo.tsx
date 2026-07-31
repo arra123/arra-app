@@ -293,8 +293,6 @@ const styles = StyleSheet.create({
   imageTile: {
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
-    borderColor: 'rgba(60,60,67,0.10)',
-    borderWidth: StyleSheet.hairlineWidth,
     justifyContent: 'center',
     overflow: 'hidden',
   },

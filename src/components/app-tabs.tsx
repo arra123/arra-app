@@ -1,57 +1,70 @@
-import { NativeTabs } from 'expo-router/unstable-native-tabs';
+import { Tabs } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
+import { Platform, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { SFSymbol } from 'sf-symbols-typescript';
+
+const TAB_ICONS: Record<string, { regular: SFSymbol; selected: SFSymbol }> = {
+  index: { regular: 'wallet.bifold', selected: 'wallet.bifold.fill' },
+  chat: { regular: 'sparkles', selected: 'sparkles' },
+  pc: { regular: 'desktopcomputer', selected: 'desktopcomputer' },
+  files: { regular: 'arrow.left.arrow.right', selected: 'arrow.left.arrow.right' },
+  notes: { regular: 'note.text', selected: 'note.text' },
+};
 
 /**
- * Системная нижняя навигация.
+ * Фиксированная панель вкладок без системного прозрачного материала.
  *
- * На iOS 26 UITabBar сам рисует Liquid Glass, а при прокрутке сворачивается
- * стандартной системной анимацией. SF Symbols важны: PNG в NativeTabs
- * интерпретировались как исходный размер в pt и раздували панель.
+ * Экспериментальные Native Tabs на iOS меняли оттенок в зависимости от
+ * контента под панелью. Обычная панель Expo Router сохраняет один белый фон
+ * на всех экранах и не сворачивается при прокрутке.
  */
 export default function AppTabs() {
+  const insets = useSafeAreaInsets();
+  const barHeight = (Platform.OS === 'ios' ? 50 : 58) + insets.bottom;
+
   return (
-    <NativeTabs
-      backgroundColor="#FFFFFF"
-      // Панель залита сплошным белым без размытия. Со стеклом её оттенок
-      // «плыл» от того, что оказывалось под ней на каждом экране, и панель
-      // выглядела так, будто постоянно меняет цвет.
-      blurEffect="none"
-      disableTransparentOnScrollEdge
-      minimizeBehavior="never"
-      labelVisibilityMode="labeled"
-      tintColor="#007AFF"
-      iconColor={{ default: '#555A64', selected: '#007AFF' }}
-      labelStyle={{
-        default: { color: '#555A64', fontSize: 11, fontWeight: '600' },
-        selected: { color: '#007AFF', fontSize: 11, fontWeight: '700' },
-      }}
-      shadowColor="#C9CBD2"
-      backBehavior="history">
-      <NativeTabs.Trigger name="index">
-        <NativeTabs.Trigger.Icon sf={{ default: 'wallet.bifold', selected: 'wallet.bifold.fill' }} />
-        <NativeTabs.Trigger.Label>Финансы</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
-
-      <NativeTabs.Trigger name="chat">
-        <NativeTabs.Trigger.Icon sf={{ default: 'sparkles', selected: 'sparkles' }} />
-        <NativeTabs.Trigger.Label>Помощник</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
-
-      <NativeTabs.Trigger name="pc">
-        <NativeTabs.Trigger.Icon sf={{ default: 'desktopcomputer', selected: 'desktopcomputer' }} />
-        <NativeTabs.Trigger.Label>ПК</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
-
-      <NativeTabs.Trigger name="files">
-        <NativeTabs.Trigger.Icon sf={{ default: 'arrow.left.arrow.right', selected: 'arrow.left.arrow.right' }} />
-        <NativeTabs.Trigger.Label>Передача</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
-
-      <NativeTabs.Trigger name="notes">
-        <NativeTabs.Trigger.Icon sf={{ default: 'note.text', selected: 'note.text' }} />
-        <NativeTabs.Trigger.Label>Заметки</NativeTabs.Trigger.Label>
-      </NativeTabs.Trigger>
-
-      <NativeTabs.Trigger name="profile" hidden />
-    </NativeTabs>
+    <Tabs
+      screenOptions={({ route }) => {
+        const icons = TAB_ICONS[route.name] || TAB_ICONS.index;
+        return {
+          headerShown: false,
+          sceneStyle: styles.scene,
+          tabBarActiveTintColor: '#007AFF',
+          tabBarInactiveTintColor: '#686D77',
+          tabBarHideOnKeyboard: true,
+          tabBarLabelStyle: styles.label,
+          tabBarItemStyle: styles.item,
+          tabBarStyle: [styles.bar, { height: barHeight, paddingBottom: insets.bottom }],
+          tabBarIcon: ({ color, focused }) => (
+            <SymbolView
+              name={focused ? icons.selected : icons.regular}
+              tintColor={String(color)}
+              size={focused ? 22 : 21}
+            />
+          ),
+        };
+      }}>
+      <Tabs.Screen name="index" options={{ title: 'Финансы' }} />
+      <Tabs.Screen name="chat" options={{ title: 'Помощник' }} />
+      <Tabs.Screen name="pc" options={{ title: 'ПК' }} />
+      <Tabs.Screen name="files" options={{ title: 'Передача' }} />
+      <Tabs.Screen name="notes" options={{ title: 'Заметки' }} />
+      <Tabs.Screen name="profile" options={{ href: null }} />
+    </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  scene: { backgroundColor: '#F2F3F7' },
+  bar: {
+    backgroundColor: '#FFFFFF',
+    borderTopColor: '#D7D9E0',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 5,
+    elevation: 0,
+    shadowColor: 'transparent',
+  },
+  item: { paddingVertical: 1 },
+  label: { fontSize: 10, lineHeight: 13, fontWeight: '600' },
+});

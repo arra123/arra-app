@@ -9,14 +9,10 @@ tmp/
 pc-app/
 server/
 hub-api/
-design/
-noda-v2/
 scripts/
 dist-mobile-*/
 stickers/
-arra-sim.tar.gz
 /*.png
-pc-agent/
 .codex/
 .impeccable/
 .vscode/
@@ -35,7 +31,6 @@ pc-agent/
 .env.*
 credentials.json
 credentials/
-_codemagic_secrets/
 *.jks
 *.p8
 *.p12
@@ -46,12 +41,10 @@ _codemagic_secrets/
 # Repository-only agent/project metadata
 .git/
 .github/
-.agents/
 .claude/
 AGENTS.md
 CLAUDE.md
 PRODUCT.md
-SETUP_CODEMAGIC.md
 
 # Platform noise
 .DS_Store

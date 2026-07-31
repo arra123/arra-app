@@ -1,11 +1,12 @@
 import { MenuView } from '@expo/ui/community/menu';
 import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -13,13 +14,8 @@ import {
   ScrollView,
   StyleSheet,
   TextInput,
-  TouchableOpacity,
-  useWindowDimensions,
   View,
 } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { GlassCard } from '@/components/glass-card';
@@ -66,7 +62,6 @@ const noteSection = (iso: string) => {
 export default function NotesScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { width: screenWidth } = useWindowDimensions();
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -78,9 +73,6 @@ export default function NotesScreen() {
   // открытии другой заметки / вставке надиктованного.
   const bodyRef = useRef('');
   const structuredRef = useRef('');
-  // Пока тянут карточку по горизонтали, список стоит на месте: иначе
-  // прокрутка перехватывала свайп и страница дёргалась туда-сюда.
-  const listGesture = useMemo(() => Gesture.Native(), []);
   const titleInputRef = useRef<TextInput>(null);
   const bodyInputRef = useRef<TextInput>(null);
   const [bodyKey, setBodyKey] = useState(0);
@@ -88,12 +80,7 @@ export default function NotesScreen() {
   const [color, setColor] = useState<string | null>(null);
   const [version, setVersion] = useState<'original' | 'structured'>('original');
   const [structuring, setStructuring] = useState(false);
-  const [keyboard, setKeyboard] = useState(0);
   const [transcribing, setTranscribing] = useState(false);
-  const editorX = useSharedValue(0);
-  const editorAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: editorX.value }],
-  }));
 
   /** Готовую голосовую запись распознаём и дописываем в конец заметки. */
   async function transcribe(uri: string) {
@@ -138,24 +125,6 @@ export default function NotesScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Панель инструментов поднимаем ровно на высоту клавиатуры.
-  // KeyboardAvoidingView внутри Modal добавлял safe-area второй раз — из-за этого
-  // между панелью и клавиатурой висел пустой блок примерно в 200 px.
-  useEffect(() => {
-    if (!editing) return;
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const show = Keyboard.addListener(showEvent, (event) => {
-      Keyboard.scheduleLayoutAnimation(event);
-      setKeyboard(event.endCoordinates?.height || 0);
-    });
-    const hide = Keyboard.addListener(hideEvent, (event) => {
-      Keyboard.scheduleLayoutAnimation(event);
-      setKeyboard(0);
-    });
-    return () => { show.remove(); hide.remove(); };
-  }, [editing]);
-
   async function onRefresh() {
     setRefreshing(true);
     await load();
@@ -164,7 +133,6 @@ export default function NotesScreen() {
 
   function openNew() {
     Keyboard.dismiss();
-    editorX.value = 0;
     setTitle('');
     setBodyText('');
     structuredRef.current = '';
@@ -174,7 +142,6 @@ export default function NotesScreen() {
   }
   function openNote(n: Note) {
     Keyboard.dismiss();
-    editorX.value = 0;
     setTitle(n.title || '');
     setBodyText(n.body);
     structuredRef.current = n.structured_body || '';
@@ -184,8 +151,6 @@ export default function NotesScreen() {
   }
   function close() {
     Keyboard.dismiss();
-    setKeyboard(0);
-    editorX.value = 0;
     setEditing(null);
   }
 
@@ -286,53 +251,22 @@ export default function NotesScreen() {
     ]);
   }
 
-  // Удаление свайпом из списка (как в Apple)
-  async function deleteNote(id: string) {
-    setNotes((p) => p.filter((n) => n.id !== id));
-    try { await api(`/notes/${id}`, { method: 'DELETE' }); } catch { load(); }
-  }
-
-  // Интерактивный edge-swipe: редактор следует за пальцем и может остановиться
-  // в любой точке. После отпускания либо возвращается, либо сохраняется и закрывается.
-  const editorDismissGesture = Gesture.Pan()
-    .hitSlop({ left: 0, width: 42 })
-    .activeOffsetX([12, 9999])
-    .failOffsetY([-20, 20])
-    .onUpdate((event) => {
-      editorX.value = Math.max(0, event.translationX);
-    })
-    .onEnd((event) => {
-      const shouldClose = event.translationX > screenWidth * 0.32 || event.velocityX > 760;
-      if (shouldClose) {
-        // Доводим слой до края и только потом закрываем — сохранение теперь
-        // мгновенное, поэтому жест не обрывается на середине.
-        editorX.value = withTiming(screenWidth, { duration: 170 }, (finished) => {
-          if (finished) runOnJS(save)();
-        });
-      } else {
-        editorX.value = withSpring(0, { damping: 22, stiffness: 240 });
-      }
-    });
-
   // ----- Редактор -----
   const editor = editing ? (
     <Modal
       visible
-      transparent
-      animationType="none"
-      presentationStyle="overFullScreen"
+      animationType="slide"
+      presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
+      allowSwipeDismissal={Platform.OS === 'ios'}
       onRequestClose={() => save()}>
-      <GestureDetector gesture={editorDismissGesture}>
-        <Animated.View
-          style={[
-            styles.editorLayer,
-            { backgroundColor: theme.background, paddingBottom: keyboard },
-            editorAnimatedStyle,
-          ]}>
-          <View style={[styles.editorBar, { paddingTop: insets.top + Spacing.two }]}>
+      <ThemedView style={styles.editorLayer}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[styles.editorBar, { paddingTop: Platform.OS === 'ios' ? Spacing.two : insets.top + Spacing.two }]}>
             <AppleIconButton
               label="Назад к заметкам"
-              systemImage="chevron.left"
+              systemImage="chevron.down"
               onPress={() => save()}
               variant="plain"
               tint={theme.tint}
@@ -378,14 +312,10 @@ export default function NotesScreen() {
               />
             </View>
           </View>
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={styles.editorContent}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="interactive"
-            onScrollBeginDrag={Keyboard.dismiss}>
+          <View style={styles.editorContent}>
             <TextInput
               ref={titleInputRef}
+              autoFocus={editing === 'new'}
               placeholder="Заголовок"
               placeholderTextColor={theme.textSecondary}
               value={title}
@@ -422,12 +352,12 @@ export default function NotesScreen() {
               onChangeText={(t) => { if (version === 'original') bodyRef.current = t; else structuredRef.current = t; }}
               multiline
               maxFontSizeMultiplier={1.18}
-              scrollEnabled={false}
+              scrollEnabled
+              textAlignVertical="top"
               style={[styles.bodyInput, { color: theme.text }]}
             />
-          </ScrollView>
-          {keyboard > 0 && (
-          <View style={[styles.editorTools, { paddingBottom: Spacing.two, borderTopColor: theme.separator, backgroundColor: theme.backgroundElement }]}>
+          </View>
+          <View style={[styles.editorTools, { borderTopColor: theme.separator, backgroundColor: theme.backgroundElement }]}>
             <MenuView
               title="Формат"
               actions={[
@@ -474,9 +404,8 @@ export default function NotesScreen() {
             />
             <HoldMic onResult={transcribe} disabled={transcribing} size={40} bottomOffset={62} />
           </View>
-          )}
-        </Animated.View>
-      </GestureDetector>
+        </KeyboardAvoidingView>
+      </ThemedView>
     </Modal>
   ) : null;
 
@@ -496,7 +425,6 @@ export default function NotesScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <GestureDetector gesture={listGesture}>
       <ScrollView
         contentContainerStyle={[styles.content, { paddingTop: insets.top + Spacing.two }]}
         showsVerticalScrollIndicator={false}
@@ -531,7 +459,7 @@ export default function NotesScreen() {
           <GlassCard radius={Radius.lg} style={styles.emptyCard}>
             <SymbolView name="note.text" tintColor={theme.textSecondary} size={34} />
             <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
-              Пусто. Нажми + — заметка появится и на компьютере.
+              Пусто. Нажми кнопку справа сверху — заметка появится и на компьютере.
             </ThemedText>
           </GlassCard>
         ) : visibleNotes.length === 0 ? (
@@ -545,52 +473,39 @@ export default function NotesScreen() {
               <ThemedText style={styles.sectionTitle}>{section}</ThemedText>
               <GlassCard radius={Radius.lg} style={styles.noteList}>
                 {sectionNotes.map((n, index) => (
-                  <ReanimatedSwipeable
+                  <Pressable
                     key={n.id}
-                    friction={1.1}
-                    rightThreshold={30}
-                    overshootRight={false}
-                    // Пока идёт свайп, список не прокручивается и не тянет
-                    // pull-to-refresh — иначе страница дёргалась и перезагружалась.
-                    blocksExternalGesture={listGesture}
-                    dragOffsetFromRightEdge={18}
-                    renderRightActions={() => (
-                      <TouchableOpacity onPress={() => { haptic.warning(); deleteNote(n.id); }} activeOpacity={0.8} style={[styles.swipeDelete, { backgroundColor: theme.danger }]}>
-                        <SymbolView name="trash.fill" tintColor="#fff" size={22} />
-                      </TouchableOpacity>
-                    )}>
-                    <Pressable onPress={() => openNote(n)}>
-                      <View
-                        style={[
-                          styles.noteCard,
-                          index < sectionNotes.length - 1 && { borderBottomColor: theme.separator, borderBottomWidth: StyleSheet.hairlineWidth },
-                        ]}>
-                        <View style={styles.noteTitleRow}>
-                          {!!n.color && <View style={[styles.catDot, { backgroundColor: n.color }]} />}
-                          <ThemedText type="smallBold" numberOfLines={1} style={{ flex: 1 }}>
-                            {n.title?.trim() || 'Без названия'}
-                          </ThemedText>
-                          {!!catLabel(n.color) && <ThemedText type="small" style={{ color: n.color || theme.textSecondary, fontWeight: '600' }}>{catLabel(n.color)}</ThemedText>}
-                          {!!n.structured_body?.trim() && <SymbolView name="wand.and.stars" tintColor={theme.tint} size={13} />}
-                        </View>
-                        {!!n.body.trim() && (
-                          <ThemedText type="small" themeColor="textSecondary" numberOfLines={2} style={{ marginTop: 3 }}>
-                            {n.body.trim()}
-                          </ThemedText>
-                        )}
-                        <ThemedText type="small" themeColor="textSecondary" style={styles.noteTime}>
-                          {fmtTime(n.updated_at)}
+                    onPress={() => openNote(n)}
+                    style={({ pressed }) => ({ opacity: pressed ? 0.62 : 1 })}>
+                    <View
+                      style={[
+                        styles.noteCard,
+                        index < sectionNotes.length - 1 && { borderBottomColor: theme.separator, borderBottomWidth: StyleSheet.hairlineWidth },
+                      ]}>
+                      <View style={styles.noteTitleRow}>
+                        {!!n.color && <View style={[styles.catDot, { backgroundColor: n.color }]} />}
+                        <ThemedText type="smallBold" numberOfLines={1} style={{ flex: 1 }}>
+                          {n.title?.trim() || 'Без названия'}
                         </ThemedText>
+                        {!!catLabel(n.color) && <ThemedText type="small" style={{ color: n.color || theme.textSecondary, fontWeight: '600' }}>{catLabel(n.color)}</ThemedText>}
+                        {!!n.structured_body?.trim() && <SymbolView name="wand.and.stars" tintColor={theme.tint} size={13} />}
                       </View>
-                    </Pressable>
-                  </ReanimatedSwipeable>
+                      {!!n.body.trim() && (
+                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={2} style={{ marginTop: 3 }}>
+                          {n.body.trim()}
+                        </ThemedText>
+                      )}
+                      <ThemedText type="small" themeColor="textSecondary" style={styles.noteTime}>
+                        {fmtTime(n.updated_at)}
+                      </ThemedText>
+                    </View>
+                  </Pressable>
                 ))}
               </GlassCard>
             </View>
           ))
         )}
       </ScrollView>
-      </GestureDetector>
       {editor}
     </ThemedView>
   );
@@ -598,7 +513,7 @@ export default function NotesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#ECECF1' },
-  content: { paddingHorizontal: Spacing.three, paddingBottom: BottomTabInset + Spacing.five, gap: Spacing.three },
+  content: { paddingHorizontal: Spacing.three, paddingBottom: BottomTabInset + Spacing.three, gap: Spacing.three },
   headRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   h1: { flex: 1, minWidth: 0, fontSize: 30, fontWeight: '700', lineHeight: 36, letterSpacing: -0.8 },
   searchBar: { minHeight: 38, borderRadius: Radius.pill, borderWidth: StyleSheet.hairlineWidth, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12 },
@@ -612,30 +527,17 @@ const styles = StyleSheet.create({
   noteTitleRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   noteTime: { marginTop: Spacing.two, fontSize: 12 },
   catDot: { width: 9, height: 9, borderRadius: 5 },
-  swipeDelete: { width: 76, marginLeft: Spacing.two, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' },
-  editorLayer: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    zIndex: 10,
-    shadowColor: '#172033',
-    shadowOffset: { width: -8, height: 0 },
-    shadowOpacity: 0.16,
-    shadowRadius: 18,
-    elevation: 12,
-  },
+  editorLayer: { flex: 1 },
   editorBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.three, paddingBottom: Spacing.two },
   barRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   headSegment: { flex: 1, minWidth: 0, marginHorizontal: Spacing.two },
-  editorContent: { flexGrow: 1, paddingHorizontal: Spacing.three, paddingBottom: Spacing.four, gap: Spacing.two },
+  editorContent: { flex: 1, minHeight: 0, paddingHorizontal: Spacing.three, paddingBottom: Spacing.two, gap: Spacing.two },
   categoryMenu: { alignSelf: 'flex-start', marginVertical: 2 },
   titleInput: { fontSize: 26, fontWeight: '700', fontFamily: 'Inter_700Bold', paddingVertical: Spacing.two },
-  bodyInput: { flex: 1, fontSize: 17, lineHeight: 25, fontFamily: 'Inter_400Regular', minHeight: 320, textAlignVertical: 'top' },
+  bodyInput: { flex: 1, minHeight: 160, fontSize: 17, lineHeight: 25, fontFamily: 'Inter_400Regular', textAlignVertical: 'top' },
   editorTools: {
     minHeight: 58,
-    paddingTop: Spacing.one,
+    paddingVertical: Spacing.one,
     paddingHorizontal: Spacing.three,
     borderTopWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',

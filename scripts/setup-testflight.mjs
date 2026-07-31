@@ -10,7 +10,7 @@ const P8_PATH = process.env.ASC_P8_PATH;
 const APP_ID = process.env.ASC_APP_ID || '6782562444';
 const TESTER_EMAIL = process.env.TESTER_EMAIL || 'dane22334455@gmail.com';
 const TESTER_FIRST = process.env.TESTER_FIRST || 'Danila';
-const TESTER_LAST = process.env.TESTER_LAST || 'Aura';
+const TESTER_LAST = process.env.TESTER_LAST || 'Noda';
 const API = 'https://api.appstoreconnect.apple.com';
 
 const b64url = (b) => Buffer.from(b).toString('base64').replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');

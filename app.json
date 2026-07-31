@@ -6,7 +6,7 @@
     "version": "1.10.0",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
-    "scheme": "aura",
+    "scheme": "noda",
     "userInterfaceStyle": "light",
     "runtimeVersion": {
       "policy": "appVersion"
@@ -36,10 +36,6 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ]
     },
@@ -52,14 +48,14 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#F4F7FB",
-          "image": "./assets/images/icon.png",
-          "imageWidth": 110,
+          "backgroundColor": "#F2F3F7",
+          "image": "./noda-ios/assets/noda.png",
+          "imageWidth": 92,
           "resizeMode": "contain",
           "dark": {
-            "backgroundColor": "#F4F7FB",
-            "image": "./assets/images/icon.png",
-            "imageWidth": 110
+            "backgroundColor": "#F2F3F7",
+            "image": "./noda-ios/assets/noda.png",
+            "imageWidth": 92
           }
         }
       ],
@@ -88,7 +84,7 @@
       "url": "https://u.expo.dev/804ef682-ea7e-4d3f-9994-d578dd0e4c79",
       "enabled": true,
       "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 10000
+      "fallbackToCacheTimeout": 0
     }
   }
 }

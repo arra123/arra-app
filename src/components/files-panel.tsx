@@ -52,7 +52,7 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [activeUploads, setActiveUploads] = useState(0);
   const [uploadLabel, setUploadLabel] = useState('');
   const [transferNotice, setTransferNotice] = useState<{ text: string; delivered: boolean } | null>(null);
   const [lastPicker, setLastPicker] = useState(false);
@@ -64,6 +64,7 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
   // По умолчанию два ряда: полная сетка из сотни плиток грузилась долго
   // и превращала экран в бесконечную ленту.
   const [allShown, setAllShown] = useState(false);
+  const uploading = activeUploads > 0;
 
   useEffect(() => { getToken().then(setTok); }, []);
 
@@ -95,7 +96,7 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
   useFocusEffect(
     useCallback(() => {
       load();
-      const t = setInterval(load, 4000);
+      const t = setInterval(load, 15000);
       return () => clearInterval(t);
     }, [load]),
   );
@@ -107,7 +108,7 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
   }
 
   async function upload(uri: string, _name: string, _type: string) {
-    setUploading(true);
+    setActiveUploads((current) => current + 1);
     setUploadLabel('Отправляю файл…');
     try {
       const tk = await getToken();
@@ -128,13 +129,11 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
     } catch (e: any) {
       Alert.alert('Не удалось отправить', e?.message || '');
     } finally {
-      setUploading(false);
-      setUploadLabel('');
+      setActiveUploads((current) => Math.max(0, current - 1));
     }
   }
 
   async function capture(fromCamera: boolean) {
-    if (uploading) return;
     if (fromCamera) {
       const p = await ImagePicker.requestCameraPermissionsAsync();
       if (!p.granted) { Alert.alert('Нужен доступ к камере'); return; }
@@ -145,16 +144,15 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
     if (res.canceled || !res.assets?.[0]) return;
     const a = res.assets[0];
     const name = a.fileName || `file_${Date.now()}.${(a.mimeType || 'image/jpeg').split('/')[1]}`;
-    await upload(a.uri, name, a.mimeType || 'image/jpeg');
+    void upload(a.uri, name, a.mimeType || 'image/jpeg');
   }
 
   async function pickDocument() {
-    if (uploading) return;
     try {
       const res = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
       if (res.canceled || !res.assets?.[0]) return;
       const a = res.assets[0];
-      await upload(a.uri, a.name || `file_${Date.now()}`, a.mimeType || 'application/octet-stream');
+      void upload(a.uri, a.name || `file_${Date.now()}`, a.mimeType || 'application/octet-stream');
     } catch (e: any) {
       Alert.alert('Не удалось выбрать файл', e?.message || '');
     }
@@ -162,9 +160,6 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
 
   /** Самое свежее фото уходит сразу — самый частый сценарий. */
   async function sendLatestPhoto() {
-    if (uploading) return;
-    setUploading(true);
-    setUploadLabel('Ищу последнее фото…');
     try {
       const permission = await MediaLibrary.requestPermissionsAsync();
       if (!permission.granted) { Alert.alert('Нужен доступ к фото'); return; }
@@ -172,19 +167,16 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
       const asset = result.assets?.[0];
       if (!asset) { Alert.alert('Фото не нашлись'); return; }
       const info = await MediaLibrary.getAssetInfoAsync(asset);
-      await upload(info?.localUri || asset.uri, asset.filename || 'photo.jpg', 'image/jpeg');
+      void upload(info?.localUri || asset.uri, asset.filename || 'photo.jpg', 'image/jpeg');
     } catch (e: any) {
       Alert.alert('Не удалось отправить', e?.message || '');
-    } finally {
-      setUploading(false);
-      setUploadLabel('');
     }
   }
 
   async function sendPickedPhotos(photos: { id: string; uri: string }[]) {
-    if (uploading || !photos.length) return;
+    if (!photos.length) return;
     setLastPicker(false);
-    setUploading(true);
+    setActiveUploads((current) => current + 1);
     try {
       const tk = await getToken();
       let deliveredAll = true;
@@ -209,8 +201,7 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
     } catch (e: any) {
       Alert.alert('Не удалось отправить фото', e?.message || '');
     } finally {
-      setUploading(false);
-      setUploadLabel('');
+      setActiveUploads((current) => Math.max(0, current - 1));
     }
   }
 
@@ -246,7 +237,6 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
             systemImage="photo"
             variant="glass"
             onPress={() => void sendLatestPhoto()}
-            disabled={uploading}
             size="regular"
             style={styles.captureWrap}
           />
@@ -255,7 +245,6 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
             systemImage="square.grid.2x2"
             variant="glass"
             onPress={() => setLastPicker(true)}
-            disabled={uploading}
             size="regular"
             style={styles.captureWrap}
           />
@@ -277,7 +266,6 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
               label="Добавить"
               systemImage="plus"
               variant="prominent"
-              disabled={uploading}
               size={44}
             />
           </MenuView>
@@ -287,7 +275,9 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
           {uploading ? (
             <View style={styles.noticeContent}>
               <ActivityIndicator color={theme.tint} />
-              <ThemedText type="small" themeColor="textSecondary">{uploadLabel || 'Отправляю…'}</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {activeUploads > 1 ? `Отправляю · ${activeUploads}` : uploadLabel || 'Отправляю…'}
+              </ThemedText>
             </View>
           ) : transferNotice ? (
             <View style={[styles.noticeContent, styles.notice, { backgroundColor: theme.backgroundSelected }]}>
@@ -366,7 +356,7 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
       {viewer !== null && token && (
         <PhotoViewer
           images={files.filter((x) => (x.mime || '').startsWith('image')).map((x) => ({
-            uri: `${API_URL}/files/${x.id}/download`,
+            uri: `${API_URL}/files/${x.id}/thumb?w=1024`,
             headers: { Authorization: `Bearer ${token}` },
           }))}
           startIndex={viewer}
