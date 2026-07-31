@@ -1,6 +1,6 @@
 // Ядро: состояние, запросы к серверу, связь с ПК по вебсокету, общие утилиты.
 
-export const API = "https://aura.5.42.122.102.sslip.io";
+export const API = "https://api.arratima.ru";
 
 export const state = {
   section: "finance",

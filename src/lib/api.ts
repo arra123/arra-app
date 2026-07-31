@@ -1,7 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 
 export const API_URL =
-  process.env.EXPO_PUBLIC_API_URL || 'https://aura.5.42.122.102.sslip.io';
+  process.env.EXPO_PUBLIC_API_URL || 'https://api.arratima.ru';
 
 const TOKEN_KEY = 'noda_token';
 

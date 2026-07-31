@@ -75,7 +75,7 @@ def main():
         page = browser.new_page(viewport={"width": 393, "height": 852}, device_scale_factor=1)
         errors = []
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
-        page.route("https://aura.5.42.122.102.sslip.io/**", fake_api)
+        page.route("https://api.arratima.ru/**", fake_api)
         page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60_000)
         settle(page)
         page.wait_for_timeout(1_200)

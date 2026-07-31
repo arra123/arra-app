@@ -4,31 +4,14 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const https = require('https');
-const dns = require('dns');
 const { execFile, spawn, spawnSync } = require('child_process');
 const WebSocket = require('ws');
 const { initUpdater, checkNow: checkUpdatesNow } = require('./updater');
 
-const BASE = 'https://aura.5.42.122.102.sslip.io';
-const WS_URL = 'wss://aura.5.42.122.102.sslip.io/agent';
-const CLIENT_WS_URL = 'wss://aura.5.42.122.102.sslip.io/client';
-const AURA_HOST = new URL(BASE).hostname;
-const AURA_IP = '5.42.122.102';
+const BASE = 'https://api.arratima.ru';
+const WS_URL = 'wss://api.arratima.ru/agent';
+const CLIENT_WS_URL = 'wss://api.arratima.ru/client';
 
-/**
- * sslip.io иногда не разрешается системным DNS Windows, хотя сам сервер доступен.
- * Для единственного нашего хоста используем известный IPv4 как fallback lookup:
- * URL и TLS SNI остаются доменными, поэтому сертификат продолжает проверяться.
- */
-function resilientLookup(hostname, options, callback) {
-  const cb = typeof options === 'function' ? options : callback;
-  const opts = options && typeof options === 'object' ? options : {};
-  if (String(hostname).toLowerCase() === AURA_HOST) {
-    if (opts.all) return cb(null, [{ address: AURA_IP, family: 4 }]);
-    return cb(null, AURA_IP, 4);
-  }
-  return dns.lookup(hostname, options, callback);
-}
 
 // Постоянный JSONL-журнал. Он нужен именно для случаев, когда окно уже закрылось
 // или операция зависла: записи остаются на диске и не пропадают вместе с UI.
@@ -504,7 +487,6 @@ function uploadFileToBackend(absPath, jwt) {
     const u = new URL(BASE + '/files');
     const req = https.request(u, {
       method: 'POST',
-      lookup: resilientLookup,
       family: 4,
       headers: {
         'Content-Type': 'multipart/form-data; boundary=' + boundary,
@@ -898,7 +880,6 @@ function httpJson(method, urlPath, body, token) {
       u,
       {
         method,
-        lookup: resilientLookup,
         family: 4,
         headers: {
           'Content-Type': 'application/json',
@@ -928,7 +909,7 @@ function downloadFile(fileId, dest, pcToken) {
   return new Promise((resolve, reject) => {
     const u = new URL(`${BASE}/files/${fileId}/download?token=${pcToken}`);
     https
-      .get(u, { lookup: resilientLookup, family: 4 }, (res) => {
+      .get(u, { family: 4 }, (res) => {
         if (res.statusCode >= 400) { res.resume(); reject(new Error('HTTP ' + res.statusCode)); return; }
         const out = fs.createWriteStream(dest);
         res.pipe(out);
@@ -1014,7 +995,7 @@ function connectWS() {
   clearTimeout(reconnectTimer);
   if (!settings.token) return;
   try { ws?.close(); } catch {}
-  ws = new WebSocket(`${WS_URL}?token=${settings.token}`, { lookup: resilientLookup, family: 4 });
+  ws = new WebSocket(`${WS_URL}?token=${settings.token}`, { family: 4 });
   ws.on('open', () => { online = true; pushStatus(); });
   ws.on('message', (raw) => {
     try {
@@ -1362,7 +1343,6 @@ ipcMain.handle('transcribe', async (_e, { base64, mime }) => {
       const u = new URL(BASE + '/ai/transcribe');
       const req = https.request(u, {
         method: 'POST',
-        lookup: resilientLookup,
         family: 4,
         headers: {
           'Content-Type': 'multipart/form-data; boundary=' + boundary,
@@ -1891,7 +1871,6 @@ ipcMain.handle('remote-sync', async (_e, { deviceId, mode = 'push' } = {}) => {
   const reqId = `sync-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   try {
     const remoteWs = new WebSocket(`${CLIENT_WS_URL}?token=${encodeURIComponent(jwt)}`, {
-      lookup: resilientLookup,
       family: 4,
     });
     const timeout = setTimeout(() => { try { remoteWs.close(); } catch {} }, 30 * 60 * 1000);
