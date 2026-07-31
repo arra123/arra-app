@@ -121,6 +121,64 @@ export async function parseExpenseImage(dataUrl) {
   return normalize(parsed);
 }
 
+const REIMBURSEMENT_PROMPT = `Ты разбираешь голосовые и текстовые записи для личного учёта денег.
+Верни строго JSON без пояснений.
+
+Определи kind:
+- "reimbursement" — пользователь сам заплатил за рабочую/компанейскую покупку и компания должна вернуть деньги;
+- "debt" — обычный долг между людьми или организациями.
+
+Поля для reimbursement:
+- amount: сумма числом;
+- purpose: коротко, за что заплачено;
+- merchant: магазин, сервис или заведение, если названо;
+- location: адрес, город или место, если названо отдельно;
+- company: кто должен компенсировать, по умолчанию "Компания";
+- recipient: кому компания должна вернуть деньги — только "Тима" или "Дани". Явно названное имя важнее выбранного по умолчанию;
+- occurred_at: дата и время расхода ISO 8601, если можно определить;
+- due_date: срок возврата YYYY-MM-DD, если назван;
+- note: остальные важные подробности.
+
+Поля для debt:
+- amount, counterparty, direction ("owes_me" или "i_owe"), occurred_at, due_date, note.
+
+Не выдумывай неизвестные данные. Если пользователь говорит просто «компенсация 500 рублей за такси»,
+это reimbursement: amount=500, purpose="Такси", company="Компания".`;
+
+/** Разобрать компенсацию компании или обычный долг в редактируемый черновик. */
+export async function parseReimbursementInput({ text, image, preferredKind = 'reimbursement', preferredRecipient = 'Тима' }) {
+  const userContent = [];
+  if (text) userContent.push({ type: 'text', text });
+  else userContent.push({ type: 'text', text: 'Разбери данные на изображении.' });
+  if (image) userContent.push({ type: 'image_url', image_url: { url: image } });
+  const parsed = await chat(
+    [
+      { role: 'system', content: `${REIMBURSEMENT_PROMPT}\n\n${currentDateNote()}\nПредпочтительный тип формы: ${preferredKind}. Получатель по умолчанию: ${preferredRecipient}.` },
+      { role: 'user', content: userContent },
+    ],
+    image ? config.ai.visionModel : config.ai.chatModel,
+  );
+  const kind = parsed.kind === 'debt' ? 'debt' : 'reimbursement';
+  const parsedRecipient = String(parsed.recipient || '').trim();
+  const recipient = /дани(?:ил)?/i.test(parsedRecipient)
+    ? 'Дани'
+    : /тим/i.test(parsedRecipient) ? 'Тима' : (preferredRecipient === 'Дани' ? 'Дани' : 'Тима');
+  return {
+    kind,
+    amount: Math.abs(Number(parsed.amount) || 0) || null,
+    purpose: parsed.purpose || parsed.title || null,
+    merchant: parsed.merchant || null,
+    location: parsed.location || null,
+    company: parsed.company || (kind === 'reimbursement' ? 'Компания' : null),
+    recipient: kind === 'reimbursement' ? recipient : null,
+    counterparty: parsed.counterparty || null,
+    direction: parsed.direction === 'i_owe' ? 'i_owe' : 'owes_me',
+    occurred_at: parsed.occurred_at || null,
+    due_date: parsed.due_date || null,
+    note: parsed.note || null,
+  };
+}
+
 /** Создать вторую структурированную версию заметки, не меняя оригинал. */
 export async function structureNote(text) {
   const source = String(text || '').trim();

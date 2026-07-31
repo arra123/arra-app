@@ -30,6 +30,12 @@ export const config = {
     voiceModel: process.env.AI_VOICE_MODEL || 'whisper-1',
   },
 
+  rtc: {
+    turnUrl: process.env.TURN_URL || '',
+    turnSecret: process.env.TURN_SECRET || '',
+    credentialTtlSeconds: Math.max(300, Number(process.env.TURN_CREDENTIAL_TTL || 3600)),
+  },
+
   // Куда складывать загруженные файлы на сервере
   uploadDir: process.env.UPLOAD_DIR || resolve(__dirname, '../uploads'),
 };

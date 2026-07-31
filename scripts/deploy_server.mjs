@@ -11,7 +11,7 @@ const { Client } = require("ssh2");
 
 const ROOT = resolve(import.meta.dirname, "..");
 const LOCAL = join(ROOT, "server");
-const REMOTE = "/opt/aura";
+const REMOTE = "/opt/noda";
 
 const env = Object.fromEntries(
   readFileSync(join(ROOT, ".env"), "utf8")
@@ -62,9 +62,9 @@ conn.on("ready", async () => {
   }
 
   console.log(await exec(`cd ${REMOTE} && npm run migrate 2>&1 | tail -5`));
-  await exec("systemctl restart aura");
+  await exec("systemctl restart noda");
   await new Promise((ok) => setTimeout(ok, 1500));
-  console.log(await exec("systemctl is-active aura && curl -s -o /dev/null -w 'health %{http_code}\\n' http://127.0.0.1:4000/health"));
+  console.log(await exec("systemctl is-active noda && curl -s -o /dev/null -w 'health %{http_code}\\n' http://127.0.0.1:4000/health"));
   conn.end();
 })
   .on("keyboard-interactive", (name, instructions, lang, prompts, finish) => finish(prompts.map(() => password)))
