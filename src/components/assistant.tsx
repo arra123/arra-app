@@ -428,6 +428,7 @@ export function Assistant() {
               variant="glass"
               tint={theme.text}
               size={40}
+              decorative
             />
           </MenuView>
         </View>

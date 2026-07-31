@@ -44,6 +44,10 @@ type FileRec = {
 
 type Device = DeviceChoice;
 
+/** Сколько последних файлов показываем сразу. Сервер отдаёт 100 — остальные
+ *  открываются кнопкой «Показать все», чтобы сетка не грузила сотню превью. */
+const PREVIEW_COUNT = 30;
+
 export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -298,7 +302,7 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
           <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>Пока пусто</ThemedText>
         ) : (
           <View style={styles.grid}>
-            {(allShown ? files : files.slice(0, 6)).map((f) => {
+            {(allShown ? files : files.slice(0, PREVIEW_COUNT)).map((f) => {
               const isImg = (f.mime || '').startsWith('image');
               const delivered = f.status === 'delivered';
               return (
@@ -342,7 +346,7 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
             })}
           </View>
         )}
-        {!allShown && files.length > 6 && (
+        {!allShown && files.length > PREVIEW_COUNT && (
           <AppleButton
             label={`Показать все · ${files.length}`}
             onPress={() => setAllShown(true)}

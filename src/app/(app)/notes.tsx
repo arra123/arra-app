@@ -301,7 +301,7 @@ export default function NotesScreen() {
                   if (event.nativeEvent.event === 'structure') void structureCurrent();
                   else if (event.nativeEvent.event === 'delete') void remove();
                 }}>
-                <AppleIconButton label="Ещё" systemImage="ellipsis" variant="plain" tint={theme.tint} size={40} />
+                <AppleIconButton label="Ещё" systemImage="ellipsis" variant="plain" tint={theme.tint} size={40} decorative />
               </MenuView>
               <AppleIconButton
                 label="Сохранить"

@@ -41,6 +41,8 @@ const CANCEL_DISTANCE = 96;
 const LOCK_DISTANCE = 78;
 const BARS = 26;
 const MIN_SECONDS = 1;
+/** На сколько панель записи можно поднять пальцем. */
+const PANEL_LIFT = 320;
 
 /**
  * Голосовая кнопка в духе Telegram.
@@ -69,6 +71,8 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
   const dy = useSharedValue(0);
   const pulse = useSharedValue(1);
   const panel = useSharedValue(0);
+  const panelY = useSharedValue(0);
+  const panelFrom = useSharedValue(0);
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
@@ -85,11 +89,12 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
     if (phase === 'idle') {
       pulse.value = 1;
       panel.value = withTiming(0, { duration: 160 });
+      panelY.value = 0; // следующая запись начинается на своём месте
       return;
     }
     panel.value = withSpring(1, { damping: 22, stiffness: 240 });
     pulse.value = withRepeat(withTiming(1.28, { duration: 620, easing: Easing.inOut(Easing.quad) }), -1, true);
-  }, [phase, pulse, panel]);
+  }, [phase, pulse, panel, panelY]);
 
   const stopTimer = useCallback(() => {
     if (timer.current) { clearInterval(timer.current); timer.current = null; }
@@ -190,9 +195,16 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
     ],
   }));
 
+  // Панель можно поднять пальцем повыше — она перекрывала то, что диктуешь.
+  const panelDrag = Gesture.Pan()
+    .onBegin(() => { panelFrom.value = panelY.value; })
+    .onUpdate((event) => {
+      panelY.value = Math.min(0, Math.max(-PANEL_LIFT, panelFrom.value + event.translationY));
+    });
+
   const panelStyle = useAnimatedStyle(() => ({
     opacity: panel.value,
-    transform: [{ translateY: interpolate(panel.value, [0, 1], [14, 0]) }],
+    transform: [{ translateY: interpolate(panel.value, [0, 1], [14, 0]) + panelY.value }],
     pointerEvents: panel.value > 0.5 ? 'auto' : 'none',
   }));
 
@@ -209,6 +221,7 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
   return (
     <>
       {active && (
+        <GestureDetector gesture={panelDrag}>
         <Animated.View
           style={[
             styles.panel,
@@ -226,6 +239,16 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
                 />
               ))}
             </View>
+            {/* Выход из записи одним нажатием. Раньше прервать её можно было
+                только жестом влево: если палец соскакивал и жест обрывался,
+                панель оставалась висеть, а остановить диктовку было нечем. */}
+            <Pressable
+              onPress={() => { cancelled.current = true; setNearCancel(true); void finish(false); }}
+              hitSlop={10}
+              accessibilityLabel="Остановить запись"
+              style={({ pressed }) => [styles.stopButton, { borderColor: theme.separator, opacity: pressed ? 0.6 : 1 }]}>
+              <SymbolView name="xmark" tintColor={theme.textSecondary} size={13} />
+            </Pressable>
           </View>
 
           {phase === 'locked' ? (
@@ -252,6 +275,7 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
             </Animated.View>
           )}
         </Animated.View>
+        </GestureDetector>
       )}
 
       {hint && !active && (
@@ -308,6 +332,14 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   panelRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
+  stopButton: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   dot: { width: 12, height: 12, borderRadius: 6 },
   wave: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, height: 28 },
   bar: { width: 3, borderRadius: 2 },

@@ -64,14 +64,20 @@ export function ChatDrawer({ visible, threads, activeId, onClose, onPick, onCrea
   // без движения.
   const opened = useRef(false);
 
+  // Два раздельных эффекта, а не один на [visible, mounted]. В общем эффекте
+  // установка mounted тут же запускала его повторно и сбрасывала progress в 0
+  // уже ПОСЛЕ того, как onLayout начал анимацию открытия. Панель оставалась
+  // невидимой, а Modal поверх экрана продолжал ловить касания — приложение
+  // выглядело зависшим: ни нажать, ни уйти на другую вкладку.
   useEffect(() => {
-    if (visible) {
-      opened.current = false;
-      progress.value = 0;
-      setMounted(true);
-      return;
-    }
-    if (!mounted) return;
+    if (!visible) return;
+    opened.current = false;
+    progress.value = 0;
+    setMounted(true);
+  }, [visible, progress]);
+
+  useEffect(() => {
+    if (visible || !mounted) return;
     progress.value = withTiming(0, CLOSE, (finished) => {
       if (finished) runOnJS(unmount)();
     });
@@ -82,6 +88,14 @@ export function ChatDrawer({ visible, threads, activeId, onClose, onPick, onCrea
     opened.current = true;
     progress.value = withTiming(1, OPEN);
   }, [progress, visible]);
+
+  // Страховка: если раскладка не изменилась и onLayout не пришёл, панель без
+  // этого осталась бы прозрачной ловушкой для нажатий.
+  useEffect(() => {
+    if (!mounted || !visible) return;
+    const id = setTimeout(startOpen, 90);
+    return () => clearTimeout(id);
+  }, [mounted, visible, startOpen]);
 
   const drag = Gesture.Pan()
     .activeOffsetX([-9999, -10])

@@ -30,6 +30,11 @@ type AppleIconButtonProps = {
   disabled?: boolean;
   size?: number;
   style?: StyleProp<ViewStyle>;
+  /**
+   * Кнопка внутри нативного меню (`MenuView`) должна быть только картинкой:
+   * иначе Pressable забирает касание себе и меню не раскрывается.
+   */
+  decorative?: boolean;
 };
 
 /** Высота кнопки по размеру — одна таблица на всё приложение. */
@@ -106,6 +111,7 @@ export function AppleIconButton({
   disabled = false,
   size = 44,
   style,
+  decorative = false,
 }: AppleIconButtonProps) {
   const theme = useTheme();
   const accent = role === 'destructive' ? theme.danger : tint ?? theme.accent;
@@ -118,6 +124,7 @@ export function AppleIconButton({
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
       disabled={disabled}
+      pointerEvents={decorative ? 'none' : 'auto'}
       onPress={onPress}
       style={({ pressed }) => [
         styles.iconButton,

@@ -638,6 +638,7 @@ export default function PcScreen() {
                 variant="glass"
                 tint={c.accent}
                 size={40}
+                decorative
               />
             </MenuView>
             {pcTerms.filter((pt) => !terms.some((t) => t.id === pt.termId)).map((pt) => (
@@ -669,6 +670,7 @@ export default function PcScreen() {
                 variant="glass"
                 tint={c.text}
                 size={40}
+                decorative
               />
             </MenuView>
           </ScrollView>

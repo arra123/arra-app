@@ -20,7 +20,7 @@ import { AppleSegmented } from '@/components/apple-segmented';
 import { FabMenu } from '@/components/fab-menu';
 import { GlassCard } from '@/components/glass-card';
 import { MerchantLogo } from '@/components/merchant-logo';
-import { Sheet } from '@/components/sheet';
+import { Sheet, useSheetScroll } from '@/components/sheet';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { APP_BUILD, BottomTabInset, Radius, Spacing } from '@/constants/theme';
@@ -48,7 +48,6 @@ type SummaryCategoryId = 'carsharing' | 'online' | 'purchases' | 'other';
 type SummaryMeta = {
   id: SummaryCategoryId;
   title: string;
-  merchant: string;
   systemImage: string;
   fallback: string;
   tint: string;
@@ -103,7 +102,6 @@ const SUMMARY_META: Record<SummaryCategoryId, SummaryMeta> = {
   carsharing: {
     id: 'carsharing',
     title: 'Каршеринг',
-    merchant: 'Каршеринг',
     systemImage: 'car.2.fill',
     fallback: '▰',
     tint: '#4F78C8',
@@ -111,7 +109,6 @@ const SUMMARY_META: Record<SummaryCategoryId, SummaryMeta> = {
   online: {
     id: 'online',
     title: 'Онлайн-сервисы',
-    merchant: 'OpenAI Anthropic ProxyAPI',
     systemImage: 'network',
     fallback: '⌘',
     tint: '#6966B3',
@@ -119,7 +116,6 @@ const SUMMARY_META: Record<SummaryCategoryId, SummaryMeta> = {
   purchases: {
     id: 'purchases',
     title: 'Покупки и материалы',
-    merchant: 'Ozon покупки',
     systemImage: 'shippingbox.fill',
     fallback: '□',
     tint: '#B2763D',
@@ -127,7 +123,6 @@ const SUMMARY_META: Record<SummaryCategoryId, SummaryMeta> = {
   other: {
     id: 'other',
     title: 'Остальное',
-    merchant: 'Прочее',
     systemImage: 'ellipsis',
     fallback: '•••',
     tint: '#747983',
@@ -513,7 +508,10 @@ export default function FinanceScreen() {
                                     backgroundColor: pressed ? theme.backgroundSelected : theme.glass,
                                   },
                                 ]}>
-                                <MerchantLogo merchant={`${service.name} ${category.merchant}`} size={34} />
+                                {/* Только имя сервиса. С добавленным названием
+                                    категории в строке оказывалось несколько
+                                    брендов сразу, и логотипы рисовались стопкой. */}
+                                <MerchantLogo merchant={service.name} size={34} />
                                 <View style={styles.rowText}>
                                   <ThemedText type="smallBold" numberOfLines={1}>{service.name}</ThemedText>
                                   <ThemedText type="small" themeColor="textSecondary">
@@ -721,6 +719,7 @@ function DebtEditor({
   onDelete: (d: Debt) => void;
 }) {
   const theme = useTheme();
+  const sheetScroll = useSheetScroll();
   const item = debt && debt !== 'new' ? debt : null;
   const [counterparty, setCounterparty] = useState(item?.counterparty && !/компан/i.test(item.counterparty) ? item.counterparty : '');
   const [note, setNote] = useState(item ? cleanNote(item) : '');
@@ -757,22 +756,12 @@ function DebtEditor({
       onRight={save}
       rightDisabled={saving || !parseAmount(amount)}>
       <ScrollView
+        {...sheetScroll}
         style={styles.sheetScroll}
         contentContainerStyle={styles.sheetBody}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         showsVerticalScrollIndicator={false}>
-
-        {/* Шапка записи: логотип узнаётся раньше, чем читается текст. */}
-        <View style={styles.editorHead}>
-          <MerchantLogo merchant={`${counterparty} ${note}`} size={52} />
-          <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
-            <ThemedText type="smallBold" numberOfLines={1}>{counterparty.trim() || note.trim() || 'Кому платили'}</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-              {when.toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}
-            </ThemedText>
-          </View>
-        </View>
 
         <AmountField value={amount} onChange={setAmount} autoFocus={!item} />
 

@@ -22,16 +22,24 @@ function initUpdater(getWin, winSend, writeLog = () => {}) {
   autoUpdater.autoInstallOnAppQuit = true;     // если не перезапустили — поставится при выходе
   autoUpdater.allowPrerelease = false;
 
+  // Проверку раз в 3 часа пользователь не запрашивал — её отчёты («проверяю»,
+  // «уже последняя», ошибка сети) не должны всплывать тостами поверх работы.
+  // В UI уходят только результаты ручной проверки и то, что касается всех:
+  // найденная версия, прогресс загрузки и готовность к установке.
+  let manual = false;
+  const QUIET = new Set(['checking', 'none', 'error']);
+
   const send = (state, payload) => {
     if (state === 'error') writeLog('error', 'updater.event', payload || {});
     else if (state !== 'progress') writeLog('info', `updater.${state}`, payload || {});
+    if (QUIET.has(state) && !manual) return;
     try { winSend('update-event', { state, ...(payload || {}) }); } catch {}
   };
 
   autoUpdater.on('checking-for-update', () => send('checking'));
   autoUpdater.on('update-available', (info) => send('available', { version: info && info.version }));
-  autoUpdater.on('update-not-available', () => send('none'));
-  autoUpdater.on('error', (err) => send('error', { message: String(err && err.message || err) }));
+  autoUpdater.on('update-not-available', () => { send('none'); manual = false; });
+  autoUpdater.on('error', (err) => { send('error', { message: String(err && err.message || err) }); manual = false; });
   autoUpdater.on('download-progress', (p) => send('progress', { percent: Math.round(p.percent || 0) }));
 
   autoUpdater.on('update-downloaded', (info) => {
@@ -56,14 +64,16 @@ function initUpdater(getWin, winSend, writeLog = () => {}) {
     else dialog.showMessageBox(opts).then(handle);
   });
 
-  const check = () => { autoUpdater.checkForUpdates().catch((e) => send('error', { message: String(e && e.message || e) })); };
+  // Ошибку отдаём одним путём — через событие 'error'. Иначе один сбой сети
+  // приходил дважды: и из промиса, и из обработчика, и тостов было два.
+  const check = () => { autoUpdater.checkForUpdates().catch(() => {}); };
 
   // Проверяем через 8 c после старта (не тормозим запуск), потом раз в 3 часа.
   setTimeout(check, 8000);
   setInterval(check, 3 * 60 * 60 * 1000);
 
-  // Ручная проверка из UI.
-  initUpdater._check = check;
+  // Ручная проверка из UI — только она вправе отчитываться тостами.
+  initUpdater._check = () => { manual = true; check(); };
   initUpdater._instance = autoUpdater;
 }
 

@@ -1,7 +1,9 @@
-import { type ReactNode, useCallback, useEffect, useState } from 'react';
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
   Keyboard,
   Modal,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Platform,
   Pressable,
   StyleSheet,
@@ -39,6 +41,22 @@ type Props = {
 
 const SPRING = { damping: 26, stiffness: 260, mass: 0.9 };
 
+type ScrollBridge = {
+  onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  scrollEventThrottle: number;
+};
+
+const SheetScrollContext = createContext<ScrollBridge | null>(null);
+
+/**
+ * Связывает прокручиваемое содержимое листа с жестом закрытия: пока список не
+ * домотан до верха, палец листает его, а не тянет лист. Разложить на ScrollView
+ * внутри `Sheet`: `<ScrollView {...useSheetScroll()}>`.
+ */
+export function useSheetScroll(): ScrollBridge {
+  return useContext(SheetScrollContext) ?? { onScroll: () => {}, scrollEventThrottle: 16 };
+}
+
 /**
  * Нижний лист приложения.
  *
@@ -65,21 +83,41 @@ export function Sheet({
   const [keyboard, setKeyboard] = useState(0);
   const translateY = useSharedValue(screenHeight);
   const backdrop = useSharedValue(0);
+  // Прокручен ли внутренний список до самого верха. Пока нет — жест закрытия
+  // не вмешивается, иначе лист уезжал бы вниз вместо прокрутки содержимого.
+  const scrollAtTop = useSharedValue(true);
 
   const unmount = useCallback(() => setMounted(false), []);
 
+  const scrollBridge = useMemo<ScrollBridge>(
+    () => ({
+      onScroll: (event) => {
+        scrollAtTop.value = (event.nativeEvent.contentOffset?.y ?? 0) <= 0;
+      },
+      scrollEventThrottle: 16,
+    }),
+    [scrollAtTop],
+  );
+
+  // Открытие и закрытие разведены по разным эффектам. Раньше оба жили в одном
+  // с зависимостью от mounted: установка mounted запускала эффект повторно, тот
+  // возвращал лист вниз и анимировал заново — при открытии лист успевал
+  // свернуться и выехать второй раз.
   useEffect(() => {
-    if (visible) {
-      setMounted(true);
-      translateY.value = screenHeight;
-      backdrop.value = 0;
-      requestAnimationFrame(() => {
-        translateY.value = withSpring(0, SPRING);
-        backdrop.value = withTiming(1, { duration: 220, easing: Easing.out(Easing.quad) });
-      });
-      return;
-    }
-    if (!mounted) return;
+    if (!visible) return;
+    setMounted(true);
+    translateY.value = screenHeight;
+    backdrop.value = 0;
+    scrollAtTop.value = true;
+    const id = requestAnimationFrame(() => {
+      translateY.value = withSpring(0, SPRING);
+      backdrop.value = withTiming(1, { duration: 220, easing: Easing.out(Easing.quad) });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [visible, screenHeight, translateY, backdrop, scrollAtTop]);
+
+  useEffect(() => {
+    if (visible || !mounted) return;
     backdrop.value = withTiming(0, { duration: 180 });
     translateY.value = withTiming(screenHeight, { duration: 220, easing: Easing.in(Easing.quad) }, (finished) => {
       if (finished) runOnJS(unmount)();
@@ -106,22 +144,39 @@ export function Sheet({
     onClose();
   }, [onClose]);
 
-  // Тянем лист вниз откуда угодно, а не только за шапку. Порог по вертикали
-  // и запрет на движение вверх оставляют внутренний скролл рабочим.
-  const drag = Gesture.Pan()
-    .activeOffsetY([14, 9999])
-    .failOffsetY([-8, 0])
-    .onUpdate((event) => {
-      translateY.value = Math.max(0, event.translationY);
-    })
-    .onEnd((event) => {
-      if (event.translationY > 110 || event.velocityY > 900) {
+  const finishDrag = useCallback(
+    (translationY: number, velocityY: number) => {
+      'worklet';
+      if (translationY > 110 || velocityY > 900) {
         translateY.value = withTiming(screenHeight, { duration: 200 }, (finished) => {
           if (finished) runOnJS(requestClose)();
         });
       } else {
         translateY.value = withSpring(0, SPRING);
       }
+    },
+    [screenHeight, translateY, requestClose],
+  );
+
+  // Шапку и грабер тянем без порогов: под ними нет прокрутки, спорить не с кем.
+  const headerDrag = Gesture.Pan()
+    .onUpdate((event) => {
+      translateY.value = Math.max(0, event.translationY);
+    })
+    .onEnd((event) => finishDrag(event.translationY, event.velocityY));
+
+  // По содержимому лист тоже тянется, но уступает внутренней прокрутке: пока
+  // список не домотан до верха, палец листает его, а не закрывает лист.
+  const bodyDrag = Gesture.Pan()
+    .activeOffsetY([14, 9999])
+    .failOffsetY(-8)
+    .onUpdate((event) => {
+      if (!scrollAtTop.value) return;
+      translateY.value = Math.max(0, event.translationY);
+    })
+    .onEnd((event) => {
+      if (!scrollAtTop.value) return;
+      finishDrag(event.translationY, event.velocityY);
     });
 
   const sheetStyle = useAnimatedStyle(() => ({ transform: [{ translateY: translateY.value }] }));
@@ -146,32 +201,38 @@ export function Sheet({
             },
             sheetStyle,
           ]}>
-          <GestureDetector gesture={drag}>
-            <View style={styles.dragArea}>
-              <View style={[styles.grabber, { backgroundColor: theme.separator }]} />
-              <View style={[styles.head, { borderBottomColor: theme.separator }]}>
-                <Pressable onPress={requestClose} hitSlop={12} style={styles.side}>
-                  <ThemedText style={[styles.action, { color: theme.tint }]}>{leftLabel}</ThemedText>
-                </Pressable>
-                <ThemedText type="smallBold" numberOfLines={1} style={styles.title}>{title || ''}</ThemedText>
-                <Pressable
-                  onPress={() => { if (!rightDisabled && onRight) { haptic.tap(); onRight(); } }}
-                  disabled={rightDisabled || !onRight}
-                  hitSlop={12}
-                  style={[styles.side, styles.sideRight]}>
-                  <ThemedText
-                    style={[
-                      styles.action,
-                      styles.actionStrong,
-                      { color: rightDisabled ? theme.disabledText : theme.tint, opacity: onRight ? 1 : 0 },
-                    ]}>
-                    {rightLabel || ''}
-                  </ThemedText>
-                </Pressable>
+          <View style={styles.dragArea}>
+            <GestureDetector gesture={headerDrag}>
+              <View>
+                <View style={[styles.grabber, { backgroundColor: theme.separator }]} />
+                <View style={[styles.head, { borderBottomColor: theme.separator }]}>
+                  <Pressable onPress={requestClose} hitSlop={12} style={styles.side}>
+                    <ThemedText style={[styles.action, { color: theme.tint }]}>{leftLabel}</ThemedText>
+                  </Pressable>
+                  <ThemedText type="smallBold" numberOfLines={1} style={styles.title}>{title || ''}</ThemedText>
+                  <Pressable
+                    onPress={() => { if (!rightDisabled && onRight) { haptic.tap(); onRight(); } }}
+                    disabled={rightDisabled || !onRight}
+                    hitSlop={12}
+                    style={[styles.side, styles.sideRight]}>
+                    <ThemedText
+                      style={[
+                        styles.action,
+                        styles.actionStrong,
+                        { color: rightDisabled ? theme.disabledText : theme.tint, opacity: onRight ? 1 : 0 },
+                      ]}>
+                      {rightLabel || ''}
+                    </ThemedText>
+                  </Pressable>
+                </View>
               </View>
-              {children}
-            </View>
-          </GestureDetector>
+            </GestureDetector>
+            <GestureDetector gesture={bodyDrag}>
+              <View style={styles.dragArea}>
+                <SheetScrollContext.Provider value={scrollBridge}>{children}</SheetScrollContext.Provider>
+              </View>
+            </GestureDetector>
+          </View>
         </Animated.View>
       </View>
     </Modal>
