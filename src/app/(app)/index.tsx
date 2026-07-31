@@ -159,6 +159,20 @@ const serviceOf = (d: Debt, category: SummaryCategoryId) => {
   if (counterparty && !/компан/i.test(counterparty)) return counterparty;
   return cleanNote(d) || SUMMARY_META[category].title;
 };
+const COMPANY = 'Компания';
+/**
+ * Кто должен вернуть деньги.
+ *
+ * В поле контрагента лежит то, где потратили: «Ситидрайв», «Ozon», «OpenAI».
+ * Это места трат, а не должники — возвращает их компания. Должником остаётся
+ * только тот, кому действительно давали в долг лично.
+ */
+const debtorOf = (d: Debt) => {
+  const name = normalizeCounterparty(d.counterparty || '');
+  if (!name || /компан/i.test(name)) return COMPANY;
+  if (categoryOf(d) !== 'other') return COMPANY;
+  return name;
+};
 const dateOf = (d: Debt) => new Date(d.occurred_at || d.created_at || Date.now());
 const timeOf = (d: Debt) => dateOf(d).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 const startOfDay = (date: Date) => { const d = new Date(date); d.setHours(0, 0, 0, 0); return d; };
@@ -254,7 +268,7 @@ export default function FinanceScreen() {
   const byCounterparty = useMemo(() => {
     const map = new Map<string, Debt[]>();
     for (const d of unpaid) {
-      const key = normalizeCounterparty(d.counterparty || '') || 'Без имени';
+      const key = debtorOf(d);
       map.set(key, [...(map.get(key) || []), d]);
     }
     return [...map.entries()]

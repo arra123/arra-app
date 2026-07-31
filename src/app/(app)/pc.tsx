@@ -329,10 +329,23 @@ export default function PcScreen() {
     return () => clearInterval(t);
   }, [connected]);
 
-  const [kb, setKb] = useState(false);
+  // Держим не флаг, а высоту клавиатуры: панель ввода поднимаем сами.
+  // KeyboardAvoidingView здесь не работал — он не знает про панель вкладок,
+  // считал смещение от низа экрана, и строка ввода оставалась под клавиатурой:
+  // набрать команду было невозможно в принципе.
+  const [kbHeight, setKbHeight] = useState(0);
+  const kb = kbHeight > 0;
   useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', () => setKb(true));
-    const hide = Keyboard.addListener('keyboardDidHide', () => setKb(false));
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEvent, (event) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      setKbHeight(event.endCoordinates?.height || 0);
+    });
+    const hide = Keyboard.addListener(hideEvent, (event) => {
+      Keyboard.scheduleLayoutAnimation(event);
+      setKbHeight(0);
+    });
     return () => { show.remove(); hide.remove(); };
   }, []);
 
@@ -600,7 +613,8 @@ export default function PcScreen() {
       {!!busyMsg && <ThemedText type="small" style={styles.toast}>{busyMsg}</ThemedText>}
 
       <View style={[styles.subPane, sub !== 'term' && styles.subPaneHidden]}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+        {/* Высоту клавиатуры вычитаем сами — см. комментарий у kbHeight. */}
+        <View style={{ flex: 1, marginBottom: kb ? kbHeight - insets.bottom : 0 }}>
           <ScrollView
             horizontal
             style={styles.termToolsScroller}
@@ -621,26 +635,22 @@ export default function PcScreen() {
             <TouchableOpacity onPress={addTerm} style={styles.termAdd}>
               <SymbolView name="plus" tintColor={c.accent} size={16} />
             </TouchableOpacity>
-            <MenuView
-              title="Запустить помощника"
-              actions={[
-                { id: 'codex', title: 'Codex', image: 'chevron.left.forwardslash.chevron.right' },
-                { id: 'claude', title: 'Claude', image: 'sparkles' },
-              ]}
-              onPressAction={(event) => {
-                sendKey(event.nativeEvent.event === 'claude'
-                  ? 'claude --dangerously-skip-permissions\r'
-                  : 'codex --yolo\r');
-              }}>
-              <AppleIconButton
-                label="Запустить Codex или Claude"
-                systemImage="play.fill"
-                variant="glass"
-                tint={c.accent}
-                size={40}
-                decorative
-              />
-            </MenuView>
+            {/* Отдельная кнопка на каждого помощника со своим логотипом:
+                из общего меню «play» не было видно, что именно запускается. */}
+            <TouchableOpacity
+              accessibilityLabel="Запустить Codex"
+              onPress={() => sendKey('codex --yolo\r')}
+              style={[styles.agentKey, { borderColor: c.separator }]}>
+              <Image source={require('../../assets/merchants/openai.png')} style={styles.agentLogo} resizeMode="contain" />
+              <ThemedText type="smallBold" style={{ color: c.text }}>Codex</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              accessibilityLabel="Запустить Claude"
+              onPress={() => sendKey('claude --dangerously-skip-permissions\r')}
+              style={[styles.agentKey, { borderColor: c.separator }]}>
+              <Image source={require('../../assets/merchants/anthropic.png')} style={styles.agentLogo} resizeMode="contain" />
+              <ThemedText type="smallBold" style={{ color: c.text }}>Claude</ThemedText>
+            </TouchableOpacity>
             {pcTerms.filter((pt) => !terms.some((t) => t.id === pt.termId)).map((pt) => (
               <TouchableOpacity key={pt.termId} onPress={() => attachPcTerm(pt)} style={[styles.termTab, styles.termTabPc]}>
                 <SymbolView name="desktopcomputer" tintColor={c.success} size={12} />
@@ -735,7 +745,7 @@ export default function PcScreen() {
               size={44}
             />
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </View>
 
       {sub === 'screen' ? (
@@ -925,6 +935,8 @@ const styles = StyleSheet.create({
   termTab: { minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 12, paddingVertical: 6, borderRadius: Radius.sm, backgroundColor: c.backgroundElement, borderWidth: StyleSheet.hairlineWidth, borderColor: c.separator },
   termTabOn: { backgroundColor: c.accent },
   termTabPc: { borderWidth: 1, borderColor: c.success },
+  agentKey: { height: 40, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, borderRadius: Radius.sm, backgroundColor: c.backgroundElement, borderWidth: StyleSheet.hairlineWidth },
+  agentLogo: { width: 18, height: 18, borderRadius: 4 },
   termAdd: { width: 40, height: 40, borderRadius: Radius.sm, backgroundColor: c.backgroundElement, borderWidth: StyleSheet.hairlineWidth, borderColor: c.separator, alignItems: 'center', justifyContent: 'center' },
   termWrap: { flex: 1, marginHorizontal: Spacing.three, borderRadius: Radius.md, overflow: 'hidden', backgroundColor: '#0a0b0d', borderWidth: 1, borderColor: c.glassBorder },
   composeBar: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: Spacing.three, paddingTop: Spacing.two },

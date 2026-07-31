@@ -19,9 +19,6 @@ import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { haptic } from '@/lib/haptics';
 
-/** Высота системной панели вкладок без безопасной зоны (iOS UITabBar). */
-const TAB_BAR_HEIGHT = Platform.OS === 'ios' ? 49 : 56;
-
 export type FabAction = {
   id: string;
   label: string;
@@ -88,10 +85,10 @@ export function FabMenu({ actions, label = 'Быстрые действия' }: 
     setTimeout(action.onPress, 140);
   }
 
-  // Системная панель вкладок лежит поверх экрана, а не занимает место в разметке:
-  // кнопка, отсчитанная от низа экрана, оказывалась под ней и не нажималась.
-  // Поэтому поднимаем её на высоту панели вместе с безопасной зоной.
-  const bottom = insets.bottom + TAB_BAR_HEIGHT + Spacing.two;
+  // Панель вкладок занимает место в разметке, поэтому экран заканчивается уже
+  // над ней и кнопке хватает обычного отступа. Небольшой запас — на случай,
+  // когда безопасной зоны снизу нет (устройства с кнопкой «Домой»).
+  const bottom = Spacing.three + (insets.bottom > 0 ? 0 : Spacing.one);
 
   return (
     <>

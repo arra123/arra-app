@@ -14,6 +14,8 @@ import { haptic } from '@/lib/haptics';
 type Device = DeviceChoice & {
   last_seen?: string | null;
   duplicate_count?: number;
+  /** Все токены этого компьютера: ответы агента приходят с id одного из них. */
+  token_ids?: string[];
 };
 
 type SyncEvent = { at?: string | null; device?: string | null; role?: string | null; files?: number | null; bytes?: number | null };
@@ -98,6 +100,7 @@ export function SyncPanel() {
   const theme = useTheme();
   const wsRef = useRef<WebSocket | null>(null);
   const deviceRef = useRef<string | null>(null);
+  const deviceTokens = useRef<string[]>([]);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastEventRef = useRef(0);
   // Список устройств нужен и внутри колбэков с пустыми зависимостями.
@@ -113,6 +116,9 @@ export function SyncPanel() {
   const selected = devices.find((device) => device.id === deviceId) || null;
 
   useEffect(() => { deviceRef.current = deviceId; }, [deviceId]);
+  useEffect(() => {
+    deviceTokens.current = selected?.token_ids?.length ? selected.token_ids : (selected?.id ? [String(selected.id)] : []);
+  }, [selected]);
   useEffect(() => { devicesRef.current = devices; }, [devices]);
 
   const applyEvent = useCallback((event: any) => {
@@ -244,7 +250,10 @@ export function SyncPanel() {
           });
           return;
         }
-        if (message.deviceId && deviceRef.current && message.deviceId !== deviceRef.current) return;
+        // Ответ помечен id конкретного токена, а в списке устройств остаётся
+        // один из группы — сверяем со всеми токенами выбранного компьютера,
+        // иначе события «чужого» токена терялись и передача казалась мёртвой.
+        if (message.deviceId && deviceTokens.current.length && !deviceTokens.current.includes(String(message.deviceId))) return;
         if (message.type === 'pc_offline') {
           setSync((current) => ({ ...current, busy: false, stalled: false, error: 'Компьютер не в сети', phase: 'Команда не доставлена' }));
           return;
@@ -333,6 +342,8 @@ export function SyncPanel() {
   const lastPush = whenText(info?.lastPush);
   const lastPull = whenText(info?.lastPull);
   const canRun = !!selected?.online && !sync.busy;
+  /** Файлы реально едут: сверка (status) прогрессом и скоростью не измеряется. */
+  const transferring = sync.mode === 'push' || sync.mode === 'pull';
   const movedRows = Object.entries(sync.moved)
     .map(([name, row]) => ({ name, ...row }))
     .sort((left, right) => right.files - left.files);
@@ -509,15 +520,22 @@ export function SyncPanel() {
             )}
           </View>
 
-          <View style={[styles.track, { backgroundColor: theme.backgroundSelected }]}>
-            <View style={[styles.fill, { width: `${sync.pct}%`, backgroundColor: sync.error ? theme.danger : theme.success }]} />
-          </View>
+          {/* Полоса и цифры — только у реальной передачи. При сверке файлы не
+              едут, скорости и остатка не существует: показывать «—» в трёх
+              графах бессмысленно, экран от этого только пестрит. */}
+          {transferring && (
+            <>
+              <View style={[styles.track, { backgroundColor: theme.backgroundSelected }]}>
+                <View style={[styles.fill, { width: `${sync.pct}%`, backgroundColor: sync.error ? theme.danger : theme.success }]} />
+              </View>
 
-          <View style={styles.metrics}>
-            <View><ThemedText type="small" themeColor="textSecondary">ПРОГРЕСС</ThemedText><ThemedText type="smallBold">{sync.pct}%</ThemedText></View>
-            <View><ThemedText type="small" themeColor="textSecondary">СКОРОСТЬ</ThemedText><ThemedText type="smallBold">{formatSpeed(sync.speed)}</ThemedText></View>
-            <View><ThemedText type="small" themeColor="textSecondary">ОСТАЛОСЬ</ThemedText><ThemedText type="smallBold">{formatEta(sync.eta)}</ThemedText></View>
-          </View>
+              <View style={styles.metrics}>
+                <View><ThemedText type="small" themeColor="textSecondary">ПРОГРЕСС</ThemedText><ThemedText type="smallBold">{sync.pct}%</ThemedText></View>
+                <View><ThemedText type="small" themeColor="textSecondary">СКОРОСТЬ</ThemedText><ThemedText type="smallBold">{formatSpeed(sync.speed)}</ThemedText></View>
+                <View><ThemedText type="small" themeColor="textSecondary">ОСТАЛОСЬ</ThemedText><ThemedText type="smallBold">{formatEta(sync.eta)}</ThemedText></View>
+              </View>
+            </>
+          )}
 
           {!!sync.currentFile && (
             <View style={[styles.currentFile, { borderTopColor: theme.separator }]}>

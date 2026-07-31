@@ -41,21 +41,19 @@ const CANCEL_DISTANCE = 96;
 const LOCK_DISTANCE = 78;
 const BARS = 26;
 const MIN_SECONDS = 1;
-/** На сколько панель записи можно поднять пальцем. */
-const PANEL_LIFT = 320;
 
 /**
- * Голосовая кнопка в духе Telegram.
+ * Голосовая кнопка.
  *
- * Зажал — пишет. Ведёшь влево — отмена, вверх — фиксация («руки свободны»).
- * Отпустил — отправляет. Уровень звука рисуется полосками в реальном времени.
+ * Нажал — пишет со свободными руками, рядом кнопки «Удалить» и «Готово»;
+ * нажал ещё раз — отправил. Зажал — пишет, пока держишь: ведёшь влево — отмена,
+ * вверх — фиксация, отпустил — отправил. Уровень звука рисуется полосками.
  */
 export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 0 }: Props) {
   const theme = useTheme();
   const [phase, setPhase] = useState<Phase>('idle');
   const [seconds, setSeconds] = useState(0);
   const [levels, setLevels] = useState<number[]>(() => new Array(BARS).fill(0));
-  const [hint, setHint] = useState(false);
   // Отдельным состоянием, а не ref: от него зависит цвет кнопки и текст подсказки.
   const [nearCancel, setNearCancel] = useState(false);
   const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
@@ -71,8 +69,6 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
   const dy = useSharedValue(0);
   const pulse = useSharedValue(1);
   const panel = useSharedValue(0);
-  const panelY = useSharedValue(0);
-  const panelFrom = useSharedValue(0);
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
@@ -89,12 +85,11 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
     if (phase === 'idle') {
       pulse.value = 1;
       panel.value = withTiming(0, { duration: 160 });
-      panelY.value = 0; // следующая запись начинается на своём месте
       return;
     }
     panel.value = withSpring(1, { damping: 22, stiffness: 240 });
     pulse.value = withRepeat(withTiming(1.28, { duration: 620, easing: Easing.inOut(Easing.quad) }), -1, true);
-  }, [phase, pulse, panel, panelY]);
+  }, [phase, pulse, panel]);
 
   const stopTimer = useCallback(() => {
     if (timer.current) { clearInterval(timer.current); timer.current = null; }
@@ -102,23 +97,27 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
 
   useEffect(() => stopTimer, [stopTimer]);
 
-  const begin = useCallback(async () => {
+  /**
+   * Запуск записи. `held` — палец на кнопке (запись идёт, пока держат) или
+   * обычное нажатие (пишем «со свободными руками», пока не нажмут снова).
+   */
+  const begin = useCallback(async (held: boolean) => {
     if (disabled || phaseRef.current !== 'idle') return;
     const permission = await requestRecordingPermissionsAsync();
     if (!permission.granted) { haptic.error(); return; }
     // Разрешение и подготовка занимают время — палец мог уже подняться.
     // Без этой проверки быстрый тап запускал запись, которую нечем остановить.
-    if (!holding.current || phaseRef.current !== 'idle') return;
+    if (held && (!holding.current || phaseRef.current !== 'idle')) return;
     await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: true });
     await recorder.prepareToRecordAsync();
-    if (!holding.current) return;
+    if (held && !holding.current) return;
     recorder.record();
     cancelled.current = false;
     setNearCancel(false);
     startedAt.current = Date.now();
     setSeconds(0);
     setLevels(new Array(BARS).fill(0));
-    setPhase('recording');
+    setPhase(held ? 'recording' : 'locked');
     haptic.press();
     stopTimer();
     timer.current = setInterval(() => setSeconds(Math.floor((Date.now() - startedAt.current) / 1000)), 250);
@@ -155,18 +154,27 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
     setNearCancel(true);
     haptic.warning();
   }, []);
-  const showHint = useCallback(() => {
-    setHint(true);
-    setTimeout(() => setHint(false), 1600);
-  }, []);
 
   const setHolding = useCallback((value: boolean) => { holding.current = value; }, []);
 
+  /** Обычное нажатие: первое — начать запись, второе — закончить и отправить. */
+  const toggle = useCallback(() => {
+    if (phaseRef.current === 'idle') void begin(false);
+    else void finish(true);
+  }, [begin, finish]);
+
+  // Нажатие и удержание — два разных сценария одной кнопки. Раньше запись
+  // начиналась только по удержанию, а подсказка при этом обещала жесты,
+  // которых в этом режиме нет.
+  const tap = Gesture.Tap()
+    .maxDuration(240)
+    .onEnd((_event, success) => { if (success) runOnJS(toggle)(); });
+
   const hold = Gesture.LongPress()
-    .minDuration(180)
+    .minDuration(240)
     .maxDistance(10_000)
     .shouldCancelWhenOutside(false)
-    .onStart(() => { runOnJS(begin)(); });
+    .onStart(() => { runOnJS(begin)(true); });
 
   const move = Gesture.Pan()
     .minDistance(0)
@@ -181,11 +189,11 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
     })
     .onFinalize(() => {
       runOnJS(setHolding)(false);
+      // Запись «со свободными руками» (phase === 'locked') отпусканием не трогаем.
       if (phaseRef.current === 'recording') runOnJS(finish)(true);
-      else if (phaseRef.current === 'idle') runOnJS(showHint)();
     });
 
-  const gesture = Gesture.Simultaneous(hold, move);
+  const gesture = Gesture.Exclusive(tap, Gesture.Simultaneous(hold, move));
 
   const followStyle = useAnimatedStyle(() => ({
     transform: [
@@ -195,16 +203,9 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
     ],
   }));
 
-  // Панель можно поднять пальцем повыше — она перекрывала то, что диктуешь.
-  const panelDrag = Gesture.Pan()
-    .onBegin(() => { panelFrom.value = panelY.value; })
-    .onUpdate((event) => {
-      panelY.value = Math.min(0, Math.max(-PANEL_LIFT, panelFrom.value + event.translationY));
-    });
-
   const panelStyle = useAnimatedStyle(() => ({
     opacity: panel.value,
-    transform: [{ translateY: interpolate(panel.value, [0, 1], [14, 0]) + panelY.value }],
+    transform: [{ translateY: interpolate(panel.value, [0, 1], [14, 0]) }],
     pointerEvents: panel.value > 0.5 ? 'auto' : 'none',
   }));
 
@@ -221,7 +222,6 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
   return (
     <>
       {active && (
-        <GestureDetector gesture={panelDrag}>
         <Animated.View
           style={[
             styles.panel,
@@ -270,19 +270,13 @@ export function HoldMic({ onResult, disabled = false, size = 42, bottomOffset = 
             <Animated.View style={[styles.hintRow, cancelStyle]}>
               <SymbolView name="chevron.left" tintColor={theme.textSecondary} size={12} />
               <ThemedText type="small" themeColor="textSecondary">
-                {willCancel ? 'Отпусти — запись удалится' : 'Влево — отмена, вверх — закрепить'}
+                {willCancel ? 'Отпусти — запись удалится' : 'Отпусти — отправлю · влево — отмена'}
               </ThemedText>
             </Animated.View>
           )}
         </Animated.View>
-        </GestureDetector>
       )}
 
-      {hint && !active && (
-        <View style={[styles.toast, { bottom: bottomOffset, backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
-          <ThemedText type="small" themeColor="textSecondary">Удерживай кнопку, чтобы записать</ThemedText>
-        </View>
-      )}
 
       <GestureDetector gesture={gesture}>
         <Animated.View

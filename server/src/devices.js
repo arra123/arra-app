@@ -59,6 +59,11 @@ export function compactDeviceRows(rows, onlineTokenIds = []) {
     const selected = { ...items[0] };
     selected.name = displayName(selected, selected.role);
     selected.duplicate_count = items.length;
+    // Все токены этого компьютера. Ответы агента помечаются id конкретного
+    // токена, а в списке остаётся только один из группы: без полного списка
+    // приложение отбрасывало события «чужого» токена, и передача выглядела
+    // так, будто она не работает вовсе.
+    selected.token_ids = items.map((item) => String(item.id));
     return selected;
   }).sort((a, b) => Number(b.online) - Number(a.online)
     || (a.role === 'laptop' ? -1 : b.role === 'laptop' ? 1 : 0)
