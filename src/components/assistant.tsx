@@ -21,12 +21,13 @@ import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
 import { AppleButton, AppleIconButton } from '@/components/apple-button';
-import { ChatDrawer } from '@/components/chat-drawer';
+import { ChatDrawer, drawerWidth } from '@/components/chat-drawer';
 import { HoldMic } from '@/components/hold-mic';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -63,6 +64,9 @@ export function Assistant() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [threadId, setThreadId] = useState('main');
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Палец тянет панель чатов от края: она уже в дереве, но ещё не «открыта».
+  const [drawerPulling, setDrawerPulling] = useState(false);
+  const drawerProgress = useSharedValue(0);
   const feedX = useSharedValue(0);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -338,14 +342,28 @@ export function Assistant() {
       else feedX.value = withSpring(0, { damping: 20, stiffness: 220 });
     });
 
-  // Свайп от левого края открывает список переписок.
+  // Свайп от левого края вытягивает список переписок. Панель идёт прямо за
+  // пальцем: раньше жест просто «нажимал кнопку» открытия, и она выпрыгивала
+  // целиком от первого касания, сколько бы ты ни двигал палец.
+  const drawerW = drawerWidth(screenWidth);
   const edgeSwipe = Gesture.Pan()
     .hitSlop({ left: 0, width: 34 })
     .activeOffsetX([14, 9999])
     .failOffsetY([-24, 24])
-    // Открываем на старте жеста: если ждать отпускания, панель выпрыгивает
-    // рывком уже после того, как палец убрали.
-    .onStart(() => { runOnJS(setDrawerOpen)(true); });
+    .onStart(() => { runOnJS(setDrawerPulling)(true); })
+    .onUpdate((event) => {
+      drawerProgress.value = Math.max(0, Math.min(1, event.translationX / drawerW));
+    })
+    .onEnd((event) => {
+      const keep = drawerProgress.value > 0.4 || event.velocityX > 600;
+      runOnJS(setDrawerPulling)(false);
+      if (keep) {
+        drawerProgress.value = withTiming(1, { duration: 180 });
+        runOnJS(setDrawerOpen)(true);
+      } else {
+        drawerProgress.value = withTiming(0, { duration: 160 });
+      }
+    });
 
   const feedGesture = Gesture.Exclusive(edgeSwipe, threadSwipe);
 
@@ -543,6 +561,8 @@ export function Assistant() {
 
       <ChatDrawer
         visible={drawerOpen}
+        progress={drawerProgress}
+        pulling={drawerPulling}
         threads={threads}
         activeId={threadId}
         onClose={() => setDrawerOpen(false)}

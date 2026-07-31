@@ -1,5 +1,5 @@
 import { SymbolView } from 'expo-symbols';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
@@ -8,8 +8,8 @@ import Animated, {
   interpolate,
   runOnJS,
   useAnimatedStyle,
-  useSharedValue,
   withTiming,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SFSymbol } from 'sf-symbols-typescript';
@@ -36,7 +36,18 @@ type Props = {
   onPick: (id: string) => void;
   onCreate: () => void;
   onDelete: (thread: DrawerThread) => void;
+  /**
+   * Доля раскрытия: 0 — закрыт, 1 — открыт. Значением владеет экран помощника,
+   * чтобы краевой свайп вёл панель прямо за пальцем, а не запускал анимацию
+   * открытия целиком — иначе панель выпрыгивала рывком от первого касания.
+   */
+  progress: SharedValue<number>;
+  /** Палец сейчас тянет панель от края: держим её в дереве, но не анимируем. */
+  pulling?: boolean;
 };
+
+/** Ширина выезжающей панели. Нужна и экрану помощника — он считает по ней долю свайпа. */
+export const drawerWidth = (screenWidth: number) => Math.min(330, Math.round(screenWidth * 0.86));
 
 // Только timing с затуханием: пружина давала перелёт, и панель «улетала»
 // правее, чем нужно.
@@ -49,53 +60,43 @@ const presetIcon = (preset: string): SFSymbol =>
 /**
  * Список переписок — выезжает слева и сдвигает экран, как в ChatGPT.
  */
-export function ChatDrawer({ visible, threads, activeId, onClose, onPick, onCreate, onDelete }: Props) {
+export function ChatDrawer({
+  visible, threads, activeId, onClose, onPick, onCreate, onDelete, progress, pulling = false,
+}: Props) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
-  const width = Math.min(330, Math.round(screenWidth * 0.86));
+  const width = drawerWidth(screenWidth);
   const [mounted, setMounted] = useState(visible);
-  // progress: 0 — закрыт, 1 — открыт. Одно значение управляет и панелью, и фоном.
-  const progress = useSharedValue(0);
 
   const unmount = useCallback(() => setMounted(false), []);
-  // Анимацию открытия запускаем не по кадру-таймеру, а после первой раскладки
-  // панели: иначе Modal успевал показать её уже на месте, и панель «выскакивала»
-  // без движения.
-  const opened = useRef(false);
 
-  // Два раздельных эффекта, а не один на [visible, mounted]. В общем эффекте
-  // установка mounted тут же запускала его повторно и сбрасывала progress в 0
-  // уже ПОСЛЕ того, как onLayout начал анимацию открытия. Панель оставалась
-  // невидимой, а Modal поверх экрана продолжал ловить касания — приложение
-  // выглядело зависшим: ни нажать, ни уйти на другую вкладку.
+  // Пока палец тянет панель от края, значением управляет жест — сюда не лезем.
+  // Два раздельных эффекта, а не один на [visible, mounted]: в общем эффекте
+  // установка mounted запускала его повторно и сбрасывала progress уже после
+  // старта анимации. Панель оставалась невидимой, а Modal поверх экрана
+  // продолжал ловить касания — приложение выглядело зависшим.
   useEffect(() => {
     if (!visible) return;
-    opened.current = false;
-    progress.value = 0;
     setMounted(true);
-  }, [visible, progress]);
+  }, [visible]);
 
   useEffect(() => {
-    if (visible || !mounted) return;
+    if (!visible || !mounted || pulling) return;
+    progress.value = withTiming(1, OPEN);
+  }, [visible, mounted, pulling, progress]);
+
+  useEffect(() => {
+    if (visible || !mounted || pulling) return;
     progress.value = withTiming(0, CLOSE, (finished) => {
       if (finished) runOnJS(unmount)();
     });
-  }, [visible, mounted, progress, unmount]);
+  }, [visible, mounted, pulling, progress, unmount]);
 
-  const startOpen = useCallback(() => {
-    if (opened.current || !visible) return;
-    opened.current = true;
-    progress.value = withTiming(1, OPEN);
-  }, [progress, visible]);
-
-  // Страховка: если раскладка не изменилась и onLayout не пришёл, панель без
-  // этого осталась бы прозрачной ловушкой для нажатий.
+  // Панель держим в дереве и во время вытягивания, пока visible ещё false.
   useEffect(() => {
-    if (!mounted || !visible) return;
-    const id = setTimeout(startOpen, 90);
-    return () => clearTimeout(id);
-  }, [mounted, visible, startOpen]);
+    if (pulling) setMounted(true);
+  }, [pulling]);
 
   const drag = Gesture.Pan()
     .activeOffsetX([-9999, -10])
@@ -128,7 +129,6 @@ export function ChatDrawer({ visible, threads, activeId, onClose, onPick, onCrea
 
         <GestureDetector gesture={drag}>
           <Animated.View
-            onLayout={startOpen}
             style={[
               styles.panel,
               { width, backgroundColor: theme.background, paddingTop: insets.top + Spacing.two, paddingBottom: insets.bottom + Spacing.two },

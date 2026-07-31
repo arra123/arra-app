@@ -33,6 +33,10 @@ import { onQuickAction, takeQuickAction } from '@/lib/quick-action';
 type Note = { id: string; title: string | null; body: string; structured_body?: string | null; structured_at?: string | null; color?: string | null; updated_at: string; created_at: string };
 type Editing = Note | 'new' | null;
 
+/** Слепок содержимого заметки — сравниваем строки, чтобы понять, менялось ли что-то. */
+const snapshot = (title: string, body: string, structured: string, color: string | null) =>
+  JSON.stringify([title.trim(), body, structured.trim(), color || '']);
+
 // Категории-цвета заметок (подсветка)
 const NOTE_CATS: { color: string; label: string }[] = [
   { color: '#5B8DEF', label: 'Работа' },
@@ -73,6 +77,8 @@ export default function NotesScreen() {
   // открытии другой заметки / вставке надиктованного.
   const bodyRef = useRef('');
   const structuredRef = useRef('');
+  /** Содержимое заметки на момент открытия — с ним сверяемся при закрытии. */
+  const openedAs = useRef('');
   const titleInputRef = useRef<TextInput>(null);
   const bodyInputRef = useRef<TextInput>(null);
   const [bodyKey, setBodyKey] = useState(0);
@@ -147,6 +153,10 @@ export default function NotesScreen() {
     structuredRef.current = n.structured_body || '';
     setVersion('original');
     setColor(n.color || null);
+    // Снимок на момент открытия: по нему при закрытии решаем, было ли что
+    // сохранять. Иначе простой заход в заметку обновлял дату изменения, и
+    // список перестраивался — заметки прыгали при переключении между ними.
+    openedAs.current = snapshot(n.title || '', n.body, n.structured_body || '', n.color || null);
     setEditing(n);
   }
   function close() {
@@ -182,6 +192,9 @@ export default function NotesScreen() {
     }
     const payload = { title: trimmedTitle, body, structured_body: structured, color: noteColor };
     const now = new Date().toISOString();
+
+    // Ничего не тронули — выходим молча, не трогая дату изменения на сервере.
+    if (target !== 'new' && snapshot(trimmedTitle, body, structured || '', noteColor) === openedAs.current) return;
 
     if (target === 'new') {
       const draft: Note = { id: `draft-${Date.now()}`, title: trimmedTitle, body, structured_body: structured, color: noteColor, updated_at: now, created_at: now };

@@ -1,6 +1,7 @@
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   Easing,
   interpolate,
@@ -17,6 +18,9 @@ import { ThemedText } from '@/components/themed-text';
 import { Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { haptic } from '@/lib/haptics';
+
+/** Высота системной панели вкладок без безопасной зоны (iOS UITabBar). */
+const TAB_BAR_HEIGHT = Platform.OS === 'ios' ? 49 : 56;
 
 export type FabAction = {
   id: string;
@@ -46,6 +50,7 @@ const SPRING = { damping: 18, stiffness: 240, mass: 0.7 };
  */
 export function FabMenu({ actions, label = 'Быстрые действия' }: Props) {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
   // Держим плитки в дереве, пока играет анимация закрытия, но не дольше —
   // иначе невидимый слой перехватывает нажатия по списку.
@@ -83,8 +88,10 @@ export function FabMenu({ actions, label = 'Быстрые действия' }: 
     setTimeout(action.onPress, 140);
   }
 
-  // Экран уже заканчивается над фиксированной панелью вкладок.
-  const bottom = Spacing.three;
+  // Системная панель вкладок лежит поверх экрана, а не занимает место в разметке:
+  // кнопка, отсчитанная от низа экрана, оказывалась под ней и не нажималась.
+  // Поэтому поднимаем её на высоту панели вместе с безопасной зоной.
+  const bottom = insets.bottom + TAB_BAR_HEIGHT + Spacing.two;
 
   return (
     <>
