@@ -1,6 +1,6 @@
 {
   "name": "noda-desktop",
-  "version": "1.20.0",
+  "version": "1.21.0-beta.1",
   "description": "Noda — терминал, файлы и передача проектов между ноутбуком, сервером и ПК",
   "main": "main.js",
   "author": "Noda",
@@ -32,11 +32,26 @@
       "main.js",
       "preload.js",
       "updater.js",
+      "voice-local.js",
       "sync/**",
       "icon.png",
       "icon.ico",
       "renderer/**",
       "node_modules/**"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/whisper",
+        "to": "whisper",
+        "filter": [
+          "LICENSE.whisper.cpp",
+          "Release/whisper-cli.exe",
+          "Release/whisper.dll",
+          "Release/ggml.dll",
+          "Release/ggml-base.dll",
+          "Release/ggml-cpu-*.dll"
+        ]
+      }
     ],
     "publish": [
       {

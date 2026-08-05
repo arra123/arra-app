@@ -2835,3 +2835,183 @@ body.term-mode .sidebar {
   .terminal-agent-meta { display: none; }
   .terminal-composer { padding-inline: 7px; }
 }
+
+/* ===== Terminal 1.21: стабильная геометрия, агентский ввод и компактная навигация ===== */
+.sidebar {
+  width: var(--sidebar-w);
+  min-width: 0;
+  overflow: hidden;
+  transition: width .26s cubic-bezier(.2,.82,.28,1), padding .26s cubic-bezier(.2,.82,.28,1), border-radius .26s ease;
+}
+.side-brand {
+  width: 100%;
+  flex: none;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background .18s ease, transform .18s var(--spring), padding .26s cubic-bezier(.2,.82,.28,1);
+}
+.side-brand:hover { background: rgba(255,255,255,.48); border-radius: 12px; }
+.side-brand:active { transform: scale(.98); }
+.side-brand:focus-visible { outline: 2px solid color-mix(in srgb, var(--tint) 55%, transparent); outline-offset: 1px; border-radius: 12px; }
+.side-brand > div,
+.sidebar button.navitem > span:not(.glyph) { white-space: nowrap; opacity: 1; transition: opacity .14s ease; }
+
+body.nav-collapsed .sidebar {
+  display: flex !important;
+  width: 60px !important;
+  padding: 8px 7px !important;
+  gap: 4px;
+  align-items: center;
+}
+body.nav-collapsed .side-brand { min-height: 46px; padding: 5px !important; justify-content: center; }
+body.nav-collapsed .side-brand img { width: 34px; height: 34px; }
+body.nav-collapsed .side-brand > div,
+body.nav-collapsed .sidebar button.navitem > span:not(.glyph),
+body.nav-collapsed .side-update,
+body.nav-collapsed .side-presence { display: none !important; opacity: 0; }
+body.nav-collapsed .sidebar button.navitem {
+  width: 44px !important;
+  height: 44px;
+  min-height: 44px;
+  padding: 7px !important;
+  justify-content: center;
+}
+body.nav-collapsed .sidebar button.navitem .glyph { width: 30px; height: 30px; }
+
+body.term-mode:not(.nav-collapsed) .sidebar {
+  width: 214px;
+  padding: 9px;
+  align-items: stretch;
+}
+body.term-mode:not(.nav-collapsed) .side-brand { min-height: 52px; padding: 5px 7px 9px; justify-content: flex-start; }
+body.term-mode:not(.nav-collapsed) .side-brand img { width: 34px; height: 34px; }
+body.term-mode:not(.nav-collapsed) .side-brand > div { display: block; }
+body.term-mode:not(.nav-collapsed) .sidebar button.navitem {
+  width: 100%; height: 42px; min-height: 42px; padding: 6px 9px; justify-content: flex-start;
+}
+body.term-mode:not(.nav-collapsed) .sidebar button.navitem > span:not(.glyph) { display: inline; }
+body.term-mode:not(.nav-collapsed) .side-update { display: grid; }
+body.term-mode:not(.nav-collapsed) .side-presence { display: grid; }
+
+.agent-preset-icon { position: relative; width: 19px; height: 19px; flex: none; display: inline-grid; place-items: center; }
+.agent-preset-copy { min-width: 0; display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.agent-preset-copy b { color: inherit; font-size: 11.5px; font-weight: 650; }
+.agent-preset-copy small { color: #858c97; font-size: 9.5px; font-weight: 550; }
+.agent-preset-dot {
+  position: absolute; right: -3px; bottom: -2px; width: 7px; height: 7px;
+  border: 1.5px solid #181a20; border-radius: 50%; background: #747b86;
+}
+.agent-preset-dot.starting,.agent-preset-dot.working { background: #d7a84b; animation: meta-pulse 1.1s ease-in-out infinite; }
+.agent-preset-dot.waiting { background: #e48b52; }
+.agent-preset-dot.done { background: #62bb77; }
+.agent-preset-dot.error { background: #de6c72; }
+body.term-mode .term-preset.agent-active { color: #eef0f3; background: #23262d; }
+
+.agent-metrics {
+  height: 30px; min-width: 0; margin-left: auto; display: flex; align-items: center; gap: 4px; overflow: hidden;
+}
+.agent-metric {
+  height: 24px; padding: 0 7px; flex: none; display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid #30343d; border-radius: 6px; color: #b9bec7; background: #13151a;
+  font: 550 9.5px/1 "Cascadia Code", Consolas, monospace; white-space: nowrap;
+}
+.agent-metric small { color: #6f7681; font: 550 8.5px/1 -apple-system,"Segoe UI",sans-serif; }
+.agent-metric b { color: #cbd0d7; font-weight: 650; }
+.agent-metric.model b { color: #e0c38e; }
+
+.terminal-turnbar {
+  min-height: 34px; max-height: 46px; padding: 6px 12px; flex: none;
+  display: flex; align-items: center; gap: 9px; overflow: hidden;
+  border-bottom: 1px solid #252830; color: #aeb4be; background: #111319;
+}
+.terminal-turnbar[hidden] { display: none; }
+.turn-who {
+  height: 21px; padding: 0 7px; flex: none; display: inline-flex; align-items: center;
+  border-radius: 5px; color: #dce9f7; background: #26394f; font-size: 9px; font-weight: 750; letter-spacing: .06em;
+}
+.turn-text { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #dce0e6; font-size: 11.5px; }
+.turn-activity { flex: none; display: inline-flex; align-items: center; gap: 6px; color: #777f8a; font-size: 10px; white-space: nowrap; }
+.turn-activity i { width: 6px; height: 6px; border-radius: 50%; background: #737a84; }
+.terminal-turnbar.working .turn-activity i,.terminal-turnbar.starting .turn-activity i { background: #d7a84b; animation: meta-pulse 1s ease-in-out infinite; }
+.terminal-turnbar.waiting .turn-activity i { background: #e48b52; }
+.terminal-turnbar.done .turn-activity i { background: #62bb77; }
+.terminal-turnbar.error .turn-activity i { background: #de6c72; }
+
+body.term-mode .xterm-pane.agent-ui::after {
+  content: ""; position: absolute; z-index: 8; right: 0; bottom: 0; left: 0; height: 22px;
+  pointer-events: none; background: #0d0f12;
+}
+.ws-right:has(#terminal-command:focus) .xterm-cursor-layer { opacity: 0 !important; }
+.ws-right:has(#terminal-command:focus) .xterm-helper-textarea { caret-color: transparent !important; }
+
+.terminal-composer { position: relative; min-height: 56px; padding: 8px 10px; }
+.terminal-composer textarea {
+  field-sizing: content;
+  height: auto;
+  min-height: 38px;
+  max-height: min(42vh, 320px);
+  resize: vertical;
+  overflow-y: auto;
+}
+.terminal-voice-status {
+  max-width: 210px; height: 26px; padding: 0 9px; flex: none; align-self: center;
+  display: inline-flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border: 1px solid #323640; border-radius: 6px; color: #989faa; background: #191c22; font-size: 9.5px;
+}
+.terminal-voice-status[hidden] { display: none; }
+.terminal-voice { position: relative; }
+.terminal-voice .voice-stop { display: none; width: 9px; height: 9px; border-radius: 2px; background: currentColor; }
+.terminal-voice.listening { color: #f2f4f6; background: #9e3e45; animation: voice-pulse 1.35s ease-in-out infinite; }
+.terminal-voice.listening .mic-glyph,.terminal-voice.transcribing .mic-glyph { display: none; }
+.terminal-voice.listening .voice-stop,.terminal-voice.transcribing .voice-stop { display: block; }
+.terminal-voice.preparing,.terminal-voice.transcribing { color: #e4c889; background: #302a20; }
+.terminal-voice.error { color: #ef9298; background: #352126; }
+@keyframes voice-pulse { 50% { box-shadow: 0 0 0 5px rgba(158,62,69,.14); } }
+
+/* Заметки не меняют вертикальный уровень при повторном открытии. */
+body.notes-mode main { padding: 18px 22px 20px; }
+body.notes-mode .page-head { height: 38px; min-height: 38px; margin-bottom: 12px; }
+body.notes-mode .notes-split { height: calc(100% - 50px); }
+body.notes-mode .notes-side,
+body.notes-mode .note-paper { height: 100%; }
+body.notes-mode .note-paper { overflow: hidden; }
+body.notes-mode .note-body { min-height: 0; overflow-y: auto; resize: none; }
+
+#app.section-enter { animation: section-enter .24s cubic-bezier(.2,.82,.28,1) both; }
+@keyframes section-enter { from { opacity: .68; transform: translate3d(7px,0,0); } to { opacity: 1; transform: translate3d(0,0,0); } }
+
+@media (max-width: 1180px) {
+  body.term-mode .term-preset .agent-preset-icon { display: inline-grid !important; }
+  body.term-mode .term-preset .agent-preset-copy { display: none !important; }
+  .agent-metric.optional { display: none; }
+}
+@media (max-width: 900px) {
+  .agent-metric small { display: none; }
+  .agent-metric { padding-inline: 5px; }
+  .turn-activity { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,#app.section-enter,.note-paper.swap .note-title,.note-paper.swap .note-body { animation: none !important; transition-duration: .01ms !important; }
+}
+
+/* Ввод лежит поверх терминала и растёт вверх: число строк PTY при печати не
+   меняется, поэтому полноэкранные TUI больше не прыгают по scrollback. */
+body.term-mode .ws-right { position: relative; }
+body.term-mode .xterm-pane { inset: 11px 14px 64px 14px; }
+body.term-mode .terminal-composer {
+  position: absolute;
+  z-index: 12;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  box-shadow: 0 -12px 24px -22px rgba(0,0,0,.9);
+}
+.agent-tab-state.working::after,
+.agent-tab-state.starting::after { display: none; animation: none; }
+.agent-preset-dot.starting,.agent-preset-dot.working,
+.terminal-turnbar.working .turn-activity i,.terminal-turnbar.starting .turn-activity i { animation: none; }

@@ -7,6 +7,7 @@ const https = require('https');
 const { execFile, spawn, spawnSync } = require('child_process');
 const WebSocket = require('ws');
 const { initUpdater, checkNow: checkUpdatesNow } = require('./updater');
+const { createLocalWhisper } = require('./voice-local');
 
 const BASE = 'https://api.arratima.ru';
 const WS_URL = 'wss://api.arratima.ru/agent';
@@ -82,6 +83,7 @@ function saveSettings() {
 
 let settings = {};
 let win = null;
+const localWhisper = createLocalWhisper({ app, send: winSend, writeLog });
 let windowRestoreBounds = null;
 let tray = null;
 let isQuitting = false;
@@ -1276,6 +1278,18 @@ ipcMain.handle('agent-notify', (_event, payload = {}) => {
   } catch (error) {
     writeLog('warn', 'agent.notification', { termId, error });
     return { ok: false, native: false, error: error.message };
+  }
+});
+ipcMain.handle('local-voice-status', () => localWhisper.status());
+ipcMain.handle('local-voice-prepare', async () => {
+  try { return await localWhisper.prepare(); }
+  catch (error) { return { ok: false, error: error.message }; }
+});
+ipcMain.handle('local-voice-transcribe', async (_event, { base64 } = {}) => {
+  try { return await localWhisper.transcribe(base64); }
+  catch (error) {
+    writeLog('error', 'voice.local-ipc', error);
+    return { ok: false, error: error.message };
   }
 });
 ipcMain.handle('app-version', () => app.getVersion());

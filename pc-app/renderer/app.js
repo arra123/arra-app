@@ -216,10 +216,13 @@ const AGENT_STATE_LABELS = { idle: 'готов', starting: 'запускаетс
 let agentSoundEnabled = localStorage.getItem('noda-agent-sound') !== 'off';
 let agentAudioContext = null;
 
-const AGENT_ERROR_RE = /(?:api(?: request)? error|rate limit|too many requests|context (?:window|length).*(?:exceed|limit)|network error|connection (?:failed|lost)|econn(?:reset|refused)|etimedout|enotfound|unauthorized|forbidden|model.{0,24}(?:overload|unavailable)|internal server error|fatal:|panic:|ошибка (?:api|сети|подключения)|не удалось подключ|лимит.{0,24}(?:исчерпан|превышен)|\[код выхода [1-9])/i;
+// Ошибкой считаем только явный аварийный результат. Раньше сюда попадали слова
+// «ошибка», «лимит» и т. п. из запроса самого пользователя, который Codex
+// перерисовывает внутри TUI.
+const AGENT_ERROR_RE = /(?:^|\n)\s*(?:■\s*)?(?:error|fatal|panic)(?:\[[^\]]+\])?\s*:\s*\S|(?:api request failed|rate limit exceeded|too many requests|context (?:window|length).*(?:exceeded|too large)|network error|connection (?:failed|lost)|econn(?:reset|refused)|etimedout|enotfound|unauthorized|forbidden|internal server error|stream disconnected|\[код выхода [1-9])/im;
 const AGENT_QUESTION_RE = /(?:do you want|would you like|shall i|approval required|allow (?:this|the )?command|press enter to confirm|choose (?:an|one)|select (?:an|one)|\[[Yy]\/\s*[Nn]\]|\([Yy]\/\s*[Nn]\)|разрешить|подтвердить|продолжить\?|выберите|нужен.{0,24}ответ|требуется.{0,24}подтверждение)/i;
 const AGENT_DONE_RE = /(?:worked for \d|task (?:completed|finished)|completed successfully|all done|задача завершена|работа завершена|готово[.!]?\s*$|waiting for (?:your )?(?:input|instructions)|what (?:would you like|can i)|how can i help)/im;
-const AGENT_PROMPT_RE = /(?:^|\n)\s*[›❯]\s*(?:$|\n)|(?:^|\n)\s*PS [^>\n]{0,180}>\s*$/m;
+const AGENT_PROMPT_RE = /(?:^|\n)\s*[›❯]\s*[^\n]{0,180}(?:$|\n)|(?:^|\n)\s*PS [^>\n]{0,180}>\s*$/m;
 
 function plainTerminalText(value) {
   return String(value || '')
@@ -229,6 +232,43 @@ function plainTerminalText(value) {
     .replace(/\x1b[@-_]/g, '')
     .replace(/\r/g, '\n')
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+}
+
+function visibleTerminalText(x) {
+  try {
+    const buffer = x?.term?.buffer?.active;
+    if (!buffer) return '';
+    const from = Math.max(0, buffer.length - (x.term.rows || 30) - 2);
+    const lines = [];
+    for (let i = from; i < buffer.length; i++) {
+      const line = buffer.getLine(i);
+      if (line) lines.push(line.translateToString(true));
+    }
+    return lines.join('\n');
+  } catch { return ''; }
+}
+
+function readAgentMetrics(text) {
+  const clean = plainTerminalText(text);
+  const lines = clean.split('\n').map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const statusLine = [...lines].reverse().find((line) => /\bweekly\s+\d+%\s+left\b/i.test(line) || /\bcontext\s+\d+%\s+left\b/i.test(line));
+  if (!statusLine) return null;
+  const model = statusLine.match(/\b((?:gpt|o\d|claude)[\w.-]*(?:\s+(?:low|medium|high|xhigh|max|ultra))?)/i)?.[1] || '';
+  const weekly = statusLine.match(/\bweekly\s+(\d+%)\s+left\b/i)?.[1] || '';
+  const context = statusLine.match(/\bcontext\s+(\d+%)\s+left\b/i)?.[1] || '';
+  const used = statusLine.match(/\b([\d.]+[KMB]?)\s+used\b/i)?.[1] || '';
+  return { model, weekly, context, used };
+}
+
+function updateAgentMetrics(termId, text) {
+  const x = xts[termId]; if (!x) return;
+  const next = readAgentMetrics(text);
+  if (!next) return;
+  const signature = JSON.stringify(next);
+  if (signature === x.agentMetricsSignature) return;
+  x.agentMetrics = next;
+  x.agentMetricsSignature = signature;
+  if (termId === activeLocal && document.getElementById('termtabs')) renderTermTabs();
 }
 
 function agentTopic(text) {
@@ -282,7 +322,7 @@ function notifyAgentState(termId, stateName, detail = '') {
   const kind = stateName === 'error' ? 'warn' : stateName === 'done' ? 'ok' : 'info';
   const title = stateName === 'waiting' ? `${tab} ждёт ответа` : stateName === 'error' ? `${tab}: ошибка` : `${tab} завершил работу`;
   const message = detail || (stateName === 'waiting' ? 'Нужно подтверждение или ответ' : stateName === 'error' ? 'Проверь вывод агента' : 'Результат готов');
-  toast(title, message, kind, 4200, () => activateAgentTerminal(termId), 'agent-toast');
+  toast(title, message, kind, 2800, () => activateAgentTerminal(termId), 'agent-toast');
   const nativePayload = { termId, kind: stateName, title, body: message };
   const request = window.arra.notifyAgent ? window.arra.notifyAgent(nativePayload) : Promise.resolve({ native: false });
   Promise.resolve(request).then((result) => { if (!result?.native) playAgentTone(stateName); }).catch(() => playAgentTone(stateName));
@@ -294,6 +334,7 @@ function setAgentState(termId, next, detail = '', notify = false) {
   if (next === 'working' || next === 'starting') x.lastAgentNotice = '';
   if (document.getElementById('termtabs')) renderTermTabs();
   updateTerminalComposer();
+  updateTerminalTurnBar();
   if (notify) notifyAgentState(termId, next, detail);
 }
 
@@ -308,6 +349,7 @@ function setAgentKind(termId, kind, topic = '') {
     x.name = `${AGENT_LABELS[kind]} · ${base}`;
   }
   if (document.getElementById('termtabs')) renderTermTabs();
+  document.querySelector(`[data-pane="${termId}"]`)?.classList.add('agent-ui');
   updateTerminalComposer();
 }
 
@@ -315,6 +357,7 @@ function beginAgentWork(termId, prompt) {
   const x = xts[termId]; if (!x || !x.agentKind) return;
   x.agentBuffer = '';
   x.agentSubmittedAt = Date.now();
+  x.lastPrompt = String(prompt || '').trim();
   if (!x.nameCustom) {
     const topic = agentTopic(prompt);
     if (topic) x.name = `${AGENT_LABELS[x.agentKind]} · ${topic}`;
@@ -348,27 +391,26 @@ function inspectAgentOutput(termId, data) {
   const clean = plainTerminalText(data);
   if (!clean) return;
   x.agentBuffer = ((x.agentBuffer || '') + clean).slice(-6000);
-  const recent = x.agentBuffer.slice(-2800);
-  if (x.agentState === 'working' && AGENT_ERROR_RE.test(recent)) {
-    const line = recent.split('\n').map((part) => part.trim()).filter(Boolean).pop() || 'Агент остановился с ошибкой';
-    setAgentState(termId, 'error', line.slice(0, 150), true);
-    return;
-  }
-  if (x.agentState === 'working' && AGENT_QUESTION_RE.test(recent)) {
-    setAgentState(termId, 'waiting', 'Нужно подтверждение или ответ', true);
-    return;
-  }
+  updateAgentMetrics(termId, x.agentBuffer);
   clearTimeout(x.agentInspectTimer);
   x.agentInspectTimer = setTimeout(() => {
     const current = xts[termId]; if (!current) return;
-    const tail = (current.agentBuffer || '').slice(-3200);
+    const screen = visibleTerminalText(current);
+    const tail = ((screen && screen.trim()) ? screen : (current.agentBuffer || '')).slice(-4200);
     const promptVisible = AGENT_PROMPT_RE.test(tail);
     if (current.agentState === 'starting' && promptVisible) {
       setAgentState(termId, 'idle');
-    } else if (current.agentState === 'working' && Date.now() - (current.agentSubmittedAt || 0) > 1000 && (AGENT_DONE_RE.test(tail) || promptVisible)) {
+    } else if (['working', 'waiting', 'error'].includes(current.agentState) && Date.now() - (current.agentSubmittedAt || 0) > 1000 && AGENT_QUESTION_RE.test(tail)) {
+      setAgentState(termId, 'waiting', 'Нужно подтверждение или ответ', true);
+    } else if (['working', 'waiting', 'error'].includes(current.agentState) && Date.now() - (current.agentSubmittedAt || 0) > 1000 && (AGENT_DONE_RE.test(tail) || promptVisible)) {
+      if (AGENT_ERROR_RE.test(tail)) {
+        const line = tail.split('\n').map((part) => part.trim()).filter((part) => AGENT_ERROR_RE.test(`\n${part}`)).pop() || 'Агент остановился с ошибкой';
+        setAgentState(termId, 'error', line.slice(0, 150), true);
+        return;
+      }
       setAgentState(termId, 'done', 'Результат готов — нажми, чтобы открыть сессию', true);
     }
-  }, 850);
+  }, 1180);
 }
 
 function wirePty() {
@@ -384,8 +426,7 @@ function wirePty() {
       x = ensureXterm(id); x.started = true; x.phone = true;
       if (!localTerms.includes(id)) { localTerms.push(id); if (document.getElementById('termtabs')) renderTermTabs(); }
     }
-    x.term.write(p.data);
-    inspectAgentOutput(id, p.data);
+    x.term.write(p.data, () => inspectAgentOutput(id, p.data));
   });
   window.arra.onPtyExit && window.arra.onPtyExit((p) => {
     if (!p) return;
@@ -420,20 +461,17 @@ function fitLocal(termId) {
 // Безопасно от зацикливания: host растягивается флексом (его размер НЕ зависит от содержимого терминала),
 // поэтому fit() не меняет размер host → новый вызов observer не триггерится.
 let hostRO = null;
+let hostFitTimer = null;
 function observeHost(host) {
   if (!window.ResizeObserver) return;
   if (hostRO) { try { hostRO.disconnect(); } catch {} }
-  let pending = false, lw = 0, lh = 0;
+  let lw = 0, lh = 0;
   hostRO = new ResizeObserver(() => {
-    if (pending) return;
-    pending = true;
-    requestAnimationFrame(() => {
-      pending = false;
-      const r = host.getBoundingClientRect();
-      if (Math.abs(r.width - lw) < 2 && Math.abs(r.height - lh) < 2) return;
-      lw = r.width; lh = r.height;
-      fitLocal(activeLocal);
-    });
+    const r = host.getBoundingClientRect();
+    if (Math.abs(r.width - lw) < 2 && Math.abs(r.height - lh) < 2) return;
+    lw = r.width; lh = r.height;
+    clearTimeout(hostFitTimer);
+    hostFitTimer = setTimeout(() => fitLocal(activeLocal), 84);
   });
   hostRO.observe(host);
 }
@@ -444,7 +482,7 @@ function ensureXterm(termId, cwd) {
     fontFamily: 'Cascadia Code, Consolas, ui-monospace, monospace',
     fontWeight: '400', fontWeightBold: '600',
     cursorBlink: false, cursorStyle: 'bar', cursorWidth: 2, cursorInactiveStyle: 'none',
-    scrollback: 10000, scrollOnUserInput: true, smoothScrollDuration: 0,
+    scrollback: 10000, scrollOnUserInput: false, smoothScrollDuration: 0,
     drawBoldTextInBrightColors: false, minimumContrastRatio: 3,
     theme: XTERM_THEMES[curTheme()],
   });
@@ -494,6 +532,7 @@ function ensureXterm(termId, cwd) {
   xts[termId] = {
     term, fit, opened: false, started: false, cwd: cwd || '', name: '', nameCustom: false,
     agentKind: '', agentState: 'idle', agentBuffer: '', agentSubmittedAt: 0,
+    agentMetrics: null, agentMetricsSignature: '', lastPrompt: '',
     userInputBuffer: '', draft: '', commandHistory: [], commandHistoryIndex: -1,
   };
   return xts[termId];
@@ -534,6 +573,7 @@ function mountActiveTerm() {
     if (!pane) { pane = document.createElement('div'); pane.className = 'xterm-pane'; pane.dataset.pane = id; host.appendChild(pane); }
     if (!x.opened) { x.term.open(pane); x.opened = true; wirePane(pane, id, x); }
     else if (x.term.element && x.term.element.parentElement !== pane) { pane.appendChild(x.term.element); wirePane(pane, id, x); } // вернулись на вкладку — переподключаем
+    pane.classList.toggle('agent-ui', !!x.agentKind);
     pane.style.display = id === activeLocal ? 'block' : 'none';
   }
   // удалить панели закрытых вкладок
@@ -583,6 +623,27 @@ function toggleTerminalExplorer(force) {
   requestAnimationFrame(() => fitLocal(activeLocal));
   setTimeout(() => fitLocal(activeLocal), 170);
 }
+function renderAgentLauncher(kind, image) {
+  const x = xts[activeLocal];
+  const active = x?.agentKind === kind;
+  const stateName = active ? (x.agentState || 'idle') : '';
+  const status = stateName ? AGENT_STATE_LABELS[stateName] : '';
+  const label = AGENT_LABELS[kind];
+  return `<button class="term-preset ${kind}${active ? ' agent-active' : ''}" data-agent-state="${stateName}" id="start-${kind}" title="${active ? `${label} · ${status}` : `Запустить ${label} в текущей папке`}">
+    <span class="agent-preset-icon"><img src="${image}" alt="">${active ? `<i class="agent-preset-dot ${stateName}"></i>` : ''}</span>
+    <span class="agent-preset-copy"><b>${label}</b>${active ? `<small>${esc(status)}</small>` : ''}</span>
+  </button>`;
+}
+function renderAgentMetrics(x) {
+  const metrics = x?.agentMetrics;
+  if (!metrics || !x?.agentKind) return '';
+  return `<div class="agent-metrics" aria-label="Лимиты активного агента">
+    ${metrics.model ? `<span class="agent-metric model" title="Модель"><b>${esc(metrics.model)}</b></span>` : ''}
+    ${metrics.weekly ? `<span class="agent-metric" title="Недельный лимит"><small>неделя</small><b>${esc(metrics.weekly)}</b></span>` : ''}
+    ${metrics.context ? `<span class="agent-metric" title="Контекст"><small>контекст</small><b>${esc(metrics.context)}</b></span>` : ''}
+    ${metrics.used ? `<span class="agent-metric optional" title="Использовано токенов"><small>исп.</small><b>${esc(metrics.used)}</b></span>` : ''}
+  </div>`;
+}
 function renderTermTabs() {
   const bar = document.getElementById('termtabs');
   if (!bar) return;
@@ -598,18 +659,17 @@ function renderTermTabs() {
     return `<div class="ttab ${id === activeLocal ? 'on' : ''} ${phone ? 'phone' : ''} ${agentState ? `agent-${agentState}` : ''}" data-id="${id}" role="tab" tabindex="0" aria-selected="${id === activeLocal}" title="${esc(t.path || t.name)}${stateLabel ? ` · ${esc(stateLabel)}` : ''} — двойной щелчок для переименования">${marker}${label}<button class="tclose" data-close="${id}" title="Закрыть терминал" aria-label="Закрыть ${esc(t.name)}">×</button></div>`;
   }).join('');
   const zen = document.body.classList.contains('term-zen');
-  const activePath = termTabLabel(activeLocal).path || term.root || '';
+  const activeX = xts[activeLocal];
   bar.innerHTML = `
     <button class="term-tool" id="term-navtoggle" title="${document.body.classList.contains('nav-collapsed') ? 'Показать' : 'Скрыть'} навигацию" aria-label="${document.body.classList.contains('nav-collapsed') ? 'Показать' : 'Скрыть'} навигацию"><svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></button>
     <button class="term-tool" id="treetoggle" title="${panelCollapsed ? 'Показать' : 'Скрыть'} проводник (Ctrl+Shift+E)" aria-label="${panelCollapsed ? 'Показать' : 'Скрыть'} проводник">${SVG.folder}</button>
     <div class="terminal-tabstrip" role="tablist" aria-label="Терминалы">${tabs}<button class="term-tool tab-add" id="ttadd" title="Новый терминал (Ctrl+Shift+T)" aria-label="Новый терминал">＋</button></div>
     <span class="terminal-divider"></span>
-    <button class="term-preset codex" id="start-codex" title="Запустить Codex в текущей папке"><img src="assets/merchants/openai.png" alt=""><span>Codex</span></button>
-    <button class="term-preset claude" id="start-claude" title="Запустить Claude в текущей папке"><img src="assets/merchants/anthropic.png" alt=""><span>Claude</span></button>
+    ${renderAgentLauncher('codex', 'assets/merchants/openai.png')}
+    ${renderAgentLauncher('claude', 'assets/merchants/anthropic.png')}
+    ${renderAgentMetrics(activeX)}
     <button class="term-tool" id="termzen" title="${zen ? 'Выйти из полноэкранного режима' : 'Терминал на весь экран'}" aria-label="${zen ? 'Выйти из полноэкранного режима' : 'Терминал на весь экран'}">${zen ? '⤡' : '⤢'}</button>
-    <span class="ttag" title="Терминал доступен с телефона"><span class="dot ${state.presence.phone ? 'on' : ''}"></span><span>Телефон</span></span>
-    <span class="terminal-cwd" title="${esc(activePath)}">${esc(activePath)}</span>
-    <span class="terminal-metrics" id="terminal-metrics"></span>`;
+  `;
   bar.querySelectorAll('.ttab').forEach((tab) => {
     tab.onclick = (e) => {
       if (e.target.closest('.term-rename, .tclose')) return;
@@ -649,11 +709,7 @@ function renderTermTabs() {
   document.getElementById('start-codex').onclick = () => launchTerminalPreset('codex --yolo');
   document.getElementById('start-claude').onclick = () => launchTerminalPreset('claude --dangerously-skip-permissions');
   document.getElementById('treetoggle').onclick = () => toggleTerminalExplorer();
-  requestAnimationFrame(() => {
-    const x = xts[activeLocal];
-    const metrics = document.getElementById('terminal-metrics');
-    if (x && metrics) metrics.textContent = `${x.term.cols} × ${x.term.rows}`;
-  });
+  updateTerminalTurnBar();
 }
 /** Терминал во весь экран: прячем боковые панели и лаунчбар. Esc — выйти. */
 function toggleTermZen(force) {
@@ -675,6 +731,7 @@ function switchLocalTerm(id) {
   renderTermTabs();
   mountActiveTerm();
   updateTerminalComposer();
+  updateTerminalTurnBar();
   requestAnimationFrame(() => document.getElementById('terminal-command')?.focus());
 }
 // Новый терминал в папке (по умолчанию — корень кода), без диалога
@@ -713,11 +770,200 @@ function closeLocalTerm(id) {
 
 const SOUND_ON_ICON = '<svg viewBox="0 0 24 24"><path d="M5 10v4h4l5 4V6L9 10H5z"></path><path d="M17 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"></path></svg>';
 const SOUND_OFF_ICON = '<svg viewBox="0 0 24 24"><path d="M5 10v4h4l5 4V6L9 10H5z"></path><path d="M18 10l4 4M22 10l-4 4"></path></svg>';
-
-function resizeTerminalComposer(input) {
+const terminalVoice = {
+  phase: 'idle', detail: '', active: false, stopRequested: false, stream: null,
+  recorder: null, chunkTimer: null, queue: Promise.resolve(), termId: null,
+};
+function resizeTerminalComposer(input, collapse = false) {
   if (!input) return;
-  input.style.height = '38px';
-  input.style.height = `${Math.min(104, Math.max(38, input.scrollHeight))}px`;
+  if (collapse) input.style.removeProperty('height');
+  if (!CSS.supports?.('field-sizing', 'content')) {
+    const before = Math.round(input.getBoundingClientRect().height);
+    input.style.height = 'auto';
+    const next = Math.min(320, Math.max(38, input.scrollHeight));
+    if (Math.abs(before - next) > 1) input.style.height = `${next}px`;
+  }
+  const x = xts[activeLocal];
+  const height = Math.round(input.getBoundingClientRect().height);
+  if (x && x.composerHeight !== height) {
+    x.composerHeight = height;
+  }
+}
+
+function updateTerminalVoiceUi() {
+  const button = document.getElementById('terminal-voice');
+  const status = document.getElementById('terminal-voice-status');
+  if (!button || !status) return;
+  button.className = `composer-tool terminal-voice ${terminalVoice.phase}`;
+  button.setAttribute('aria-pressed', terminalVoice.active ? 'true' : 'false');
+  button.title = terminalVoice.active ? 'Остановить диктовку' : 'Локальная диктовка Whisper';
+  status.hidden = terminalVoice.phase === 'idle' && !terminalVoice.detail;
+  status.textContent = terminalVoice.detail || '';
+}
+
+function setTerminalVoicePhase(phase, detail = '') {
+  terminalVoice.phase = phase;
+  terminalVoice.detail = detail;
+  updateTerminalVoiceUi();
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
+async function voiceBlobToWavBase64(blob) {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const audioContext = new AudioCtx();
+  try {
+    const decoded = await audioContext.decodeAudioData((await blob.arrayBuffer()).slice(0));
+    const frames = Math.max(1, Math.ceil(decoded.duration * 16000));
+    const offline = new OfflineAudioContext(1, frames, 16000);
+    const source = offline.createBufferSource();
+    source.buffer = decoded;
+    source.connect(offline.destination);
+    source.start();
+    const rendered = await offline.startRendering();
+    const samples = rendered.getChannelData(0);
+    const wav = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(wav);
+    const text = (offset, value) => { for (let i = 0; i < value.length; i += 1) view.setUint8(offset + i, value.charCodeAt(i)); };
+    text(0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true); text(8, 'WAVE');
+    text(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, 16000, true); view.setUint32(28, 32000, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    text(36, 'data'); view.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i += 1) {
+      const value = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(44 + i * 2, value < 0 ? value * 0x8000 : value * 0x7fff, true);
+    }
+    return arrayBufferToBase64(wav);
+  } finally {
+    audioContext.close().catch(() => {});
+  }
+}
+
+function appendTerminalVoiceText(termId, text) {
+  const x = xts[termId];
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!x || !clean) return;
+  x.draft = `${x.draft || ''}${x.draft?.trim() ? ' ' : ''}${clean}`;
+  const input = termId === activeLocal ? document.getElementById('terminal-command') : null;
+  if (input) {
+    input.value = x.draft;
+    resizeTerminalComposer(input);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+}
+
+function queueTerminalVoiceBlob(blob, termId) {
+  if (!blob?.size) return terminalVoice.queue;
+  terminalVoice.queue = terminalVoice.queue.then(async () => {
+    setTerminalVoicePhase(terminalVoice.active ? 'listening' : 'transcribing', terminalVoice.active ? 'Слушаю · распознаю фрагмент…' : 'Распознаю…');
+    const wav = await voiceBlobToWavBase64(blob);
+    const result = await window.arra.localVoiceTranscribe(wav);
+    if (result?.ok) appendTerminalVoiceText(termId, result.text);
+    else if (!result?.busy) throw new Error(result?.error || 'Whisper не распознал фрагмент');
+  }).catch((error) => {
+    setTerminalVoicePhase('error', error.message);
+    toast('Диктовка', error.message, 'warn', 5000);
+  });
+  return terminalVoice.queue;
+}
+
+function finishTerminalVoice() {
+  clearTimeout(terminalVoice.chunkTimer);
+  terminalVoice.chunkTimer = null;
+  try { terminalVoice.stream?.getTracks().forEach((track) => track.stop()); } catch {}
+  terminalVoice.stream = null;
+  terminalVoice.recorder = null;
+  terminalVoice.active = false;
+  terminalVoice.stopRequested = false;
+  terminalVoice.termId = null;
+  setTerminalVoicePhase('idle', '');
+}
+
+function recordTerminalVoiceChunk() {
+  if (!terminalVoice.active || !terminalVoice.stream) return;
+  const chunks = [];
+  const options = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? { mimeType: 'audio/webm;codecs=opus' } : undefined;
+  const recorder = new MediaRecorder(terminalVoice.stream, options);
+  terminalVoice.recorder = recorder;
+  recorder.ondataavailable = (event) => { if (event.data?.size) chunks.push(event.data); };
+  recorder.onstop = () => {
+    clearTimeout(terminalVoice.chunkTimer);
+    terminalVoice.chunkTimer = null;
+    terminalVoice.recorder = null;
+    const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+    const pending = queueTerminalVoiceBlob(blob, terminalVoice.termId);
+    if (terminalVoice.active && !terminalVoice.stopRequested) recordTerminalVoiceChunk();
+    else pending.finally(finishTerminalVoice);
+  };
+  recorder.start();
+  terminalVoice.chunkTimer = setTimeout(() => {
+    if (recorder.state === 'recording') recorder.stop();
+  }, 4200);
+}
+
+async function startTerminalVoice() {
+  if (terminalVoice.active || terminalVoice.phase === 'preparing') return;
+  terminalVoice.termId = activeLocal;
+  setTerminalVoicePhase('preparing', 'Проверяю локальный Whisper…');
+  let status = await window.arra.localVoiceStatus();
+  if (!status?.ready) {
+    setTerminalVoicePhase('preparing', 'Загрузка Whisper · 0%');
+    toast('Локальная диктовка', 'Один раз загружаю модель Whisper small · 181 МБ', 'info', 5000);
+    status = await window.arra.localVoicePrepare();
+  }
+  if (!status?.ready) throw new Error(status?.error || 'Не удалось подготовить локальный Whisper');
+  terminalVoice.stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+  });
+  terminalVoice.active = true;
+  terminalVoice.stopRequested = false;
+  terminalVoice.queue = Promise.resolve();
+  setTerminalVoicePhase('listening', 'Слушаю · текст появится здесь');
+  recordTerminalVoiceChunk();
+}
+
+function stopTerminalVoice() {
+  if (!terminalVoice.active) return;
+  terminalVoice.active = false;
+  terminalVoice.stopRequested = true;
+  setTerminalVoicePhase('transcribing', 'Дописываю последнюю фразу…');
+  clearTimeout(terminalVoice.chunkTimer);
+  if (terminalVoice.recorder?.state === 'recording') terminalVoice.recorder.stop();
+  else terminalVoice.queue.finally(finishTerminalVoice);
+}
+
+window.arra.onLocalVoiceProgress?.((payload) => {
+  if (!payload) return;
+  if (payload.phase === 'downloading') setTerminalVoicePhase('preparing', `Загрузка Whisper · ${Math.round(payload.percent || 0)}%`);
+  else if (payload.phase === 'ready') setTerminalVoicePhase('preparing', 'Whisper готов');
+  else if (payload.phase === 'error') setTerminalVoicePhase('error', payload.message || 'Ошибка загрузки Whisper');
+});
+
+function updateTerminalTurnBar() {
+  const bar = document.getElementById('terminal-turnbar');
+  const x = xts[activeLocal];
+  if (!bar || !x?.lastPrompt) {
+    if (bar) bar.hidden = true;
+    return;
+  }
+  const agent = AGENT_LABELS[x.agentKind] || 'Терминал';
+  const stateName = x.agentState || 'idle';
+  const activity = stateName === 'working' || stateName === 'starting'
+    ? `${agent} пишет`
+    : stateName === 'waiting' ? `${agent} ждёт ответа`
+      : stateName === 'error' ? `${agent} остановился`
+        : stateName === 'done' ? `${agent} ответил` : `${agent} готов`;
+  bar.hidden = false;
+  bar.className = `terminal-turnbar ${stateName}`;
+  bar.innerHTML = `<span class="turn-who">Вы</span><span class="turn-text" title="${esc(x.lastPrompt)}">${esc(x.lastPrompt)}</span><span class="turn-activity"><i></i>${esc(activity)}</span>`;
 }
 
 function updateTerminalComposer() {
@@ -738,6 +984,8 @@ function updateTerminalComposer() {
     sound.title = agentSoundEnabled ? 'Выключить звук уведомлений' : 'Включить звук уведомлений';
   }
   resizeTerminalComposer(input);
+  updateTerminalVoiceUi();
+  updateTerminalTurnBar();
 }
 
 function sendTerminalComposer() {
@@ -752,10 +1000,12 @@ function sendTerminalComposer() {
   x.draft = '';
   handleAgentSubmission(activeLocal, value);
   const normalized = value.replace(/\r?\n/g, '\r');
-  const payload = value.includes('\n') ? `\x1b[200~${normalized}\x1b[201~\r` : `${normalized}\r`;
-  window.arra.ptyInput(payload, activeLocal);
+  const payload = value.includes('\n') ? `\x1b[200~${normalized}\x1b[201~` : normalized;
+  const targetTerm = activeLocal;
+  window.arra.ptyInput(payload, targetTerm);
+  setTimeout(() => window.arra.ptyInput('\r', targetTerm), 28);
   input.value = '';
-  resizeTerminalComposer(input);
+  resizeTerminalComposer(input, true);
   renderTermTabs();
   updateTerminalComposer();
   input.focus();
@@ -765,6 +1015,7 @@ function wireTerminalComposer() {
   const form = document.getElementById('terminal-composer');
   const input = document.getElementById('terminal-command');
   const sound = document.getElementById('agent-sound');
+  const voice = document.getElementById('terminal-voice');
   if (!form || !input) return;
   form.onsubmit = (event) => { event.preventDefault(); sendTerminalComposer(); };
   input.oninput = () => {
@@ -798,6 +1049,24 @@ function wireTerminalComposer() {
     updateTerminalComposer();
     if (agentSoundEnabled) playAgentTone('done');
   };
+  if (voice) voice.onclick = async () => {
+    if (terminalVoice.active) { stopTerminalVoice(); return; }
+    try { await startTerminalVoice(); }
+    catch (error) {
+      finishTerminalVoice();
+      setTerminalVoicePhase('error', error.message);
+      toast('Диктовка', error.message.includes('Permission') ? 'Нет доступа к микрофону' : error.message, 'warn', 6000);
+    }
+  };
+  const x = xts[activeLocal];
+  if (x?.composerRO) { try { x.composerRO.disconnect(); } catch {} }
+  if (x && window.ResizeObserver) {
+    x.composerRO = new ResizeObserver(() => {
+      const height = Math.round(input.getBoundingClientRect().height);
+      if (x.composerHeight !== height) x.composerHeight = height;
+    });
+    x.composerRO.observe(input);
+  }
 }
 
 // ---- titlebar ----
@@ -806,6 +1075,8 @@ document.getElementById('max').onclick = () => window.arra.winMax();
 document.getElementById('close').onclick = () => window.arra.winClose();
 let updateUiState = '';
 let updateUiLabel = 'Проверить обновление';
+let appVersionCache = '';
+let appVersionRequest = null;
 function setUpdateButton(updateState, label) {
   updateUiState = updateState || '';
   updateUiLabel = label || 'Проверить обновление';
@@ -853,10 +1124,17 @@ function applyTheme() {
 const themeButton = document.getElementById('themebtn');
 if (themeButton) themeButton.remove();
 applyTheme();
+try {
+  const savedNavState = localStorage.getItem('noda-nav-collapsed');
+  document.body.classList.toggle('nav-collapsed', savedNavState == null ? true : savedNavState === '1');
+} catch { document.body.classList.add('nav-collapsed'); }
 // Скрыть/показать глобальную навигацию. В терминале та же команда доступна в его toolbar.
-function toggleAppNavigation() {
-  document.body.classList.toggle('nav-collapsed');
-  if (state.section === 'term') { requestAnimationFrame(() => fitLocal(activeLocal)); setTimeout(() => fitLocal(activeLocal), 180); }
+function toggleAppNavigation(force) {
+  const collapsed = force == null ? !document.body.classList.contains('nav-collapsed') : !!force;
+  document.body.classList.toggle('nav-collapsed', collapsed);
+  try { localStorage.setItem('noda-nav-collapsed', collapsed ? '1' : '0'); } catch {}
+  document.getElementById('side-brand-toggle')?.setAttribute('aria-expanded', String(!collapsed));
+  if (state.section === 'term') { requestAnimationFrame(() => fitLocal(activeLocal)); setTimeout(() => fitLocal(activeLocal), 290); }
 }
 document.getElementById('navtoggle').onclick = toggleAppNavigation;
 
@@ -893,7 +1171,7 @@ async function doLogin() {
 }
 
 // ================= NAV (боковая, десктоп) =================
-async function renderNav() {
+function renderNav() {
   nav.classList.remove('hidden');
   const items = [
     ['fin', 'Финансы', NAVICON.fin],
@@ -904,37 +1182,52 @@ async function renderNav() {
     ['remote', 'Удалённый ПК', NAVICON.remote],
     ['term', 'Терминал', NAVICON.term],
   ];
-  let st = state.presence.status || {};
-  let appVer = '';
-  try { st = await window.arra.getStatus(); } catch {}
-  try { appVer = await window.arra.appVersion(); } catch {}
+  const st = state.presence.status || {};
   const currentRole = st.deviceProfile?.role;
   nav.style.setProperty('--active-index', String(Math.max(0, items.findIndex(([key]) => key === state.section))));
   nav.innerHTML =
-    `<div class="side-brand">
+    `<button class="side-brand" id="side-brand-toggle" type="button" title="${document.body.classList.contains('nav-collapsed') ? 'Развернуть' : 'Свернуть'} навигацию" aria-label="${document.body.classList.contains('nav-collapsed') ? 'Развернуть' : 'Свернуть'} навигацию" aria-expanded="${!document.body.classList.contains('nav-collapsed')}">
       <img src="assets/noda.png" alt="">
       <div><b>Noda</b><small>рабочий контур</small></div>
-    </div>` +
+    </button>` +
     items.map(([k, label, ic]) => `<button data-s="${k}" class="navitem ${state.section === k ? 'active' : ''}" title="${label}" aria-label="${label}">${ic}<span>${label}</span></button>`).join('') +
     `<div class="side-spacer"></div>` +
-    `<button class="side-update ${esc(updateUiState)}" id="side-update" type="button"><span>↻</span><b>${esc(updateUiLabel)}</b><small>${esc(appVer || '')}</small></button>` +
+    `<button class="side-update ${esc(updateUiState)}" id="side-update" type="button"><span>↻</span><b>${esc(updateUiLabel)}</b><small>${esc(appVersionCache)}</small></button>` +
     `<div class="side-presence">
       <div><span class="dot ${state.presence.phone ? 'on' : ''}"></span><span>Телефон</span><small>${state.presence.phone ? 'в сети' : 'не в сети'}</small></div>
       <div><span class="dot ${state.presence.laptop ? 'on' : ''}"></span><span>Ноутбук</span><small>${currentRole === 'laptop' ? 'это устройство' : (state.presence.laptop ? 'в сети' : 'не в сети')}</small></div>
       <div><span class="dot ${state.presence.pc ? 'on' : ''}"></span><span>ПК</span><small>${currentRole === 'pc' ? 'это устройство' : (state.presence.pc ? 'в сети' : 'не в сети')}</small></div>
     </div>`;
   nav.querySelectorAll('button.navitem').forEach((b) => (b.onclick = () => { state.section = b.dataset.s; renderNav(); route(); }));
+  document.getElementById('side-brand-toggle').onclick = () => toggleAppNavigation();
   const su = document.getElementById('side-update');
   if (su) su.onclick = triggerUpdateCheck;
+  if (!appVersionCache && !appVersionRequest) {
+    appVersionRequest = window.arra.appVersion().then((version) => {
+      appVersionCache = String(version || '');
+      const target = document.querySelector('#side-update small');
+      if (target) target.textContent = appVersionCache;
+    }).catch(() => {}).finally(() => { appVersionRequest = null; });
+  }
 }
 
+let lastRoutedSection = '';
 function route() {
   if (state.section !== 'remote' && remoteDesktop.running) stopRemoteDesktop();
+  if (state.section !== 'term' && terminalVoice.active) stopTerminalVoice();
   document.body.classList.toggle('term-mode', state.section === 'term');
   document.body.classList.toggle('chat-mode', state.section === 'chat');
   document.body.classList.toggle('notes-mode', state.section === 'notes');
   document.body.classList.toggle('remote-mode', state.section === 'remote');
   document.body.classList.toggle('sync-mode', state.section === 'sync');
+  if (lastRoutedSection !== state.section) {
+    app.classList.remove('section-enter');
+    void app.offsetWidth;
+    app.classList.add('section-enter');
+    clearTimeout(route.animationTimer);
+    route.animationTimer = setTimeout(() => app.classList.remove('section-enter'), 280);
+    lastRoutedSection = state.section;
+  }
   if (state.section === 'fin') return renderFin();
   if (state.section === 'chat') return renderChat();
   if (state.section === 'term') return renderTerminal();
@@ -2337,6 +2630,8 @@ function openViewer(path) {
 let pcNotes = [];
 let pcNoteId = null;
 let pcNoteTimer = null;
+let pcNotesLoaded = false;
+let pcNotesLoadedAt = 0;
 
 async function renderNotes() {
   app.innerHTML = `
@@ -2348,15 +2643,24 @@ async function renderNotes() {
     <div class="notes-split">
       <aside class="notes-side">
         <input class="notes-search" id="notesearch" type="search" placeholder="Поиск по заметкам" />
-        <div class="notes-list" id="noteslist"><div class="empty">Загружаю…</div></div>
+        <div class="notes-list" id="noteslist"><div class="empty">${pcNotesLoaded ? 'Нет заметок' : 'Загружаю…'}</div></div>
       </aside>
       <section class="note-paper" id="notepaper"><div class="empty">Выбери заметку слева</div></section>
     </div>`;
   document.getElementById('newnote').onclick = createPcNote;
   document.getElementById('notesearch').oninput = (e) => drawNoteList(e.target.value);
+  if (pcNotesLoaded) {
+    if (!pcNotes.some((n) => String(n.id) === String(pcNoteId))) pcNoteId = pcNotes[0]?.id || null;
+    drawNoteList('');
+    drawNotePaper();
+    if (Date.now() - pcNotesLoadedAt < 30000) return;
+  }
   try {
     const r = await api('GET', '/notes');
     pcNotes = r.notes || [];
+    pcNotesLoaded = true;
+    pcNotesLoadedAt = Date.now();
+    if (state.section !== 'notes' || !document.getElementById('noteslist')) return;
     if (!pcNotes.some((n) => String(n.id) === String(pcNoteId))) pcNoteId = pcNotes[0]?.id || null;
     drawNoteList('');
     drawNotePaper();
@@ -2519,10 +2823,12 @@ async function renderTerminal() {
       </div>
       <div class="ws-right">
         <div class="termtabs" id="termtabs"></div>
+        <div class="terminal-turnbar" id="terminal-turnbar" hidden></div>
         <div id="xterm-host" class="xterm-host"></div>
         <form class="terminal-composer" id="terminal-composer">
-          <div class="terminal-agent-meta" id="terminal-agent-meta"><span id="terminal-agent-label">PowerShell · готов</span></div>
           <textarea id="terminal-command" rows="1" spellcheck="false" aria-label="Команда или сообщение агенту" placeholder="Команда PowerShell или сообщение агенту"></textarea>
+          <span class="terminal-voice-status" id="terminal-voice-status" aria-live="polite" hidden></span>
+          <button class="composer-tool terminal-voice" id="terminal-voice" type="button" title="Локальная диктовка Whisper" aria-label="Локальная диктовка Whisper" aria-pressed="false"><span class="mic-glyph">${MICSVG}</span><span class="voice-stop" aria-hidden="true"></span></button>
           <button class="composer-tool" id="agent-sound" type="button" title="Звук уведомлений" aria-label="Звук уведомлений"></button>
           <button class="terminal-send" type="submit" title="Отправить (Enter)" aria-label="Отправить"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"></path></svg></button>
         </form>

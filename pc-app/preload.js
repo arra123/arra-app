@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld('arra', {
   onClaudeDone: (cb) => ipcRenderer.on('claude-done', (_e, payload) => cb(payload)),
   notifyAgent: (payload) => ipcRenderer.invoke('agent-notify', payload),
   onFocusTerminal: (cb) => ipcRenderer.on('focus-terminal', (_e, payload) => cb(payload)),
+  localVoiceStatus: () => ipcRenderer.invoke('local-voice-status'),
+  localVoicePrepare: () => ipcRenderer.invoke('local-voice-prepare'),
+  localVoiceTranscribe: (base64) => ipcRenderer.invoke('local-voice-transcribe', { base64 }),
+  onLocalVoiceProgress: (cb) => ipcRenderer.on('voice-model-progress', (_e, payload) => cb(payload)),
   // Перенос (синхронизация рабочих файлов с сервером)
   syncRun: (mode, only, role) => ipcRenderer.invoke('sync-run', { mode, only, role }),
   syncCancel: () => ipcRenderer.invoke('sync-cancel'),
