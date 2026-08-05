@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld('arra', {
   onPtyData: (cb) => ipcRenderer.on('pty-data', (_e, payload) => cb(payload)),
   onPtyExit: (cb) => ipcRenderer.on('pty-exit', (_e, payload) => cb(payload)),
   onClaudeDone: (cb) => ipcRenderer.on('claude-done', (_e, payload) => cb(payload)),
+  notifyAgent: (payload) => ipcRenderer.invoke('agent-notify', payload),
+  onFocusTerminal: (cb) => ipcRenderer.on('focus-terminal', (_e, payload) => cb(payload)),
   // Перенос (синхронизация рабочих файлов с сервером)
   syncRun: (mode, only, role) => ipcRenderer.invoke('sync-run', { mode, only, role }),
   syncCancel: () => ipcRenderer.invoke('sync-cancel'),

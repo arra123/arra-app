@@ -30,20 +30,23 @@ window.addEventListener('error', (event) => reportError('renderer.window-error',
 window.addEventListener('unhandledrejection', (event) => reportError('renderer.unhandled-rejection', event.reason));
 
 // ---- кастомные уведомления (тосты) ----
-function toast(title, msg, kind = 'info', ms = 5000) {
+function toast(title, msg, kind = 'info', ms = 5000, action = null, extraClass = '') {
   const box = document.getElementById('toasts');
   if (!box) return;
   const ico = kind === 'ok' ? '✓' : kind === 'warn' ? '!' : '↗';
   const el = document.createElement('div');
-  el.className = `toast ${kind}`;
+  el.className = `toast ${kind} ${extraClass}`.trim();
   el.innerHTML = `<div class="tico">${ico}</div><div class="tbody"><div class="ttitle">${esc(title)}</div>${msg ? `<div class="tmsg">${esc(msg)}</div>` : ''}</div><div class="tbar"></div>`;
   box.appendChild(el);
   requestAnimationFrame(() => el.classList.add('show'));
   const bar = el.querySelector('.tbar');
   if (bar) { bar.style.transition = `transform ${ms}ms linear`; requestAnimationFrame(() => { bar.style.transform = 'scaleX(0)'; }); }
   const kill = () => { el.classList.remove('show'); el.classList.add('hide'); setTimeout(() => el.remove(), 350); };
-  el.onclick = kill;
-  setTimeout(kill, ms);
+  let timer = setTimeout(kill, ms);
+  el.onclick = () => { if (typeof action === 'function') action(); kill(); };
+  el.onmouseenter = () => clearTimeout(timer);
+  el.onmouseleave = () => { timer = setTimeout(kill, 1400); };
+  return el;
 }
 
 // ---- контекстное меню (правый клик) ----
@@ -89,6 +92,7 @@ const SVG = {
 const state = {
   section: 'fin', files: [], monthDate: null, viewer: null,
   presence: { phone: false, laptop: false, pc: false, devices: [], currentId: null, status: {} },
+  presenceSignature: '',
 };
 
 const remoteDesktop = {
@@ -115,7 +119,7 @@ async function refreshPresence(redraw = true) {
       ...device,
       role: deviceRole(device, status.deviceId, status.deviceProfile?.role, (tokenData.tokens || []).length),
     }));
-    state.presence = {
+    const nextPresence = {
       phone: !!status.phoneOnline,
       laptop: devices.some((device) => device.role === 'laptop' && device.online),
       pc: devices.some((device) => device.role === 'pc' && device.online),
@@ -123,7 +127,16 @@ async function refreshPresence(redraw = true) {
       currentId: status.deviceId || null,
       status,
     };
-    if (redraw) {
+    const signature = JSON.stringify({
+      phone: nextPresence.phone, laptop: nextPresence.laptop, pc: nextPresence.pc,
+      currentId: nextPresence.currentId,
+      devices: devices.map((device) => [device.id, device.role, !!device.online]),
+      role: status.deviceProfile?.role || '',
+    });
+    const changed = signature !== state.presenceSignature;
+    state.presence = nextPresence;
+    state.presenceSignature = signature;
+    if (redraw && changed) {
       renderNav();
       if (state.section === 'sync') renderSyncV2Body();
       if (state.section === 'remote') updateRemoteDeviceUi();
@@ -197,6 +210,166 @@ let activeLocal = 'L1';
 let localCounter = 1;
 let ptyWired = false;
 let panelCollapsed = false; // свёрнута ли левая панель файлов (терминал на всю ширину)
+let renamingTermId = null;
+const AGENT_LABELS = { codex: 'Codex', claude: 'Claude' };
+const AGENT_STATE_LABELS = { idle: 'готов', starting: 'запускается', working: 'работает', waiting: 'ждёт ответа', done: 'завершил', error: 'ошибка' };
+let agentSoundEnabled = localStorage.getItem('noda-agent-sound') !== 'off';
+let agentAudioContext = null;
+
+const AGENT_ERROR_RE = /(?:api(?: request)? error|rate limit|too many requests|context (?:window|length).*(?:exceed|limit)|network error|connection (?:failed|lost)|econn(?:reset|refused)|etimedout|enotfound|unauthorized|forbidden|model.{0,24}(?:overload|unavailable)|internal server error|fatal:|panic:|ошибка (?:api|сети|подключения)|не удалось подключ|лимит.{0,24}(?:исчерпан|превышен)|\[код выхода [1-9])/i;
+const AGENT_QUESTION_RE = /(?:do you want|would you like|shall i|approval required|allow (?:this|the )?command|press enter to confirm|choose (?:an|one)|select (?:an|one)|\[[Yy]\/\s*[Nn]\]|\([Yy]\/\s*[Nn]\)|разрешить|подтвердить|продолжить\?|выберите|нужен.{0,24}ответ|требуется.{0,24}подтверждение)/i;
+const AGENT_DONE_RE = /(?:worked for \d|task (?:completed|finished)|completed successfully|all done|задача завершена|работа завершена|готово[.!]?\s*$|waiting for (?:your )?(?:input|instructions)|what (?:would you like|can i)|how can i help)/im;
+const AGENT_PROMPT_RE = /(?:^|\n)\s*[›❯]\s*(?:$|\n)|(?:^|\n)\s*PS [^>\n]{0,180}>\s*$/m;
+
+function plainTerminalText(value) {
+  return String(value || '')
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1bP[\s\S]*?\x1b\\/g, '')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[@-_]/g, '')
+    .replace(/\r/g, '\n')
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+}
+
+function agentTopic(text) {
+  const clean = plainTerminalText(text)
+    .replace(/^(?:пожалуйста|please|можешь|can you)\s+/i, '')
+    .replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  const words = clean.split(' ').slice(0, 5).join(' ');
+  return words.length > 34 ? words.slice(0, 33).trimEnd() + '…' : words;
+}
+
+function playAgentTone(kind = 'done') {
+  if (!agentSoundEnabled || !window.AudioContext) return;
+  try {
+    agentAudioContext ||= new AudioContext();
+    const now = agentAudioContext.currentTime;
+    const gain = agentAudioContext.createGain();
+    const first = agentAudioContext.createOscillator();
+    const second = agentAudioContext.createOscillator();
+    const tones = kind === 'error' ? [196, 155] : kind === 'waiting' ? [392, 523] : [440, 659];
+    first.frequency.value = tones[0]; second.frequency.value = tones[1];
+    first.type = second.type = 'sine';
+    first.connect(gain); second.connect(gain); gain.connect(agentAudioContext.destination);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.055, now + 0.018);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
+    first.start(now); first.stop(now + 0.22);
+    second.start(now + 0.09); second.stop(now + 0.34);
+  } catch {}
+}
+
+async function activateAgentTerminal(termId) {
+  if (!localTerms.includes(termId)) return;
+  if (state.section !== 'term') {
+    state.section = 'term';
+    await renderNav();
+    await route();
+  }
+  switchLocalTerm(termId);
+  requestAnimationFrame(() => document.getElementById('terminal-command')?.focus());
+}
+
+function notifyAgentState(termId, stateName, detail = '') {
+  const x = xts[termId];
+  if (!x || x.intentionalClose) return;
+  const now = Date.now();
+  const noticeKey = `${stateName}:${detail}`;
+  if (x.lastAgentNotice === noticeKey && now - (x.lastAgentNoticeAt || 0) < 10000) return;
+  x.lastAgentNotice = noticeKey; x.lastAgentNoticeAt = now;
+  const tab = termTabLabel(termId).name;
+  const kind = stateName === 'error' ? 'warn' : stateName === 'done' ? 'ok' : 'info';
+  const title = stateName === 'waiting' ? `${tab} ждёт ответа` : stateName === 'error' ? `${tab}: ошибка` : `${tab} завершил работу`;
+  const message = detail || (stateName === 'waiting' ? 'Нужно подтверждение или ответ' : stateName === 'error' ? 'Проверь вывод агента' : 'Результат готов');
+  toast(title, message, kind, 4200, () => activateAgentTerminal(termId), 'agent-toast');
+  const nativePayload = { termId, kind: stateName, title, body: message };
+  const request = window.arra.notifyAgent ? window.arra.notifyAgent(nativePayload) : Promise.resolve({ native: false });
+  Promise.resolve(request).then((result) => { if (!result?.native) playAgentTone(stateName); }).catch(() => playAgentTone(stateName));
+}
+
+function setAgentState(termId, next, detail = '', notify = false) {
+  const x = xts[termId]; if (!x) return;
+  x.agentState = next;
+  if (next === 'working' || next === 'starting') x.lastAgentNotice = '';
+  if (document.getElementById('termtabs')) renderTermTabs();
+  updateTerminalComposer();
+  if (notify) notifyAgentState(termId, next, detail);
+}
+
+function setAgentKind(termId, kind, topic = '') {
+  const x = xts[termId]; if (!x || !AGENT_LABELS[kind]) return;
+  x.agentKind = kind;
+  x.agentState = 'starting';
+  x.agentBuffer = '';
+  x.agentSubmittedAt = 0;
+  if (!x.nameCustom) {
+    const base = topic || String(x.cwd || term.root || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'сессия';
+    x.name = `${AGENT_LABELS[kind]} · ${base}`;
+  }
+  if (document.getElementById('termtabs')) renderTermTabs();
+  updateTerminalComposer();
+}
+
+function beginAgentWork(termId, prompt) {
+  const x = xts[termId]; if (!x || !x.agentKind) return;
+  x.agentBuffer = '';
+  x.agentSubmittedAt = Date.now();
+  if (!x.nameCustom) {
+    const topic = agentTopic(prompt);
+    if (topic) x.name = `${AGENT_LABELS[x.agentKind]} · ${topic}`;
+  }
+  setAgentState(termId, 'working');
+}
+
+function handleAgentSubmission(termId, value) {
+  const x = xts[termId]; if (!x) return;
+  const command = String(value || '').trim();
+  if (!command) return;
+  const launch = command.match(/^(codex|claude)(?:\s|$)/i);
+  if (launch) { setAgentKind(termId, launch[1].toLowerCase()); return; }
+  if (x.agentKind) beginAgentWork(termId, command);
+}
+
+function trackTerminalInput(termId, data) {
+  const x = xts[termId]; if (!x) return;
+  if (data === '\r' || data === '\n') {
+    const value = x.userInputBuffer || '';
+    x.userInputBuffer = '';
+    handleAgentSubmission(termId, value);
+    return;
+  }
+  if (data === '\x7f') { x.userInputBuffer = (x.userInputBuffer || '').slice(0, -1); return; }
+  if (/^[\x20-\x7e\u0400-\u04ff]+$/.test(data)) x.userInputBuffer = (x.userInputBuffer || '') + data;
+}
+
+function inspectAgentOutput(termId, data) {
+  const x = xts[termId]; if (!x || !x.agentKind) return;
+  const clean = plainTerminalText(data);
+  if (!clean) return;
+  x.agentBuffer = ((x.agentBuffer || '') + clean).slice(-6000);
+  const recent = x.agentBuffer.slice(-2800);
+  if (x.agentState === 'working' && AGENT_ERROR_RE.test(recent)) {
+    const line = recent.split('\n').map((part) => part.trim()).filter(Boolean).pop() || 'Агент остановился с ошибкой';
+    setAgentState(termId, 'error', line.slice(0, 150), true);
+    return;
+  }
+  if (x.agentState === 'working' && AGENT_QUESTION_RE.test(recent)) {
+    setAgentState(termId, 'waiting', 'Нужно подтверждение или ответ', true);
+    return;
+  }
+  clearTimeout(x.agentInspectTimer);
+  x.agentInspectTimer = setTimeout(() => {
+    const current = xts[termId]; if (!current) return;
+    const tail = (current.agentBuffer || '').slice(-3200);
+    const promptVisible = AGENT_PROMPT_RE.test(tail);
+    if (current.agentState === 'starting' && promptVisible) {
+      setAgentState(termId, 'idle');
+    } else if (current.agentState === 'working' && Date.now() - (current.agentSubmittedAt || 0) > 1000 && (AGENT_DONE_RE.test(tail) || promptVisible)) {
+      setAgentState(termId, 'done', 'Результат готов — нажми, чтобы открыть сессию', true);
+    }
+  }, 850);
+}
 
 function wirePty() {
   if (ptyWired) return;
@@ -212,10 +385,15 @@ function wirePty() {
       if (!localTerms.includes(id)) { localTerms.push(id); if (document.getElementById('termtabs')) renderTermTabs(); }
     }
     x.term.write(p.data);
+    inspectAgentOutput(id, p.data);
   });
   window.arra.onPtyExit && window.arra.onPtyExit((p) => {
     if (!p) return;
     const id = p.termId; const x = xts[id];
+    if (x?.agentKind && !x.intentionalClose) {
+      if (Number(p.exitCode || 0) === 0) setAgentState(id, 'done', 'Сессия завершена', true);
+      else setAgentState(id, 'error', `Процесс завершился с кодом ${p.exitCode}`, true);
+    }
     if (x && x.phone) {
       try { x.term.dispose(); } catch {}
       delete xts[id];
@@ -230,23 +408,12 @@ function wirePty() {
 function fitLocal(termId) {
   const x = xts[termId]; if (!x) return;
   try {
-    // xterm.css подключён корректно → FitAddon считает строки/столбцы точно.
+    // FitAddon уже учитывает реальный размер контейнера. Дополнительный ручной resize
+    // заставлял полноэкранные TUI перерисовываться дважды и визуально «ронял» курсор.
     x.fit.fit();
-    // Подстраховка: если по какой-то причине последняя строка вылезает ниже видимой кромки окна — урезаем.
-    const pane = x.term.element && x.term.element.parentElement;
-    if (pane) {
-      let cell = 0;
-      try { cell = x.term._core._renderService.dimensions.css.cell.height; } catch {}
-      if (!cell || cell < 4) { try { const r = x.term.element.querySelector('.xterm-rows'); const c = r && r.children[0]; if (c) cell = c.getBoundingClientRect().height; } catch {} }
-      if (cell > 4) {
-        const pr = pane.getBoundingClientRect();
-        const visBottom = Math.min(pr.bottom, window.innerHeight - 4);
-        const maxRows = Math.max(2, Math.floor((visBottom - pr.top) / cell));
-        if (x.term.rows > maxRows) x.term.resize(x.term.cols, maxRows);
-      }
-    }
-    try { x.term.scrollToBottom(); } catch {}
     window.arra.ptyResize({ cols: x.term.cols, rows: x.term.rows }, termId);
+    const metrics = document.getElementById('terminal-metrics');
+    if (metrics && termId === activeLocal) metrics.textContent = `${x.term.cols} × ${x.term.rows}`;
   } catch {}
 }
 // Точная подгонка терминала под контейнер при любом изменении размера (ресайз окна, сворачивание панели).
@@ -273,9 +440,12 @@ function observeHost(host) {
 function ensureXterm(termId, cwd) {
   if (xts[termId]) return xts[termId];
   const term = new Terminal({
-    fontSize: 13, lineHeight: 1.05, letterSpacing: 0,
+    fontSize: 13.5, lineHeight: 1.22, letterSpacing: 0,
     fontFamily: 'Cascadia Code, Consolas, ui-monospace, monospace',
-    cursorBlink: true, scrollback: 8000,
+    fontWeight: '400', fontWeightBold: '600',
+    cursorBlink: false, cursorStyle: 'bar', cursorWidth: 2, cursorInactiveStyle: 'none',
+    scrollback: 10000, scrollOnUserInput: true, smoothScrollDuration: 0,
+    drawBoldTextInBrightColors: false, minimumContrastRatio: 3,
     theme: XTERM_THEMES[curTheme()],
   });
   const fit = new FitAddon.FitAddon();
@@ -283,7 +453,7 @@ function ensureXterm(termId, cwd) {
   // Шрифт Cascadia Code может догрузиться ПОСЛЕ первого fit() — ячейка станет шире,
   // и правый столбец начнёт резаться. Как только шрифты готовы — перемеряем.
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { try { term.clearTextureAtlas?.(); } catch {} fitLocal(termId); });
-  term.onData((d) => window.arra.ptyInput(d, termId));
+  term.onData((d) => { trackTerminalInput(termId, d); window.arra.ptyInput(d, termId); });
   // Копирование/вставка как в консоли Windows:
   //  • Ctrl+C — копирует выделенное; без выделения уходит обычный ^C (прерывание).
   //  • Ctrl+Shift+C — всегда копировать выделенное.
@@ -291,6 +461,15 @@ function ensureXterm(termId, cwd) {
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
     const k = (e.key || '').toLowerCase();
+    if (state.section === 'term' && e.key === 'F2') {
+      e.preventDefault(); e.stopPropagation(); beginRenameTerm(termId); return false;
+    }
+    if (state.section === 'term' && e.ctrlKey && e.shiftKey && k === 't') {
+      e.preventDefault(); e.stopPropagation(); addTermQuick(); return false;
+    }
+    if (state.section === 'term' && e.ctrlKey && e.shiftKey && k === 'e') {
+      e.preventDefault(); e.stopPropagation(); toggleTerminalExplorer(); return false;
+    }
     if (e.ctrlKey && !e.altKey && k === 'c' && !e.shiftKey) {
       const sel = term.getSelection();
       if (sel) { window.arra.copyText(sel); term.clearSelection(); return false; }
@@ -312,7 +491,11 @@ function ensureXterm(termId, cwd) {
     }
     return true;
   });
-  xts[termId] = { term, fit, opened: false, started: false, cwd: cwd || '' };
+  xts[termId] = {
+    term, fit, opened: false, started: false, cwd: cwd || '', name: '', nameCustom: false,
+    agentKind: '', agentState: 'idle', agentBuffer: '', agentSubmittedAt: 0,
+    userInputBuffer: '', draft: '', commandHistory: [], commandHistoryIndex: -1,
+  };
   return xts[termId];
 }
 // Навешиваем обработчики на ПАНЕЛЬ терминала один раз (клик/контекст/дроп)
@@ -357,13 +540,13 @@ function mountActiveTerm() {
   host.querySelectorAll('.xterm-pane').forEach((p) => { if (!localTerms.includes(p.dataset.pane)) p.remove(); });
   const x = xts[activeLocal];
   if (!x) return;
-  const fitNow = () => { fitLocal(activeLocal); try { x.term.focus(); } catch {} };
+  const fitNow = () => fitLocal(activeLocal);
   requestAnimationFrame(() => {
     fitNow();
     if (!x.started) {
       x.started = true;
       window.arra.ptyStart({ cols: x.term.cols || 100, rows: x.term.rows || 30, termId: activeLocal, cwd: x.cwd || undefined })
-        .then(() => { window.arra.ptyResize({ cols: x.term.cols, rows: x.term.rows }, activeLocal); try { x.term.focus(); } catch {} });
+        .then(() => { window.arra.ptyResize({ cols: x.term.cols, rows: x.term.rows }, activeLocal); });
     }
   });
   setTimeout(fitNow, 130);
@@ -374,31 +557,103 @@ function termTabLabel(id) {
   const x = xts[id];
   const p = (x && x.cwd) || term.cwd || term.root || '';
   const base = String(p).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
-  return { name: base || 'powershell', path: p };
+  return { name: x?.name || base || `PowerShell ${id.replace(/^L/, '')}`, path: p };
+}
+function beginRenameTerm(id) {
+  if (!xts[id]) return;
+  renamingTermId = id;
+  renderTermTabs();
+  requestAnimationFrame(() => {
+    const input = document.querySelector(`.term-rename[data-id="${id}"]`);
+    if (input) { input.focus(); input.select(); }
+  });
+}
+function finishRenameTerm(id, value, cancel = false) {
+  if (!cancel && xts[id]) {
+    xts[id].name = String(value || '').trim().slice(0, 48);
+    xts[id].nameCustom = !!xts[id].name;
+  }
+  renamingTermId = null;
+  renderTermTabs();
+}
+function toggleTerminalExplorer(force) {
+  panelCollapsed = force == null ? !panelCollapsed : !!force;
+  document.querySelector('.workspace')?.classList.toggle('ws-collapsed', panelCollapsed);
+  renderTermTabs();
+  requestAnimationFrame(() => fitLocal(activeLocal));
+  setTimeout(() => fitLocal(activeLocal), 170);
 }
 function renderTermTabs() {
   const bar = document.getElementById('termtabs');
   if (!bar) return;
-  bar.innerHTML = `<button class="ttadd" id="treetoggle" title="Скрыть/показать файлы">${SVG.folder}</button>`
-    + localTerms.map((id) => {
-      const x = xts[id]; const phone = x && x.phone;
-      const t = termTabLabel(id);
-      return `<button class="ttab ${id === activeLocal ? 'on' : ''} ${phone ? 'phone' : ''}" data-id="${id}" title="${esc(t.path)}">${phone ? '📱 ' : TERM_TAB_ICON}<span class="tname">${esc(t.name)}</span>${localTerms.length > 1 ? ` <span class="tclose" data-close="${id}">✕</span>` : ''}</button>`;
-    }).join('') + `<button class="ttadd" id="ttadd" title="Новый терминал">＋</button>`
-    + `<button class="ttadd" id="termzen" title="Терминал на весь экран (Esc — выйти)">${document.body.classList.contains('term-zen') ? '⤡' : '⤢'}</button>`
-    + `<span class="ttag"><span class="dot on"></span>общий c телефоном</span>`;
-  bar.querySelectorAll('.ttab').forEach((b) => (b.onclick = (e) => {
-    if (e.target.dataset.close) { closeLocalTerm(e.target.dataset.close); return; }
-    switchLocalTerm(b.dataset.id);
-  }));
+  const tabs = localTerms.map((id) => {
+    const x = xts[id]; const phone = x && x.phone;
+    const t = termTabLabel(id);
+    const agentState = x?.agentKind ? (x.agentState || 'idle') : '';
+    const stateLabel = agentState ? AGENT_STATE_LABELS[agentState] : '';
+    const label = renamingTermId === id
+      ? `<input class="term-rename" data-id="${id}" value="${esc(t.name)}" maxlength="48" aria-label="Имя терминала">`
+      : `<span class="tname">${esc(t.name)}</span>`;
+    const marker = agentState ? `<span class="agent-tab-state ${agentState}" title="${esc(stateLabel)}"></span>` : phone ? '<span class="tphone">●</span>' : TERM_TAB_ICON;
+    return `<div class="ttab ${id === activeLocal ? 'on' : ''} ${phone ? 'phone' : ''} ${agentState ? `agent-${agentState}` : ''}" data-id="${id}" role="tab" tabindex="0" aria-selected="${id === activeLocal}" title="${esc(t.path || t.name)}${stateLabel ? ` · ${esc(stateLabel)}` : ''} — двойной щелчок для переименования">${marker}${label}<button class="tclose" data-close="${id}" title="Закрыть терминал" aria-label="Закрыть ${esc(t.name)}">×</button></div>`;
+  }).join('');
+  const zen = document.body.classList.contains('term-zen');
+  const activePath = termTabLabel(activeLocal).path || term.root || '';
+  bar.innerHTML = `
+    <button class="term-tool" id="term-navtoggle" title="${document.body.classList.contains('nav-collapsed') ? 'Показать' : 'Скрыть'} навигацию" aria-label="${document.body.classList.contains('nav-collapsed') ? 'Показать' : 'Скрыть'} навигацию"><svg viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="2"></rect><path d="M9 4v16"></path></svg></button>
+    <button class="term-tool" id="treetoggle" title="${panelCollapsed ? 'Показать' : 'Скрыть'} проводник (Ctrl+Shift+E)" aria-label="${panelCollapsed ? 'Показать' : 'Скрыть'} проводник">${SVG.folder}</button>
+    <div class="terminal-tabstrip" role="tablist" aria-label="Терминалы">${tabs}<button class="term-tool tab-add" id="ttadd" title="Новый терминал (Ctrl+Shift+T)" aria-label="Новый терминал">＋</button></div>
+    <span class="terminal-divider"></span>
+    <button class="term-preset codex" id="start-codex" title="Запустить Codex в текущей папке"><img src="assets/merchants/openai.png" alt=""><span>Codex</span></button>
+    <button class="term-preset claude" id="start-claude" title="Запустить Claude в текущей папке"><img src="assets/merchants/anthropic.png" alt=""><span>Claude</span></button>
+    <button class="term-tool" id="termzen" title="${zen ? 'Выйти из полноэкранного режима' : 'Терминал на весь экран'}" aria-label="${zen ? 'Выйти из полноэкранного режима' : 'Терминал на весь экран'}">${zen ? '⤡' : '⤢'}</button>
+    <span class="ttag" title="Терминал доступен с телефона"><span class="dot ${state.presence.phone ? 'on' : ''}"></span><span>Телефон</span></span>
+    <span class="terminal-cwd" title="${esc(activePath)}">${esc(activePath)}</span>
+    <span class="terminal-metrics" id="terminal-metrics"></span>`;
+  bar.querySelectorAll('.ttab').forEach((tab) => {
+    tab.onclick = (e) => {
+      if (e.target.closest('.term-rename, .tclose')) return;
+      switchLocalTerm(tab.dataset.id);
+    };
+    tab.ondblclick = (e) => { if (!e.target.closest('.tclose')) beginRenameTerm(tab.dataset.id); };
+    tab.oncontextmenu = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      showCtxMenu(e.clientX, e.clientY, [
+        { label: 'Переименовать', action: () => beginRenameTerm(tab.dataset.id) },
+        { sep: true },
+        { label: 'Закрыть терминал', danger: localTerms.length === 1, action: () => closeLocalTerm(tab.dataset.id) },
+      ]);
+    };
+    tab.onkeydown = (e) => {
+      if (e.target.matches('.term-rename')) return;
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchLocalTerm(tab.dataset.id); }
+      if (e.key === 'F2') { e.preventDefault(); beginRenameTerm(tab.dataset.id); }
+    };
+  });
+  bar.querySelectorAll('.tclose').forEach((button) => {
+    button.onclick = (e) => { e.preventDefault(); e.stopPropagation(); closeLocalTerm(button.dataset.close); };
+  });
+  const rename = bar.querySelector('.term-rename');
+  if (rename) {
+    rename.onclick = (e) => e.stopPropagation();
+    rename.onkeydown = (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); finishRenameTerm(rename.dataset.id, rename.value); }
+      if (e.key === 'Escape') { e.preventDefault(); finishRenameTerm(rename.dataset.id, rename.value, true); }
+    };
+    rename.onblur = () => { if (renamingTermId === rename.dataset.id) finishRenameTerm(rename.dataset.id, rename.value); };
+  }
   document.getElementById('ttadd').onclick = () => addTermQuick();
   document.getElementById('termzen').onclick = () => toggleTermZen();
-  document.getElementById('treetoggle').onclick = () => {
-    panelCollapsed = !panelCollapsed;
-    document.querySelector('.workspace').classList.toggle('ws-collapsed', panelCollapsed);
-    requestAnimationFrame(() => fitLocal(activeLocal));
-    setTimeout(() => fitLocal(activeLocal), 170);
-  };
+  document.getElementById('term-navtoggle').onclick = () => { toggleAppNavigation(); renderTermTabs(); };
+  document.getElementById('start-codex').onclick = () => launchTerminalPreset('codex --yolo');
+  document.getElementById('start-claude').onclick = () => launchTerminalPreset('claude --dangerously-skip-permissions');
+  document.getElementById('treetoggle').onclick = () => toggleTerminalExplorer();
+  requestAnimationFrame(() => {
+    const x = xts[activeLocal];
+    const metrics = document.getElementById('terminal-metrics');
+    if (x && metrics) metrics.textContent = `${x.term.cols} × ${x.term.rows}`;
+  });
 }
 /** Терминал во весь экран: прячем боковые панели и лаунчбар. Esc — выйти. */
 function toggleTermZen(force) {
@@ -412,7 +667,16 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && document.body.classList.contains('term-zen')) toggleTermZen(false);
 });
 
-function switchLocalTerm(id) { activeLocal = id; renderTermTabs(); mountActiveTerm(); }
+function switchLocalTerm(id) {
+  const current = xts[activeLocal];
+  const input = document.getElementById('terminal-command');
+  if (current && input) current.draft = input.value;
+  activeLocal = id;
+  renderTermTabs();
+  mountActiveTerm();
+  updateTerminalComposer();
+  requestAnimationFrame(() => document.getElementById('terminal-command')?.focus());
+}
 // Новый терминал в папке (по умолчанию — корень кода), без диалога
 function addTermQuick(cwd) {
   const folder = typeof cwd === 'string' ? cwd : (term.root || '');
@@ -436,14 +700,104 @@ async function addLocalTerm() {
   mountActiveTerm();
 }
 function closeLocalTerm(id) {
-  try { window.arra.ptyKill(id); } catch {}
   const x = xts[id];
+  if (x) x.intentionalClose = true;
+  try { window.arra.ptyKill(id); } catch {}
   if (x) { try { x.ro?.disconnect(); } catch {} try { x.term.dispose(); } catch {} delete xts[id]; }
   const idx = localTerms.indexOf(id); if (idx >= 0) localTerms.splice(idx, 1);
   if (!localTerms.length) { localCounter++; const nid = 'L' + localCounter; localTerms.push(nid); activeLocal = nid; }
   else if (activeLocal === id) { activeLocal = localTerms[localTerms.length - 1]; }
   renderTermTabs();
   mountActiveTerm();
+}
+
+const SOUND_ON_ICON = '<svg viewBox="0 0 24 24"><path d="M5 10v4h4l5 4V6L9 10H5z"></path><path d="M17 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"></path></svg>';
+const SOUND_OFF_ICON = '<svg viewBox="0 0 24 24"><path d="M5 10v4h4l5 4V6L9 10H5z"></path><path d="M18 10l4 4M22 10l-4 4"></path></svg>';
+
+function resizeTerminalComposer(input) {
+  if (!input) return;
+  input.style.height = '38px';
+  input.style.height = `${Math.min(104, Math.max(38, input.scrollHeight))}px`;
+}
+
+function updateTerminalComposer() {
+  const input = document.getElementById('terminal-command');
+  const meta = document.getElementById('terminal-agent-meta');
+  const label = document.getElementById('terminal-agent-label');
+  const sound = document.getElementById('agent-sound');
+  const x = xts[activeLocal];
+  if (!input || !x) return;
+  const stateName = x.agentKind ? (x.agentState || 'idle') : 'idle';
+  input.value = x.draft || '';
+  input.placeholder = x.agentKind ? `Сообщение для ${AGENT_LABELS[x.agentKind]}…` : 'Команда PowerShell или сообщение агенту…';
+  if (meta) meta.className = `terminal-agent-meta ${stateName}`;
+  if (label) label.textContent = x.agentKind ? `${AGENT_LABELS[x.agentKind]} · ${AGENT_STATE_LABELS[stateName]}` : 'PowerShell · готов';
+  if (sound) {
+    sound.innerHTML = agentSoundEnabled ? SOUND_ON_ICON : SOUND_OFF_ICON;
+    sound.classList.toggle('muted', !agentSoundEnabled);
+    sound.title = agentSoundEnabled ? 'Выключить звук уведомлений' : 'Включить звук уведомлений';
+  }
+  resizeTerminalComposer(input);
+}
+
+function sendTerminalComposer() {
+  const input = document.getElementById('terminal-command');
+  const x = xts[activeLocal];
+  if (!input || !x) return;
+  const value = input.value.trim();
+  if (!value) return;
+  x.commandHistory.push(value);
+  if (x.commandHistory.length > 80) x.commandHistory.shift();
+  x.commandHistoryIndex = x.commandHistory.length;
+  x.draft = '';
+  handleAgentSubmission(activeLocal, value);
+  const normalized = value.replace(/\r?\n/g, '\r');
+  const payload = value.includes('\n') ? `\x1b[200~${normalized}\x1b[201~\r` : `${normalized}\r`;
+  window.arra.ptyInput(payload, activeLocal);
+  input.value = '';
+  resizeTerminalComposer(input);
+  renderTermTabs();
+  updateTerminalComposer();
+  input.focus();
+}
+
+function wireTerminalComposer() {
+  const form = document.getElementById('terminal-composer');
+  const input = document.getElementById('terminal-command');
+  const sound = document.getElementById('agent-sound');
+  if (!form || !input) return;
+  form.onsubmit = (event) => { event.preventDefault(); sendTerminalComposer(); };
+  input.oninput = () => {
+    const x = xts[activeLocal]; if (x) x.draft = input.value;
+    resizeTerminalComposer(input);
+  };
+  input.onkeydown = (event) => {
+    const x = xts[activeLocal];
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault(); sendTerminalComposer(); return;
+    }
+    if (event.key === 'F2') { event.preventDefault(); beginRenameTerm(activeLocal); return; }
+    if (!x || !x.commandHistory.length) return;
+    const browsingHistory = x.commandHistoryIndex >= 0 && x.commandHistoryIndex < x.commandHistory.length;
+    if (input.value && !browsingHistory) return;
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      x.commandHistoryIndex = Math.max(0, (x.commandHistoryIndex < 0 ? x.commandHistory.length : x.commandHistoryIndex) - 1);
+      input.value = x.commandHistory[x.commandHistoryIndex] || '';
+      x.draft = input.value; resizeTerminalComposer(input);
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      x.commandHistoryIndex = Math.min(x.commandHistory.length, x.commandHistoryIndex + 1);
+      input.value = x.commandHistoryIndex >= x.commandHistory.length ? '' : (x.commandHistory[x.commandHistoryIndex] || '');
+      x.draft = input.value; resizeTerminalComposer(input);
+    }
+  };
+  if (sound) sound.onclick = () => {
+    agentSoundEnabled = !agentSoundEnabled;
+    localStorage.setItem('noda-agent-sound', agentSoundEnabled ? 'on' : 'off');
+    updateTerminalComposer();
+    if (agentSoundEnabled) playAgentTone('done');
+  };
 }
 
 // ---- titlebar ----
@@ -470,8 +824,22 @@ async function triggerUpdateCheck() {
 // Десктоп использует тот же светлый визуальный язык, что и основная веб-версия.
 // Старую локально сохранённую тёмную тему больше не восстанавливаем.
 const XTERM_THEMES = {
-  light: { background: '#0E1014', foreground: '#D4D7DE', cursor: '#7C86F0', selectionBackground: 'rgba(124,134,240,0.35)' },
-  dark:  { background: '#1F1F1F', foreground: '#CCCCCC', cursor: '#AEB3C2', selectionBackground: 'rgba(124,134,240,0.35)' },
+  light: {
+    background: '#0D0F12', foreground: '#D7DAE0', cursor: '#F1F2F4', cursorAccent: '#0D0F12',
+    selectionBackground: 'rgba(140, 151, 168, .34)', selectionForeground: '#FFFFFF',
+    black: '#20242A', red: '#E06C75', green: '#98C379', yellow: '#D6B46B',
+    blue: '#73A9E6', magenta: '#C58ACB', cyan: '#63B3B1', white: '#D7DAE0',
+    brightBlack: '#68707D', brightRed: '#EE818A', brightGreen: '#ADD58C', brightYellow: '#E4C77E',
+    brightBlue: '#8DBBF0', brightMagenta: '#D9A0DE', brightCyan: '#7BC8C4', brightWhite: '#F1F2F4',
+  },
+  dark: {
+    background: '#0D0F12', foreground: '#D7DAE0', cursor: '#F1F2F4', cursorAccent: '#0D0F12',
+    selectionBackground: 'rgba(140, 151, 168, .34)', selectionForeground: '#FFFFFF',
+    black: '#20242A', red: '#E06C75', green: '#98C379', yellow: '#D6B46B',
+    blue: '#73A9E6', magenta: '#C58ACB', cyan: '#63B3B1', white: '#D7DAE0',
+    brightBlack: '#68707D', brightRed: '#EE818A', brightGreen: '#ADD58C', brightYellow: '#E4C77E',
+    brightBlue: '#8DBBF0', brightMagenta: '#D9A0DE', brightCyan: '#7BC8C4', brightWhite: '#F1F2F4',
+  },
 };
 function curTheme() { return document.body.dataset.theme === 'dark' ? 'dark' : 'light'; }
 function applyTheme() {
@@ -485,11 +853,12 @@ function applyTheme() {
 const themeButton = document.getElementById('themebtn');
 if (themeButton) themeButton.remove();
 applyTheme();
-// Гамбургер — скрыть/показать левый сайдбар (как в VS Code). Терминал переподгоняем под новую ширину.
-document.getElementById('navtoggle').onclick = () => {
+// Скрыть/показать глобальную навигацию. В терминале та же команда доступна в его toolbar.
+function toggleAppNavigation() {
   document.body.classList.toggle('nav-collapsed');
   if (state.section === 'term') { requestAnimationFrame(() => fitLocal(activeLocal)); setTimeout(() => fitLocal(activeLocal), 180); }
-};
+}
+document.getElementById('navtoggle').onclick = toggleAppNavigation;
 
 // ================= LOGIN =================
 function renderLogin() {
@@ -546,7 +915,7 @@ async function renderNav() {
       <img src="assets/noda.png" alt="">
       <div><b>Noda</b><small>рабочий контур</small></div>
     </div>` +
-    items.map(([k, label, ic]) => `<button data-s="${k}" class="navitem ${state.section === k ? 'active' : ''}">${ic}<span>${label}</span></button>`).join('') +
+    items.map(([k, label, ic]) => `<button data-s="${k}" class="navitem ${state.section === k ? 'active' : ''}" title="${label}" aria-label="${label}">${ic}<span>${label}</span></button>`).join('') +
     `<div class="side-spacer"></div>` +
     `<button class="side-update ${esc(updateUiState)}" id="side-update" type="button"><span>↻</span><b>${esc(updateUiLabel)}</b><small>${esc(appVer || '')}</small></button>` +
     `<div class="side-presence">
@@ -566,13 +935,13 @@ function route() {
   document.body.classList.toggle('notes-mode', state.section === 'notes');
   document.body.classList.toggle('remote-mode', state.section === 'remote');
   document.body.classList.toggle('sync-mode', state.section === 'sync');
-  if (state.section === 'fin') renderFin();
-  else if (state.section === 'chat') renderChat();
-  else if (state.section === 'term') renderTerminal();
-  else if (state.section === 'files') renderFiles();
-  else if (state.section === 'sync') renderSyncV2();
-  else if (state.section === 'remote') renderRemoteDesktop();
-  else if (state.section === 'notes') renderNotes();
+  if (state.section === 'fin') return renderFin();
+  if (state.section === 'chat') return renderChat();
+  if (state.section === 'term') return renderTerminal();
+  if (state.section === 'files') return renderFiles();
+  if (state.section === 'sync') return renderSyncV2();
+  if (state.section === 'remote') return renderRemoteDesktop();
+  if (state.section === 'notes') return renderNotes();
 }
 
 // ================= УДАЛЁННЫЙ ПК =================
@@ -2149,30 +2518,34 @@ async function renderTerminal() {
         <div id="treebox" class="treebox"></div>
       </div>
       <div class="ws-right">
-        <div class="term-launchbar">
-          <button class="term-preset codex" id="start-codex" title="Запустить Codex в текущей папке (полный доступ)"><img src="assets/merchants/openai.png" alt="">Codex</button>
-          <button class="term-preset claude" id="start-claude" title="Запустить Claude в текущей папке (без запросов разрешений)"><img src="assets/merchants/anthropic.png" alt="">Claude</button>
-        </div>
         <div class="termtabs" id="termtabs"></div>
         <div id="xterm-host" class="xterm-host"></div>
+        <form class="terminal-composer" id="terminal-composer">
+          <div class="terminal-agent-meta" id="terminal-agent-meta"><span id="terminal-agent-label">PowerShell · готов</span></div>
+          <textarea id="terminal-command" rows="1" spellcheck="false" aria-label="Команда или сообщение агенту" placeholder="Команда PowerShell или сообщение агенту"></textarea>
+          <button class="composer-tool" id="agent-sound" type="button" title="Звук уведомлений" aria-label="Звук уведомлений"></button>
+          <button class="terminal-send" type="submit" title="Отправить (Enter)" aria-label="Отправить"><svg viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6"></path></svg></button>
+        </form>
       </div>
     </div>`;
   document.getElementById('drives').onclick = () => termSend({ type: 'fs_list', reqId: newReq(), path: '' });
-  document.getElementById('start-codex').onclick = () => launchTerminalPreset('codex --yolo');
-  document.getElementById('start-claude').onclick = () => launchTerminalPreset('claude --dangerously-skip-permissions');
   // загрузить дерево (от папки кода) и поднять терминалы
   termSend({ type: 'fs_list', reqId: newReq(), path: term.root || '' });
   renderTree();
   wirePty();
   renderTermTabs();
   mountActiveTerm();
+  wireTerminalComposer();
+  updateTerminalComposer();
+  requestAnimationFrame(() => document.getElementById('terminal-command')?.focus());
 }
 
 function launchTerminalPreset(command) {
   const x = xts[activeLocal];
   if (!x) return;
+  setAgentKind(activeLocal, command.startsWith('codex') ? 'codex' : 'claude');
   window.arra.ptyInput(command + '\r', activeLocal);
-  try { x.term.focus(); } catch {}
+  requestAnimationFrame(() => document.getElementById('terminal-command')?.focus());
   toast('Терминал', command.startsWith('codex') ? 'Codex запущен с полным доступом' : 'Claude запущен с полным доступом', 'info', 3500);
 }
 
@@ -3451,10 +3824,14 @@ window.arra.onFile((f) => {
 });
 window.arra.onStatus((s) => {
   if (!s.paired) { renderLogin(); return; }
+  const changed = state.presence.phone !== !!s.phoneOnline
+    || state.presence.status?.deviceId !== s.deviceId
+    || state.presence.status?.deviceProfile?.role !== s.deviceProfile?.role;
   state.presence.status = s;
   state.presence.phone = !!s.phoneOnline;
-  if (state.section && !document.querySelector('.sidebar.hidden')) renderNav();
+  if (changed && state.section && !document.querySelector('.sidebar.hidden')) renderNav();
 });
+window.arra.onFocusTerminal?.((payload) => { if (payload?.termId) activateAgentTerminal(payload.termId); });
 window.arra.onWarn((m) => toast('Внимание', m, 'warn', 14000));
 // Автообновление: показываем прогресс/готовность тостами (перезапуск предложит нативный диалог)
 window.arra.onUpdate((o) => {

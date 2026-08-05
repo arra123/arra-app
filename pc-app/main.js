@@ -553,11 +553,11 @@ function startPty(termId, cols, rows, cwd, local) {
     winSend('pty-data', { termId, data: d });
     wsSend({ to: 'client', type: 'pty_out', termId, data: d });
   });
-  proc.onExit(() => {
+  proc.onExit((event = {}) => {
     ptys.delete(termId);
     winSend('pty-data', { termId, data: '\r\n[сессия завершена]\r\n' });
-    winSend('pty-exit', { termId });
-    wsSend({ to: 'client', type: 'pty_exit', termId });
+    winSend('pty-exit', { termId, exitCode: event.exitCode ?? 0, signal: event.signal ?? 0 });
+    wsSend({ to: 'client', type: 'pty_exit', termId, exitCode: event.exitCode ?? 0 });
   });
   // сообщаем телефону, что появилась новая сессия (чтобы он мог показать её в списке)
   wsSend({ to: 'client', type: 'pty_opened', termId, cwd: wantCwd });
@@ -1130,6 +1130,7 @@ function createWindow() {
   });
   win.webContents.on('render-process-gone', (_e, details) => writeLog('fatal', 'renderer.process-gone', details));
   win.on('unresponsive', () => writeLog('error', 'window.unresponsive', {}));
+  win.on('focus', () => { try { win.flashFrame(false); } catch {} });
   win.on('close', (event) => {
     if (isQuitting) return;
     event.preventDefault();
@@ -1256,6 +1257,26 @@ app.whenReady().then(async () => {
 ipcMain.handle('update-check', () => {
   try { checkUpdatesNow(); writeLog('info', 'updater.manual-check', {}); return { ok: true }; }
   catch (error) { writeLog('error', 'updater.manual-check', error); return { ok: false, error: error.message }; }
+});
+ipcMain.handle('agent-notify', (_event, payload = {}) => {
+  const termId = String(payload.termId || '').slice(0, 80);
+  const title = String(payload.title || 'Агент ждёт внимания').replace(/[\r\n]+/g, ' ').slice(0, 120);
+  const body = String(payload.body || '').replace(/[\r\n]+/g, ' ').slice(0, 220);
+  const showNative = !win || win.isDestroyed() || !win.isVisible() || !win.isFocused();
+  if (!showNative || !Notification.isSupported()) return { ok: true, native: false };
+  try {
+    const notification = new Notification({ title: `Noda · ${title}`, body, icon: path.join(__dirname, 'icon.png'), silent: false });
+    notification.on('click', () => {
+      showMainWindow();
+      setTimeout(() => winSend('focus-terminal', { termId }), 120);
+    });
+    notification.show();
+    try { if (win && !win.isDestroyed()) win.flashFrame(true); } catch {}
+    return { ok: true, native: true };
+  } catch (error) {
+    writeLog('warn', 'agent.notification', { termId, error });
+    return { ok: false, native: false, error: error.message };
+  }
 });
 ipcMain.handle('app-version', () => app.getVersion());
 ipcMain.handle('app-log', (_e, { level = 'info', source = 'renderer', payload = {} } = {}) => {
