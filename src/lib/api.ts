@@ -33,6 +33,8 @@ type Options = {
   auth?: boolean;
   /** Для multipart — передать FormData напрямую */
   form?: FormData;
+  /** Сколько ждать ответа, мс (по умолчанию 45 с) */
+  timeoutMs?: number;
 };
 
 export async function api<T = any>(path: string, opts: Options = {}): Promise<T> {
@@ -51,7 +53,7 @@ export async function api<T = any>(path: string, opts: Options = {}): Promise<T>
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45000);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 45000);
   let res: Response;
   try {
     res = await fetch(`${API_URL}${path}`, {
@@ -67,7 +69,12 @@ export async function api<T = any>(path: string, opts: Options = {}): Promise<T>
   clearTimeout(timer);
 
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
   if (!res.ok) {
     throw new Error(data?.error || `Ошибка ${res.status}`);
   }
