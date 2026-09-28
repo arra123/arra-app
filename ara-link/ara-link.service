@@ -1,0 +1,17 @@
+[Unit]
+Description=ara-link — связь компьютера с мобильной «Арой»
+After=network-online.target graphical-session.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/.local/share/ara-link/ara_link.py
+Restart=always
+RestartSec=5
+# kitty для новых агентов открывается в текущей сессии Hyprland/KDE:
+# ara-link сам найдёт WAYLAND_DISPLAY, но лучше передать окружение сессии
+# (exec-once = dbus-update-activation-environment --systemd --all).
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
