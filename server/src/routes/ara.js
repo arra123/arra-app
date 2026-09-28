@@ -60,15 +60,14 @@ export default async function araRoutes(app) {
     });
   });
 
-  // Скачать файл: телефон (JWT в заголовке или ?t=) или компьютер (?token= ключ устройства).
+  // Скачать файл: телефон (JWT в заголовке Authorization) или компьютер (?token= ключ устройства).
   app.get('/ara/blob/:id', async (request, reply) => {
     let userId = null;
     if (request.query?.token) {
       userId = (await deviceByToken(request.query.token))?.user_id || null;
     } else {
       try {
-        const payload = request.query?.t ? app.jwt.verify(request.query.t) : await request.jwtVerify();
-        userId = payload?.id || null;
+        userId = (await request.jwtVerify())?.id || null;
       } catch {
         /* не авторизован */
       }

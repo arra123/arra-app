@@ -1,15 +1,14 @@
-import * as Notifications from 'expo-notifications';
-import { router, Stack } from 'expo-router';
-import { useEffect, useRef } from 'react';
+import { Stack } from 'expo-router';
+import { useEffect } from 'react';
 
 import { ara } from '@/ara/client';
 import { Colors } from '@/constants/theme';
 import { getToken } from '@/lib/api';
-import { agentKeyFrom, registerForPush } from '@/lib/push';
+import { registerForPush } from '@/lib/push';
+import { usePushOpen } from '@/lib/use-push-open';
 
 export default function AppLayout() {
-  const handled = useRef<string | null>(null);
-  const lastResponse = Notifications.useLastNotificationResponse();
+  usePushOpen();
 
   // Вошли — открываем канал к серверу и регистрируем push
   useEffect(() => {
@@ -23,16 +22,6 @@ export default function AppLayout() {
       ara.stop();
     };
   }, []);
-
-  // Нажали на уведомление «агент закончил» — открываем этого агента
-  useEffect(() => {
-    const key = agentKeyFrom(lastResponse);
-    const id = lastResponse?.notification.request.identifier ?? null;
-    if (!key || !id || handled.current === id) return;
-    handled.current = id;
-    router.navigate('/');
-    router.push({ pathname: '/agent/[key]', params: { key } });
-  }, [lastResponse]);
 
   return (
     <Stack

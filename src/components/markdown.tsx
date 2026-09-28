@@ -28,7 +28,7 @@ function renderInline(nodes: Inline[], keyPrefix = ''): ReactNode[] {
       case 'text':
         return node.v;
       case 'code':
-        return <Text key={key} style={styles.inlineCode}>{` ${node.v} `}</Text>;
+        return <Text key={key} style={styles.inlineCode}>{node.v}</Text>;
       case 'b':
         return <Text key={key} style={styles.bold}>{renderInline(node.c, key)}</Text>;
       case 'i':

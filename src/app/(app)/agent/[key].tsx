@@ -132,7 +132,7 @@ export default function AgentScreen() {
 
   const device = item ? DEVICE_META[item.device].label : '';
   const subtitle = item
-    ? [shortPath(item.cwd) || device, agent?.ws != null ? `${device} · стол ${agent.ws}` : device].filter(Boolean).join(' · ')
+    ? [agent?.ws != null ? `${device} · стол ${agent.ws}` : device, shortPath(item.cwd)].filter(Boolean).join(' · ')
     : '';
   const state = agent?.state;
 

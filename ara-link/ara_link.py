@@ -255,6 +255,7 @@ class AraLink:
             return
         self.tx_seen[key] = stamp
         self.remember(key, data)
+        log.debug("переписка %s → телефон (%d записей)", key, len(data.get("messages") or []))
         await self.send({"type": "ara.transcript", "agentKey": key, "data": data})
 
     async def watch_loop(self) -> None:
@@ -275,6 +276,7 @@ class AraLink:
 
     def on_watch(self, agents: list[dict]) -> None:
         fresh = {a["key"]: a for a in agents if isinstance(a, dict) and a.get("key")}
+        log.debug("смотрят: %s", ", ".join(fresh) or "никто")
         for key in list(self.tx_seen):
             if key not in fresh or fresh[key].get("transcript") != self.watch.get(key, {}).get("transcript"):
                 # новый подписчик или новая сессия в том же терминале — отправить заново
@@ -643,7 +645,7 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=CONFIG_PATH)
     parser.add_argument("--check", action="store_true", help="напечатать снимок агентов и выйти")
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
+    logging.basicConfig(level=logging.DEBUG if os.environ.get("ARA_LINK_DEBUG") else logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
     link = AraLink(load_config(args.config))
 
     if args.check:

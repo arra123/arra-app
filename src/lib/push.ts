@@ -7,14 +7,16 @@ import { api } from '@/lib/api';
 
 // Пока приложение открыто, уведомление всё равно показываем баннером:
 // сервер не шлёт push про агента, чей экран сейчас открыт.
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+    }),
+  });
+}
 
 /** Разрешение на уведомления + Expo push-токен на сервер. Тихо, без падений. */
 export async function registerForPush() {
