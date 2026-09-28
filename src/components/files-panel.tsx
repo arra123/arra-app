@@ -1,4 +1,5 @@
 import * as DocumentPicker from 'expo-document-picker';
+import { MenuView } from '@expo/ui/community/menu';
 import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
 import { useFocusEffect } from 'expo-router';
 import { Image } from 'expo-image';
@@ -9,20 +10,22 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Dimensions,
   Modal,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
 import { GlassCard } from '@/components/glass-card';
+import { AppleButton, AppleIconButton } from '@/components/apple-button';
+import { DeviceSwitcher, type DeviceChoice } from '@/components/device-switcher';
 import { PhotoViewer } from '@/components/photo-viewer';
+import { RecentPhotosSheet } from '@/components/recent-photos-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Radius, Spacing } from '@/constants/theme';
@@ -39,13 +42,7 @@ type FileRec = {
   target_token_id?: string | null;
 };
 
-type Device = {
-  id: string;
-  name: string;
-  role?: 'laptop' | 'pc' | null;
-  hostname?: string | null;
-  online: boolean;
-};
+type Device = DeviceChoice;
 
 export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
   const theme = useTheme();
@@ -53,19 +50,25 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
   const [files, setFiles] = useState<FileRec[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [deviceId, setDeviceId] = useState<string | null>(null);
-  const [agentOnline, setAgentOnline] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadLabel, setUploadLabel] = useState('');
+  const [transferNotice, setTransferNotice] = useState<{ text: string; delivered: boolean } | null>(null);
   const [lastPicker, setLastPicker] = useState(false);
   const [token, setTok] = useState<string | null>(null);
   const [viewer, setViewer] = useState<number | null>(null);
   const [pdf, setPdf] = useState<FileRec | null>(null);
-  const screenW = Dimensions.get('window').width;
+  const { width: screenW } = useWindowDimensions();
   const col = (screenW - Spacing.three * 2 - Spacing.two * 2) / 3;
 
   useEffect(() => { getToken().then(setTok); }, []);
+
+  useEffect(() => {
+    if (!transferNotice || uploading) return;
+    const timer = setTimeout(() => setTransferNotice(null), 2800);
+    return () => clearTimeout(timer);
+  }, [transferNotice, uploading]);
 
   const load = useCallback(async () => {
     try {
@@ -74,7 +77,6 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
         api<{ tokens: Device[] }>('/pc/tokens'),
       ]);
       setFiles(fileData.files);
-      setAgentOnline(fileData.agentOnline);
       setDevices(deviceData.tokens || []);
       setDeviceId((current) => {
         if (current && (deviceData.tokens || []).some((device) => device.id === current)) return current;
@@ -114,6 +116,11 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
         headers: tk ? { Authorization: `Bearer ${tk}` } : undefined,
       });
       if (res.status >= 400) throw new Error('Сервер вернул ошибку ' + res.status);
+      const result = JSON.parse(res.body || '{}');
+      setTransferNotice({
+        delivered: !!result.delivered,
+        text: result.delivered ? 'Доставлено' : 'В очереди',
+      });
       await load();
     } catch (e: any) {
       Alert.alert('Не удалось отправить', e?.message || '');
@@ -150,23 +157,18 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
-  async function sendLastPhotos(count: number) {
-    if (uploading) return;
+  async function sendPickedPhotos(photos: { id: string; uri: string }[]) {
+    if (uploading || !photos.length) return;
     setLastPicker(false);
     setUploading(true);
     try {
-      const perm = await MediaLibrary.requestPermissionsAsync();
-      if (!perm.granted) { Alert.alert('Нужен доступ к фото'); return; }
-      setUploadLabel('Ищу последние фото…');
-      const res = await MediaLibrary.getAssetsAsync({ first: count, mediaType: 'photo', sortBy: [['creationTime', false]] });
-      const assets = res.assets?.slice(0, count) || [];
-      if (!assets.length) { Alert.alert('Фото не найдены'); return; }
       const tk = await getToken();
-      for (let index = 0; index < assets.length; index++) {
-        const asset = assets[index];
-        setUploadLabel(`Отправляю ${index + 1} из ${assets.length}…`);
-        const info = await MediaLibrary.getAssetInfoAsync(asset);
-        const uri = info.localUri || asset.uri;
+      let deliveredAll = true;
+      for (let index = 0; index < photos.length; index++) {
+        setUploadLabel(`Отправляю ${index + 1} из ${photos.length}…`);
+        // localUri нужен для iCloud-фото: asset.uri сам по себе может быть недоступен.
+        const info = await MediaLibrary.getAssetInfoAsync(photos[index].id);
+        const uri = info?.localUri || photos[index].uri;
         const target = deviceId ? `?targetTokenId=${encodeURIComponent(deviceId)}` : '';
         const result = await uploadAsync(`${API_URL}/files${target}`, uri, {
           httpMethod: 'POST',
@@ -175,10 +177,13 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
           headers: tk ? { Authorization: `Bearer ${tk}` } : undefined,
         });
         if (result.status >= 400) throw new Error(`Не отправилось фото ${index + 1}`);
+        const body = JSON.parse(result.body || '{}');
+        deliveredAll = deliveredAll && !!body.delivered;
       }
+      setTransferNotice({ delivered: deliveredAll, text: deliveredAll ? 'Доставлено' : 'В очереди' });
       await load();
     } catch (e: any) {
-      Alert.alert('Не удалось отправить последние фото', e?.message || '');
+      Alert.alert('Не удалось отправить фото', e?.message || '');
     } finally {
       setUploading(false);
       setUploadLabel('');
@@ -186,7 +191,6 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
   }
 
   const selectedDevice = devices.find((device) => device.id === deviceId) || null;
-  const targetOnline = selectedDevice ? selectedDevice.online : agentOnline;
 
   return (
     <ThemedView style={{ flex: 1 }}>
@@ -195,59 +199,74 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
         contentContainerStyle={[styles.content, { paddingTop: embedded ? Spacing.one : insets.top + Spacing.two }]}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.textSecondary} />}>
-        {!embedded && <ThemedText type="title" style={styles.h1}>Файлы</ThemedText>}
+        {!embedded && <ThemedText type="title" style={styles.h1}>Передача</ThemedText>}
 
         <GlassCard radius={Radius.lg} style={styles.statusCard}>
-          <View style={[styles.dot, { backgroundColor: agentOnline ? theme.success : theme.textSecondary }]} />
-          <View style={{ flex: 1 }}>
-            <ThemedText type="smallBold">{selectedDevice?.name || (targetOnline ? 'Компьютер на связи' : 'Компьютер офлайн')}</ThemedText>
+          <View style={styles.statusTop}>
+            <ThemedText type="smallBold" numberOfLines={1} style={styles.deviceName}>
+              {selectedDevice?.name || 'Выберите устройство'}
+            </ThemedText>
+            <DeviceSwitcher
+              devices={devices}
+              value={deviceId}
+              onChange={setDeviceId}
+              compact
+            />
           </View>
         </GlassCard>
 
-        {devices.length > 1 && (
-          <View style={styles.deviceRow}>
-            {devices.map((device) => {
-              const active = device.id === deviceId;
-              return (
-                <TouchableOpacity key={device.id} activeOpacity={0.8} onPress={() => setDeviceId(device.id)}
-                  style={[styles.deviceChoice, { backgroundColor: active ? theme.backgroundSelected : theme.backgroundElement, borderColor: active ? theme.tint : theme.separator }]}>
-                  <SymbolView name={device.role === 'laptop' ? 'laptopcomputer' : 'desktopcomputer'} tintColor={active ? theme.tint : theme.textSecondary} size={17} />
-                  <ThemedText type="smallBold" numberOfLines={1} style={{ flex: 1 }}>{device.role === 'laptop' ? 'Ноутбук' : 'ПК'}</ThemedText>
-                  <View style={[styles.deviceDot, { backgroundColor: device.online ? theme.success : theme.textSecondary }]} />
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        )}
-
-        {/* Быстрые источники. Камеру убрали: основной сценарий — уже снятые фото. */}
+        {/* Быстрый сценарий и системное меню источников. */}
         <View style={styles.captureRow}>
-          <TouchableOpacity activeOpacity={0.85} style={styles.captureWrap} onPress={() => setLastPicker(true)} disabled={uploading}>
-            <View style={[styles.capture, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
-              <SymbolView name="photo.stack.fill" tintColor={theme.text} size={20} />
-              <ThemedText type="small" style={{ fontWeight: '600' }}>Последние фото</ThemedText>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity activeOpacity={0.85} style={styles.captureWrap} onPress={() => capture(false)} disabled={uploading}>
-            <View style={[styles.capture, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
-              <SymbolView name="photo.on.rectangle" tintColor={theme.text} size={20} />
-              <ThemedText type="small" style={{ fontWeight: '600' }}>Галерея</ThemedText>
-            </View>
-          </TouchableOpacity>
-          <TouchableOpacity activeOpacity={0.85} style={styles.captureWrap} onPress={pickDocument} disabled={uploading}>
-            <View style={[styles.capture, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]}>
-              <SymbolView name="doc.fill" tintColor={theme.text} size={20} />
-              <ThemedText type="small" style={{ fontWeight: '600' }}>Файл</ThemedText>
-            </View>
-          </TouchableOpacity>
+          <AppleButton
+            label="Последние фото"
+            systemImage="photo.stack.fill"
+            variant="glass"
+            onPress={() => setLastPicker(true)}
+            disabled={uploading}
+            full
+            style={styles.captureWrap}
+          />
+          <MenuView
+            title="Что передать"
+            actions={[
+              { id: 'camera', title: 'Снять фото', image: 'camera.fill' },
+              { id: 'gallery', title: 'Выбрать из галереи', image: 'photo.on.rectangle' },
+              { id: 'file', title: 'Выбрать файл', image: 'doc.fill' },
+            ]}
+            onPressAction={(event) => {
+              const action = event.nativeEvent.event;
+              if (action === 'camera') void capture(true);
+              else if (action === 'gallery') void capture(false);
+              else if (action === 'file') void pickDocument();
+            }}
+            style={styles.addMenu}>
+            <AppleIconButton
+              label="Добавить"
+              systemImage="plus"
+              variant="prominent"
+              disabled={uploading}
+              size={46}
+            />
+          </MenuView>
         </View>
 
-        {uploading && (
-          <View style={styles.uploadingRow}>
-            <ActivityIndicator color={theme.tint} />
-            <ThemedText type="small" themeColor="textSecondary">{uploadLabel || 'Отправляю…'}</ThemedText>
-          </View>
-        )}
+        <View style={styles.noticeSlot}>
+          {uploading ? (
+            <View style={styles.noticeContent}>
+              <ActivityIndicator color={theme.tint} />
+              <ThemedText type="small" themeColor="textSecondary">{uploadLabel || 'Отправляю…'}</ThemedText>
+            </View>
+          ) : transferNotice ? (
+            <View style={[styles.noticeContent, styles.notice, { backgroundColor: theme.backgroundSelected }]}>
+              <SymbolView
+                name={transferNotice.delivered ? 'checkmark.circle.fill' : 'clock.fill'}
+                tintColor={transferNotice.delivered ? theme.success : theme.warning}
+                size={18}
+              />
+              <ThemedText type="small">{transferNotice.text}</ThemedText>
+            </View>
+          ) : null}
+        </View>
 
         <ThemedText type="smallBold" themeColor="textSecondary" style={styles.h2}>Недавние</ThemedText>
         {loading ? (
@@ -309,25 +328,12 @@ export function FilesPanel({ embedded = false }: { embedded?: boolean }) {
         />
       )}
 
-      <Modal visible={lastPicker} transparent animationType="fade" onRequestClose={() => setLastPicker(false)}>
-        <Pressable style={styles.sheetBackdrop} onPress={() => setLastPicker(false)}>
-          <Pressable style={[styles.lastSheet, { backgroundColor: theme.backgroundElement, borderColor: theme.separator }]} onPress={(e) => e.stopPropagation()}>
-            <View style={styles.sheetHandle} />
-            <ThemedText style={styles.sheetTitle}>Сколько последних фото отправить?</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">Фото пойдут на выбранный компьютер по порядку — от самого нового.</ThemedText>
-            <View style={styles.countGrid}>
-              {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                <TouchableOpacity key={n} activeOpacity={0.75} onPress={() => sendLastPhotos(n)} style={[styles.countBtn, { backgroundColor: n === 1 ? theme.tint : theme.backgroundSelected }]}>
-                  <ThemedText style={{ color: n === 1 ? '#fff' : theme.text, fontWeight: '700' }}>{n}</ThemedText>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <TouchableOpacity onPress={() => setLastPicker(false)} style={styles.sheetCancel}>
-              <ThemedText type="smallBold" themeColor="textSecondary">Отмена</ThemedText>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <RecentPhotosSheet
+        visible={lastPicker}
+        onClose={() => setLastPicker(false)}
+        onSend={(photos) => void sendPickedPhotos(photos)}
+        title="Последние фото"
+      />
 
       {/* Просмотр PDF прямо в приложении */}
       <Modal visible={!!pdf} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setPdf(null)}>
@@ -356,27 +362,20 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: Spacing.three, paddingBottom: BottomTabInset + Spacing.five, gap: Spacing.three },
   h1: { fontSize: 34, lineHeight: 40, marginTop: Spacing.two },
   h2: { marginLeft: 4 },
-  statusCard: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, padding: Spacing.three },
-  deviceRow: { flexDirection: 'row', gap: Spacing.two },
-  deviceChoice: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: Spacing.two, minHeight: 44, paddingHorizontal: Spacing.three, borderRadius: Radius.md, borderWidth: StyleSheet.hairlineWidth },
-  deviceDot: { width: 8, height: 8, borderRadius: Radius.pill },
-  dot: { width: 12, height: 12, borderRadius: Radius.pill },
+  statusCard: { padding: Spacing.three },
+  statusTop: { minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.two },
+  deviceName: { flex: 1, minWidth: 0 },
   captureRow: { flexDirection: 'row', gap: Spacing.two },
-  captureWrap: { flex: 1 },
-  capture: { height: 72, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center', gap: 5, overflow: 'hidden' },
-  uploadingRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, justifyContent: 'center' },
+  captureWrap: { flex: 1, minWidth: 0 },
+  addMenu: { width: 46, height: 46 },
+  noticeSlot: { height: 20, alignItems: 'center', justifyContent: 'center' },
+  noticeContent: { height: 28, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.two },
+  notice: { alignSelf: 'center', paddingHorizontal: Spacing.three, borderRadius: Radius.md },
   empty: { textAlign: 'center', marginTop: Spacing.three },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
-  gridItem: { borderRadius: Radius.md, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.04)' },
+  gridItem: { borderRadius: Radius.md, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth, backgroundColor: 'rgba(120,120,128,0.12)' },
   gridImg: { width: '100%', height: '100%' },
   gridDoc: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4 },
   badge: { position: 'absolute', right: 5, bottom: 5, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
   pdfHead: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingHorizontal: Spacing.three, paddingTop: Spacing.three, paddingBottom: Spacing.two },
-  sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.48)' },
-  lastSheet: { borderTopLeftRadius: 28, borderTopRightRadius: 28, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: Spacing.three, paddingTop: Spacing.two, paddingBottom: Spacing.five, gap: Spacing.two },
-  sheetHandle: { width: 38, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.2)', alignSelf: 'center', marginBottom: Spacing.two },
-  sheetTitle: { fontSize: 21, fontWeight: '700', lineHeight: 27 },
-  countGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two, marginTop: Spacing.two },
-  countBtn: { width: '18%', aspectRatio: 1, borderRadius: Radius.md, alignItems: 'center', justifyContent: 'center' },
-  sheetCancel: { alignItems: 'center', paddingVertical: 12, marginTop: Spacing.one },
 });

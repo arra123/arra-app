@@ -67,16 +67,9 @@ export async function api<T = any>(path: string, opts: Options = {}): Promise<T>
   clearTimeout(timer);
 
   const text = await res.text();
-  let data: any = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = null;
-    }
-  }
+  const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
-    throw new Error(data?.error || data?.message || `Ошибка ${res.status}`);
+    throw new Error(data?.error || `Ошибка ${res.status}`);
   }
   return data as T;
 }

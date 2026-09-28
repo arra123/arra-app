@@ -1,5 +1,32 @@
-import { chatWithTools, currentDateNote } from '../ai.js';
+import { chatText, chatWithTools, currentDateNote } from '../ai.js';
 import { one, query } from '../db.js';
+
+const PRESETS = {
+  finance: {
+    title: 'Финансы',
+    prompt: '',
+  },
+  general: {
+    title: 'Обычный разговор',
+    prompt: `Ты — личный помощник Тимофея. Отвечай по-русски, естественно и по делу.
+Это обычный разговор: не превращай вопросы в финансовые операции и ничего не записывай в приложение.
+Помогай думать, планировать, сравнивать варианты и разбираться в теме. Если для точного ответа не хватает
+актуальных данных, честно обозначь это. Не выдумывай факты и не будь канцелярским.`,
+  },
+  tech: {
+    title: 'Покупки и техника',
+    prompt: `Ты — помощник Тимофея по выбору компьютеров, техники и цифровых сервисов.
+Отвечай по-русски, конкретно и без рекламных штампов. Сначала учитывай задачу, бюджет, уже имеющуюся
+технику и срок покупки; уточняй только то, что действительно меняет рекомендацию. Сравнивай варианты
+по реальной пользе, ограничениям и цене владения. Не записывай финансовые операции. Если сведения о
+ценах или моделях могут устареть, прямо скажи, что их нужно проверить перед покупкой.`,
+  },
+};
+
+function normalizePreset(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return PRESETS[key] ? key : 'finance';
+}
 
 const CATEGORIES = [
   'Продукты', 'Кафе и рестораны', 'Кофе', 'Доставка', 'Алкоголь',
@@ -44,14 +71,12 @@ function canon(name) {
   return CANON[k] || String(name).trim();
 }
 
-const PROMPT = `Ты — Noda, сильный личный ИИ Тимофея. Отвечай по-русски, живо, КРАТКО и по делу.
-Ты умеешь нормально обсуждать любые бытовые, рабочие и технические вопросы. Не своди каждый разговор к финансам.
-Когда пользователь просит, управляй данными приложения через инструменты: траты/доходы, долги, заметки и статистика.
-У тебя есть полный доступ ко всем заметкам пользователя через list_notes/create_note/update_note/delete_note.
+const PROMPT = `Ты — Arra, личный финансовый помощник Тимофея. Отвечай по-русски, дружелюбно, КРАТКО и по делу.
+Ты управляешь ВСЕМ в приложении через инструменты: траты/доходы, долги, заметки, статистика.
 
 ГЛАВНЫЕ ПРАВИЛА:
 1. НИКОГДА не пиши «сделал/записал/отметил/удалил», если в ЭТОМ ответе не вызвал инструмент и не получил ok. Сначала ДЕЙСТВИЕ — потом отчёт фактом. Врать про результат запрещено.
-2. Перед изменением/удалением сначала найди объект: list_transactions / list_debts / list_notes, возьми id, потом меняй. Для правки заметки обязательно вызови get_note и прочитай полный текст. Не плоди дубли.
+2. Перед изменением/удалением сначала найди объект: list_transactions / list_debts / list_notes, возьми id, потом меняй. Не плоди дубли.
 3. Массовые операции («все каршеринги», «всё за компанию», «перенеси все такси в категорию Такси») — делай ОДНИМ вызовом update_debts_bulk / update_transactions_bulk по match, не перечисляй руками.
 4. После действия — короткое подтверждение по факту (что/сколько/категория). На вопросы о суммах бери числа из «ТЕКУЩЕЕ СОСТОЯНИЕ» ниже или из query_spending/get_summary — НЕ выдумывай.
 5. Несколько операций в одном сообщении — несколько вызовов add_transaction.
@@ -60,8 +85,6 @@ const PROMPT = `Ты — Noda, сильный личный ИИ Тимофея. 
 8. ДЕРЖИ КОНТЕКСТ ДИАЛОГА: помни, о чём шла речь выше, понимай «а вчера?», «добавь туда же», «нет, я про другое», уточняющие реплики и местоимения («он», «она», «это»). Не переспрашивай то, что уже сказано в переписке.
 9. Если запрос реально неоднозначный (две трактовки, непонятна сумма/кто кому должен) — задай ОДИН короткий уточняющий вопрос, а не угадывай криво. Если же всё понятно — действуй сразу, без лишних вопросов.
 10. Говори живо и по-человечески, как умный ассистент, а не как робот-бланк. Без канцелярита и шаблонных фраз.
-11. Если пользователь прислал фото, сначала ответь на его вопрос по изображению. Не записывай данные автоматически,
-если он явно не попросил создать операцию, долг или заметку.
 
 КАТЕГОРИЗАЦИЯ — выбирай САМУЮ КОНКРЕТНУЮ категорию, а не общую:
 - кофе/латте/капучино/Starbucks/кофейня → «Кофе» (НЕ «Кафе и рестораны»).
@@ -198,14 +221,6 @@ const TOOLS = [
       name: 'list_notes',
       description: 'Показать заметки (с id) — перед изменением/удалением',
       parameters: { type: 'object', properties: {} },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_note',
-      description: 'Прочитать полный текст одной заметки перед ответом или редактированием',
-      parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
     },
   },
   {
@@ -430,16 +445,9 @@ async function execTool(userId, name, args) {
     }
     if (name === 'list_notes') {
       const { rows } = await query(
-        "SELECT id, title, left(body, 240) AS preview, length(body)::int AS characters, to_char(updated_at,'DD.MM.YYYY') AS updated FROM notes WHERE user_id=$1 ORDER BY updated_at DESC LIMIT 100",
+        "SELECT id, title, left(body, 200) AS body, to_char(updated_at,'DD.MM.YYYY') AS updated FROM notes WHERE user_id=$1 ORDER BY updated_at DESC LIMIT 100",
         [userId]);
       return { notes: rows };
-    }
-    if (name === 'get_note') {
-      if (!args.id) return { error: 'нужен id' };
-      const note = await one(
-        'SELECT id, title, body, structured_body, color, updated_at FROM notes WHERE id=$1 AND user_id=$2',
-        [args.id, userId]);
-      return note ? { note } : { error: 'не найдено' };
     }
     if (name === 'update_note') {
       if (!args.id) return { error: 'нужен id' };
@@ -536,170 +544,155 @@ async function execTool(userId, name, args) {
   }
 }
 
-export default async function assistantRoutes(app) {
-  const normalizeThreadKey = (value) => String(value || 'general')
-    .replace(/[\r\n\t]+/g, '-')
-    .trim()
-    .slice(0, 180) || 'general';
+// Чат может быть «основным» (thread_id IS NULL — вся старая переписка) или отдельным.
+// Старые клиенты (iOS, ПК, версия «Пульт») thread не передают и работают с основным.
+const isMain = (value) => !value || value === 'main' || value === 'null';
+function threadWhere(thread, params) {
+  if (isMain(thread)) return 'thread_id IS NULL';
+  params.push(thread);
+  return `thread_id = $${params.length}`;
+}
 
+export default async function assistantRoutes(app) {
+  // Список чатов: основной идёт первым, остальные — по свежести.
   app.get('/ai/threads', { preHandler: app.auth }, async (request) => {
+    const main = await one(
+      `SELECT COUNT(*)::int AS count, MAX(created_at) AS updated_at,
+              (SELECT content FROM chat_messages WHERE user_id=$1 AND thread_id IS NULL ORDER BY created_at DESC LIMIT 1) AS preview
+       FROM chat_messages WHERE user_id=$1 AND thread_id IS NULL`, [request.user.id]);
     const { rows } = await query(
-      `SELECT thread_key, title, project_name, project_path, device_name, created_at, updated_at
-       FROM assistant_threads WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 100`,
-      [request.user.id],
-    );
-    return { threads: rows };
+      `SELECT t.id, t.title, t.preset, t.created_at,
+              COALESCE(m.last_at, t.updated_at) AS updated_at,
+              COALESCE(m.count, 0)::int AS count, m.preview
+       FROM chat_threads t
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS count, MAX(created_at) AS last_at,
+                (SELECT content FROM chat_messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS preview
+         FROM chat_messages WHERE thread_id = t.id
+       ) m ON true
+       WHERE t.user_id = $1
+       ORDER BY updated_at DESC`, [request.user.id]);
+    return {
+      threads: [
+        { id: 'main', title: 'Основной', preset: 'finance', count: main?.count || 0, updated_at: main?.updated_at || null, preview: main?.preview || null, main: true },
+        ...rows,
+      ],
+    };
+  });
+
+  app.post('/ai/threads', { preHandler: app.auth }, async (request) => {
+    const preset = normalizePreset(request.body?.preset);
+    const title = String(request.body?.title || '').trim().slice(0, 80) || PRESETS[preset].title;
+    const thread = await one(
+      'INSERT INTO chat_threads (user_id, title, preset) VALUES ($1,$2,$3) RETURNING id, title, preset, created_at, updated_at',
+      [request.user.id, title, preset]);
+    return { thread: { ...thread, count: 0, preview: null } };
+  });
+
+  app.patch('/ai/threads/:id', { preHandler: app.auth }, async (request, reply) => {
+    const current = await one(
+      'SELECT id, title, preset FROM chat_threads WHERE id=$1 AND user_id=$2',
+      [request.params.id, request.user.id]);
+    if (!current) return reply.code(404).send({ error: 'Чат не найден' });
+    const title = request.body?.title === undefined
+      ? current.title
+      : String(request.body.title || '').trim().slice(0, 80);
+    if (!title) return reply.code(400).send({ error: 'Нужен title' });
+    const preset = request.body?.preset === undefined ? current.preset : normalizePreset(request.body.preset);
+    const thread = await one(
+      'UPDATE chat_threads SET title=$1, preset=$2, updated_at=now() WHERE id=$3 AND user_id=$4 RETURNING id, title, preset, updated_at',
+      [title, preset, request.params.id, request.user.id]);
+    return { thread };
+  });
+
+  app.delete('/ai/threads/:id', { preHandler: app.auth }, async (request) => {
+    await query('DELETE FROM chat_threads WHERE id=$1 AND user_id=$2', [request.params.id, request.user.id]);
+    return { ok: true };
   });
 
   app.get('/ai/messages', { preHandler: app.auth }, async (request) => {
-    const threadKey = normalizeThreadKey(request.query?.thread);
+    const params = [request.user.id];
+    const where = threadWhere(request.query?.thread, params);
     const { rows } = await query(
       `SELECT id, role, content, created_at FROM chat_messages
-       WHERE user_id = $1 AND thread_key = $2 ORDER BY created_at ASC LIMIT 200`,
-      [request.user.id, threadKey],
-    );
-    return { messages: rows, threadKey };
-  });
-
-  // Локальная модель отвечает на выбранном компьютере, но ветка проекта должна
-  // продолжаться на любом устройстве. Этот маршрут сохраняет уже готовую пару
-  // сообщений и никогда не отправляет её во внешний AI-провайдер.
-  app.post('/ai/messages/sync', { preHandler: app.auth }, async (request, reply) => {
-    const threadKey = normalizeThreadKey(request.body?.threadKey);
-    const input = Array.isArray(request.body?.messages) ? request.body.messages.slice(-12) : [];
-    const messages = input.map((message) => ({
-      clientId: String(message?.id || '').replace(/[^a-zA-Z0-9:._-]+/g, '-').slice(0, 180) || null,
-      role: message?.role === 'assistant' ? 'assistant' : message?.role === 'user' ? 'user' : null,
-      content: String(message?.content || '').trim().slice(0, 120000),
-    })).filter((message) => message.role && message.content);
-    if (!messages.length) return reply.code(400).send({ error: 'Нет сообщений для сохранения' });
-
-    const clean = (value, max = 280) => String(value || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, max);
-    const project = request.body?.project && typeof request.body.project === 'object' ? request.body.project : null;
-    const title = clean(project?.name || messages.find((message) => message.role === 'user')?.content || 'Новая задача', 90) || 'Новая задача';
-    await query(
-      `INSERT INTO assistant_threads (user_id, thread_key, title, project_name, project_path, device_name)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT (user_id, thread_key) DO UPDATE SET
-         project_name = COALESCE(EXCLUDED.project_name, assistant_threads.project_name),
-         project_path = COALESCE(EXCLUDED.project_path, assistant_threads.project_path),
-         device_name = COALESCE(EXCLUDED.device_name, assistant_threads.device_name),
-         updated_at = now()`,
-      [request.user.id, threadKey, title, clean(project?.name, 100) || null, clean(project?.path, 320) || null, clean(project?.device, 100) || null],
-    );
-    for (const message of messages) {
-      await query(
-        `INSERT INTO chat_messages (user_id, role, content, thread_key, client_id)
-         VALUES ($1,$2,$3,$4,$5)
-         ON CONFLICT (user_id, thread_key, client_id) WHERE client_id IS NOT NULL DO NOTHING`,
-        [request.user.id, message.role, message.content, threadKey, message.clientId],
-      );
-    }
-    return { ok: true, threadKey, saved: messages.length };
+       WHERE user_id = $1 AND ${where} ORDER BY created_at ASC LIMIT 200`, params);
+    return { messages: rows };
   });
 
   app.post('/ai/assistant', { preHandler: app.auth }, async (request, reply) => {
-    const text = String(request.body?.text || '').trim();
-    const image = String(request.body?.image || '').trim();
-    const projectInput = request.body?.project && typeof request.body.project === 'object'
-      ? request.body.project
-      : null;
-    const cleanProjectField = (value, max = 280) => String(value || '')
-      .replace(/[\r\n\t]+/g, ' ')
-      .replace(/\s{2,}/g, ' ')
-      .trim()
-      .slice(0, max);
-    const project = projectInput ? {
-      name: cleanProjectField(projectInput.name, 100),
-      path: cleanProjectField(projectInput.path, 320),
-      device: cleanProjectField(projectInput.device, 100),
-    } : null;
-    if (!text && !image) return reply.code(400).send({ error: 'Нужно сообщение или фото' });
-    if (image && (!image.startsWith('data:image/') || image.length > 22 * 1024 * 1024)) {
-      return reply.code(400).send({ error: 'Фото слишком большое или имеет неверный формат' });
+    const text = (request.body?.text || '').trim();
+    if (!text) return reply.code(400).send({ error: 'Нужен text' });
+    const thread = isMain(request.body?.thread) ? null : String(request.body.thread);
+    let preset = 'finance';
+    if (thread) {
+      const chatThread = await one(
+        'SELECT preset FROM chat_threads WHERE id=$1 AND user_id=$2',
+        [thread, request.user.id]);
+      if (!chatThread) return reply.code(404).send({ error: 'Чат не найден' });
+      preset = normalizePreset(chatThread.preset);
     }
-    const storedText = text || 'Фото';
-    const threadKey = normalizeThreadKey(request.body?.threadKey);
 
-    const threadTitle = cleanProjectField(project?.name || text || 'Новая задача', 90) || 'Новая задача';
-    await query(
-      `INSERT INTO assistant_threads (user_id, thread_key, title, project_name, project_path, device_name)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       ON CONFLICT (user_id, thread_key) DO UPDATE SET
-         project_name = COALESCE(EXCLUDED.project_name, assistant_threads.project_name),
-         project_path = COALESCE(EXCLUDED.project_path, assistant_threads.project_path),
-         device_name = COALESCE(EXCLUDED.device_name, assistant_threads.device_name),
-         updated_at = now()`,
-      [request.user.id, threadKey, threadTitle, project?.name || null, project?.path || null, project?.device || null],
-    );
+    await query('INSERT INTO chat_messages (user_id, role, content, thread_id) VALUES ($1,$2,$3,$4)',
+      [request.user.id, 'user', text, thread]);
+    if (thread) {
+      // Свежесозданному чату даём имя по первой фразе.
+      await query(
+        `UPDATE chat_threads SET updated_at = now(),
+           title = CASE WHEN title = 'Новый чат' THEN left($1, 60) ELSE title END
+         WHERE id = $2 AND user_id = $3`, [text, thread, request.user.id]);
+    }
 
-    await query(
-      'INSERT INTO chat_messages (user_id, role, content, thread_key) VALUES ($1,$2,$3,$4)',
-      [request.user.id, 'user', storedText, threadKey],
-    );
-
+    const histParams = [request.user.id];
+    const histWhere = threadWhere(request.body?.thread, histParams);
     const { rows: hist } = await query(
       `SELECT role, content FROM chat_messages
-       WHERE user_id = $1 AND thread_key = $2 ORDER BY created_at DESC LIMIT 40`,
-      [request.user.id, threadKey],
-    );
-    const context = await buildContext(request.user.id);
-    const historyMessages = hist.reverse().map((h) => ({ role: h.role, content: h.content }));
-    if (image) {
-      const lastUser = historyMessages.map((m) => m.role).lastIndexOf('user');
-      if (lastUser >= 0) {
-        historyMessages[lastUser] = {
-          role: 'user',
-          content: [
-            { type: 'text', text: text || 'Что изображено на этом фото? Опиши важное.' },
-            { type: 'image_url', image_url: { url: image } },
-          ],
-        };
-      }
-    }
-    const projectContext = project?.name
-      ? `\n\nТекущий рабочий контекст пользователя: проект «${project.name}»${project.path ? `, локальный путь «${project.path}»` : ''}${project.device ? `, устройство «${project.device}»` : ''}. Используй это только как контекст разговора. Не утверждай, что прочитал или изменил локальные файлы, если их содержимое не было передано тебе явно.`
-      : '';
-    const messages = [
-      { role: 'system', content: `${PROMPT}\n\n${currentDateNote()}\n\n${context}${projectContext}` },
-      ...historyMessages,
-    ];
+       WHERE user_id = $1 AND ${histWhere} ORDER BY created_at DESC LIMIT 40`, histParams);
+    const history = hist.reverse().map((h) => ({ role: h.role, content: h.content }));
 
     let final = '';
     try {
-      for (let i = 0; i < 12; i++) {
-        const msg = await chatWithTools(messages, TOOLS);
-        messages.push(msg);
-        if (msg.tool_calls?.length) {
-          for (const tc of msg.tool_calls) {
-            let args = {};
-            try { args = JSON.parse(tc.function.arguments || '{}'); } catch { /* ignore */ }
-            const result = await execTool(request.user.id, tc.function.name, args);
-            messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
+      if (preset !== 'finance') {
+        final = await chatText([
+          { role: 'system', content: `${PRESETS[preset].prompt}\n\n${currentDateNote()}` },
+          ...history,
+        ], undefined, preset === 'tech' ? 0.45 : 0.7);
+      } else {
+        const context = await buildContext(request.user.id);
+        const messages = [
+          { role: 'system', content: `${PROMPT}\n\n${currentDateNote()}\n\n${context}` },
+          ...history,
+        ];
+        for (let i = 0; i < 12; i++) {
+          const msg = await chatWithTools(messages, TOOLS);
+          messages.push(msg);
+          if (msg.tool_calls?.length) {
+            for (const tc of msg.tool_calls) {
+              let args = {};
+              try { args = JSON.parse(tc.function.arguments || '{}'); } catch { /* ignore */ }
+              const result = await execTool(request.user.id, tc.function.name, args);
+              messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) });
+            }
+            continue;
           }
-          continue;
+          final = msg.content || '';
+          break;
         }
-        final = msg.content || '';
-        break;
       }
     } catch (e) {
       final = 'Не получилось обработать: ' + e.message;
     }
     if (!final) final = 'Готово.';
 
-    await query(
-      'INSERT INTO chat_messages (user_id, role, content, thread_key) VALUES ($1,$2,$3,$4)',
-      [request.user.id, 'assistant', final, threadKey],
-    );
-    await query('UPDATE assistant_threads SET updated_at = now() WHERE user_id = $1 AND thread_key = $2', [request.user.id, threadKey]);
-    return { reply: final, threadKey };
+    await query('INSERT INTO chat_messages (user_id, role, content, thread_id) VALUES ($1,$2,$3,$4)',
+      [request.user.id, 'assistant', final, thread]);
+    return { reply: final };
   });
 
-  // Очистить диалог
+  // Очистить диалог (по умолчанию — основной)
   app.delete('/ai/messages', { preHandler: app.auth }, async (request) => {
-    const threadKey = normalizeThreadKey(request.query?.thread);
-    await query('DELETE FROM chat_messages WHERE user_id = $1 AND thread_key = $2', [request.user.id, threadKey]);
-    await query('DELETE FROM assistant_threads WHERE user_id = $1 AND thread_key = $2', [request.user.id, threadKey]);
+    const params = [request.user.id];
+    const where = threadWhere(request.query?.thread, params);
+    await query(`DELETE FROM chat_messages WHERE user_id = $1 AND ${where}`, params);
     return { ok: true };
   });
 

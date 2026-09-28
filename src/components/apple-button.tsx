@@ -1,3 +1,4 @@
+import { SymbolView } from 'expo-symbols';
 import { Pressable, StyleSheet, Switch, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
@@ -19,7 +20,24 @@ type AppleButtonProps = {
   style?: StyleProp<ViewStyle>;
 };
 
-/** Фолбэк нативной кнопки Apple для web/android (на iOS используется apple-button.ios.tsx). */
+type AppleIconButtonProps = {
+  label: string;
+  systemImage: SFSymbol;
+  onPress?: () => void;
+  variant?: AppleButtonVariant;
+  role?: 'default' | 'cancel' | 'destructive';
+  tint?: string;
+  disabled?: boolean;
+  size?: number;
+  style?: StyleProp<ViewStyle>;
+};
+
+/**
+ * Единые контролируемые кнопки приложения.
+ *
+ * Для рабочих действий не используем автоматически меняющийся Liquid Glass:
+ * цвет, размер и disabled-состояние одинаковы на каждом экране.
+ */
 export function AppleButton({
   label,
   onPress,
@@ -33,20 +51,31 @@ export function AppleButton({
 }: AppleButtonProps) {
   const theme = useTheme();
   const accent = role === 'destructive' ? theme.danger : tint ?? theme.accent;
-  const filled = variant === 'prominent' || variant === 'glass';
-  const pad = size === 'small' ? Spacing.two : size === 'large' ? Spacing.three : Spacing.two + 2;
+  const filled = variant === 'prominent';
+  const hasSurface = variant === 'glass' || variant === 'bordered';
+  const minHeight = size === 'small' ? 36 : size === 'large' ? 50 : 44;
 
   return (
     <Pressable
-      onPress={disabled ? undefined : onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
       style={({ pressed }) => [
         styles.btn,
         {
-          paddingVertical: pad,
-          backgroundColor: filled ? accent : 'transparent',
-          borderColor: accent,
-          borderWidth: variant === 'bordered' ? StyleSheet.hairlineWidth * 2 : 0,
-          opacity: disabled ? 0.4 : pressed ? 0.7 : 1,
+          minHeight,
+          backgroundColor: disabled
+            ? theme.disabled
+            : filled
+              ? accent
+              : hasSurface
+                ? theme.backgroundElement
+                : 'transparent',
+          borderColor: variant === 'bordered' ? accent : theme.separator,
+          borderWidth: hasSurface ? StyleSheet.hairlineWidth : 0,
+          opacity: pressed ? 0.68 : 1,
           alignSelf: full ? 'stretch' : 'center',
         },
         style,
@@ -54,7 +83,7 @@ export function AppleButton({
       <Text
         style={[
           styles.label,
-          { color: filled ? '#fff' : accent },
+          { color: disabled ? theme.disabledText : filled ? '#FFFFFF' : accent },
         ]}>
         {label}
       </Text>
@@ -62,9 +91,60 @@ export function AppleButton({
   );
 }
 
+export function AppleIconButton({
+  label,
+  systemImage,
+  onPress,
+  variant = 'glass',
+  role = 'default',
+  tint,
+  disabled = false,
+  size = 44,
+  style,
+}: AppleIconButtonProps) {
+  const theme = useTheme();
+  const accent = role === 'destructive' ? theme.danger : tint ?? theme.accent;
+  const filled = variant === 'prominent';
+  const surfaced = variant === 'glass' || variant === 'bordered';
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.iconButton,
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: disabled
+            ? theme.disabled
+            : filled
+              ? accent
+              : surfaced
+                ? theme.backgroundElement
+                : 'transparent',
+          borderColor: variant === 'bordered' ? accent : theme.separator,
+          borderWidth: surfaced ? StyleSheet.hairlineWidth : 0,
+          opacity: pressed ? 0.65 : 1,
+        },
+        style,
+      ]}>
+      <SymbolView
+        name={systemImage}
+        tintColor={disabled ? theme.disabledText : filled ? '#FFFFFF' : accent}
+        size={Math.round(size * 0.45)}
+      />
+    </Pressable>
+  );
+}
+
 type AppleToggleProps = {
   value: boolean;
-  onValueChange: (v: boolean) => void;
+  onValueChange: (value: boolean) => void;
   label?: string;
   systemImage?: SFSymbol;
   tint?: string;
@@ -76,7 +156,11 @@ export function AppleToggle({ value, onValueChange, label, tint, style }: AppleT
   return (
     <View style={[styles.toggleRow, style]}>
       {label ? <Text style={[styles.toggleLabel, { color: theme.text }]}>{label}</Text> : null}
-      <Switch value={value} onValueChange={onValueChange} trackColor={{ true: tint ?? theme.success }} />
+      <Switch
+        value={value}
+        onValueChange={onValueChange}
+        trackColor={{ false: theme.disabled, true: tint ?? theme.success }}
+      />
     </View>
   );
 }
@@ -88,7 +172,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  label: { fontWeight: '600', fontSize: 16 },
+  label: { fontWeight: '700', fontSize: 16 },
+  iconButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   toggleLabel: { fontSize: 16 },
 });

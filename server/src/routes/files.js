@@ -6,36 +6,10 @@ import { extname, join } from 'node:path';
 import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { compactDeviceRows, normalizeDeviceRole } from '../devices.js';
-import { buildRtcConfig } from '../rtc.js';
 import { addAgent, isAgentOnline, isClientOnline, notifyDevice, notifyUser, onlineTokenIds, relayToAgents, relayToClients, removeAgent } from '../ws.js';
-
-// Совместимость с Noda <= 1.10.9: старый удалённый ПК отправлял кадры
-// только мобильным клиентам. Сервер запоминает, какой desktop-агент открыл
-// просмотр, и возвращает ему кадры без необходимости сначала обновлять ПК.
-const legacyScreenViewers = new Map();
-const screenRouteKey = (userId, targetId) => `${userId}:${targetId}`;
-const rememberScreenViewer = (userId, targetId, sourceId) => {
-  legacyScreenViewers.set(screenRouteKey(userId, targetId), { sourceId, expiresAt: Date.now() + 30 * 60_000 });
-};
-const legacyScreenViewer = (userId, targetId) => {
-  const key = screenRouteKey(userId, targetId);
-  const route = legacyScreenViewers.get(key);
-  if (!route || route.expiresAt < Date.now()) { legacyScreenViewers.delete(key); return null; }
-  route.expiresAt = Date.now() + 30 * 60_000;
-  return route.sourceId;
-};
 
 export default async function fileRoutes(app) {
   await mkdir(config.uploadDir, { recursive: true });
-
-  app.get('/pc/rtc-config', { preHandler: app.auth }, async (request) => {
-    return buildRtcConfig({
-      userId: request.user.id,
-      turnUrl: config.rtc.turnUrl,
-      turnSecret: config.rtc.turnSecret,
-      credentialTtlSeconds: config.rtc.credentialTtlSeconds,
-    });
-  });
 
   // Загрузка файла с телефона. targetTokenId (необязательно, в query) — на какой ПК отправить.
   app.post('/files', { preHandler: app.auth }, async (request, reply) => {
@@ -181,16 +155,6 @@ export default async function fileRoutes(app) {
         [request.user.id, token, name, deviceKey, role, hostname, platform],
       );
     }
-    // После перехода на постоянный аппаратный ключ убираем старые записи той
-    // же физической роли без ключа. Иначе прежние переустановки снова
-    // появляются в телефоне отдельными «ПК» или «Ноутбук».
-    if (deviceKey && role) {
-      await query(
-        `DELETE FROM pc_tokens
-         WHERE user_id = $1 AND id <> $2 AND device_key IS NULL AND role = $3`,
-        [request.user.id, rec.id, role],
-      );
-    }
     return { pcToken: rec };
   });
 
@@ -249,16 +213,10 @@ export default async function fileRoutes(app) {
         // помечаем, с какого устройства пришло, чтобы телефон мог сопоставить
         msg.deviceId = tokenId;
         relayToClients(userId, msg);
-        if (['screens', 'screen_frame', 'screen_health', 'pc_offline'].includes(msg.type)) {
-          const viewerId = legacyScreenViewer(userId, tokenId);
-          if (viewerId) notifyDevice(userId, viewerId, { ...msg, to: 'pc', sourceDeviceId: tokenId, legacyRoute: true });
-        }
       } else if (msg && msg.to === 'agent') {
         // Noda на ноутбуке может запустить перенос на домашнем ПК и получать
         // ход операции обратно через тот же защищённый канал.
         const targetId = msg.deviceId || null;
-        if (targetId && msg.type === 'screen_start') rememberScreenViewer(userId, targetId, tokenId);
-        if (targetId && msg.type === 'screen_stop') legacyScreenViewers.delete(screenRouteKey(userId, targetId));
         const event = { ...msg, to: 'pc', sourceDeviceId: tokenId };
         delete event.deviceId;
         const delivered = relayToAgents(userId, event, targetId);

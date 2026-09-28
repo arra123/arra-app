@@ -9,35 +9,38 @@ import { Platform } from 'react-native';
 
 export const Colors = {
   light: {
-    text: '#0D0D12',
-    background: '#EFEFF3',
+    text: '#1D1D1F',
+    background: '#F2F3F7',
     backgroundElement: '#FFFFFF',
-    backgroundSelected: '#E6E7EC',
-    textSecondary: '#8A8E99',
-    tint: '#6F79F6',
-    accent: '#6F79F6',
-    success: '#5F83D6',
-    danger: '#FF3B30',
-    warning: '#FF9500',
-    glass: 'rgba(255,255,255,0.72)',
-    glassBorder: 'rgba(255,255,255,0.85)',
-    separator: 'rgba(60,60,67,0.10)',
+    backgroundSelected: '#E6F1FF',
+    textSecondary: '#666A73',
+    tint: '#007AFF',
+    accent: '#007AFF',
+    success: '#238A45',
+    danger: '#D92D20',
+    warning: '#C66A00',
+    glass: '#FFFFFF',
+    glassBorder: '#E0E2E8',
+    separator: '#D7D9E0',
+    disabled: '#E8E9ED',
+    disabledText: '#8B8F98',
   },
   dark: {
-    // Та же холодная серо-голубая система, что и в настольном приложении.
-    text: '#ECECEC',
-    background: '#101010',
-    backgroundElement: '#1C1C1C',
-    backgroundSelected: '#2B3542',
-    textSecondary: '#9B9B9B',
-    tint: '#8F8F8F',
-    accent: '#ECECEC',
-    success: '#2FBF71',
-    danger: '#EF6464',
-    warning: '#F0B94F',
-    glass: 'rgba(28,28,28,0.96)',
-    glassBorder: 'rgba(255,255,255,0.10)',
-    separator: 'rgba(255,255,255,0.09)',
+    text: '#1D1D1F',
+    background: '#F2F3F7',
+    backgroundElement: '#FFFFFF',
+    backgroundSelected: '#E6F1FF',
+    textSecondary: '#666A73',
+    tint: '#007AFF',
+    accent: '#007AFF',
+    success: '#238A45',
+    danger: '#D92D20',
+    warning: '#C66A00',
+    glass: '#FFFFFF',
+    glassBorder: '#E0E2E8',
+    separator: '#D7D9E0',
+    disabled: '#E8E9ED',
+    disabledText: '#8B8F98',
   },
 } as const;
 
@@ -53,9 +56,9 @@ export const Radius = {
 
 /** Палитра градиентов в стиле iOS 26 Liquid Glass */
 export const Gradients = {
-  aura: ['#7C5CFF', '#0A84FF', '#32D7D2'] as const,
-  finance: ['#6F79F6', '#5B8DEF'] as const,
-  files: ['#7C5CFF', '#FF6FD8'] as const,
+  aura: ['#2B93FF', '#007AFF', '#30B0C7'] as const,
+  finance: ['#5FD97E', '#34C759'] as const,
+  files: ['#C79BFF', '#AF52DE'] as const,
 };
 
 export const Fonts = Platform.select({
@@ -93,8 +96,8 @@ export const Spacing = {
   six: 64,
 } as const;
 
-export const BottomTabInset = 0;
+export const BottomTabInset = Platform.select({ ios: 16, android: 24 }) ?? 0;
 export const MaxContentWidth = 800;
 
-/** Пользовательская версия Noda. Меняется только вместе с нативной TestFlight-сборкой. */
-export const APP_BUILD = 79;
+/** Номер сборки JS — показывается в углу экрана. Увеличивать при каждом выкате OTA. */
+export const APP_BUILD = 98;

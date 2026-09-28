@@ -25,15 +25,11 @@ export type Debt = {
   counterparty: string;
   amount: string;
   direction: 'owes_me' | 'i_owe';
-  recipient?: 'Тима' | 'Даня' | 'Женя' | 'Дани' | null;
   note?: string | null;
   settled: boolean;
   due_date?: string | null;
   occurred_at?: string | null;
 };
-type DebtRecipient = 'Тима' | 'Даня' | 'Женя';
-const DEBT_RECIPIENTS: DebtRecipient[] = ['Тима', 'Даня', 'Женя'];
-const debtRecipient = (value?: string | null): DebtRecipient => String(value || '').toLowerCase().includes('жен') ? 'Женя' : String(value || '').toLowerCase().includes('дан') ? 'Даня' : 'Тима';
 
 const fmt = (n: number) => n.toLocaleString('ru-RU');
 const whenExact = (iso?: string | null) => {
@@ -52,7 +48,7 @@ const dueLabel = (iso?: string | null) => {
   return `до ${date}`;
 };
 
-export function DebtsModal({ visible, onClose, onChanged, initialDebtId = null }: { visible: boolean; onClose: () => void; onChanged: () => void; initialDebtId?: string | null }) {
+export function DebtsModal({ visible, onClose, onChanged }: { visible: boolean; onClose: () => void; onChanged: () => void }) {
   const theme = useTheme();
   const [debts, setDebts] = useState<Debt[]>([]);
   const [open, setOpen] = useState<string | null>(null); // раскрытый должник
@@ -62,9 +58,8 @@ export function DebtsModal({ visible, onClose, onChanged, initialDebtId = null }
     try {
       const r = await api<{ debts: Debt[] }>('/debts?all=true');
       setDebts(r.debts);
-      if (initialDebtId) setEdit(r.debts.find((debt) => debt.id === initialDebtId) || null);
     } catch { /* тихо */ }
-  }, [initialDebtId]);
+  }, []);
 
   useEffect(() => {
     if (visible) load();
@@ -127,7 +122,7 @@ export function DebtsModal({ visible, onClose, onChanged, initialDebtId = null }
         <ScrollView contentContainerStyle={{ padding: Spacing.three, gap: Spacing.two, paddingBottom: Spacing.six }}>
           {groups.length === 0 && (
             <ThemedText themeColor="textSecondary" style={{ textAlign: 'center', marginTop: Spacing.five }}>
-              Пока долгов нет. Откройте «Записать», скажите «дал Егору 500» или нажмите ＋.
+              Пока долгов нет. Скажи помощнику «дал Егору 500» или нажми ＋.
             </ThemedText>
           )}
           {groups.map((g) => {
@@ -153,7 +148,7 @@ export function DebtsModal({ visible, onClose, onChanged, initialDebtId = null }
 
                 {[...g.items].sort((a, b) => (b.occurred_at || '').localeCompare(a.occurred_at || '')).map((d) => expanded && (
                   <TouchableOpacity key={d.id} activeOpacity={0.7} onPress={() => setEdit(d)} style={[styles.item, { borderTopColor: theme.separator }]}>
-                    <MerchantLogo merchant={d.counterparty} size={32} />
+                    <MerchantLogo merchant={`${d.counterparty} ${d.note || ''}`} size={32} />
                     <View style={{ flex: 1, gap: 2 }}>
                       {/* название — белым, дата — приглушённым, статус — цветом */}
                       <ThemedText type="smallBold" numberOfLines={1} style={d.settled ? { textDecorationLine: 'line-through', color: theme.textSecondary } : undefined}>
@@ -199,7 +194,6 @@ function DebtEditor({
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   const [direction, setDirection] = useState<'owes_me' | 'i_owe'>('owes_me');
-  const [recipient, setRecipient] = useState<DebtRecipient>('Тима');
   const [note, setNote] = useState('');
   const [due, setDue] = useState('');
   const [when, setWhen] = useState('');
@@ -209,7 +203,6 @@ function DebtEditor({
     setName(debt.counterparty || '');
     setAmount(debt.amount ? String(Math.round(Number(debt.amount))) : '');
     setDirection(debt.direction);
-    setRecipient(debtRecipient(debt.recipient));
     setNote(debt.note || '');
     setDue(debt.due_date ? debt.due_date.slice(0, 10) : '');
     setWhen(debt.occurred_at ? debt.occurred_at.slice(0, 10) : (debt.id ? '' : new Date().toISOString().slice(0, 10)));
@@ -219,7 +212,7 @@ function DebtEditor({
     if (!debt) return;
     const amt = Number(amount.replace(',', '.'));
     if (!name.trim() || !amt) { Alert.alert('Заполни имя и сумму'); return; }
-    const body = { counterparty: name.trim(), amount: amt, direction, recipient, note: note.trim() || null, due_date: due.trim() || '', occurred_at: when.trim() || undefined };
+    const body = { counterparty: name.trim(), amount: amt, direction, note: note.trim() || null, due_date: due.trim() || '', occurred_at: when.trim() || undefined };
     try {
       if (debt.id) await api(`/debts/${debt.id}`, { method: 'PATCH', body });
       else await api('/debts', { body });
@@ -252,15 +245,6 @@ function DebtEditor({
             </Field>
             <Field label="Сумма, ₽">
               <TextInput value={amount} onChangeText={setAmount} keyboardType="numeric" placeholder="0" placeholderTextColor={theme.textSecondary} style={[styles.input, { color: theme.text }]} />
-            </Field>
-            <Field label="Кому">
-              <View style={styles.seg}>
-                {DEBT_RECIPIENTS.map((name) => (
-                  <Pressable key={name} style={[styles.segBtn, recipient === name && { backgroundColor: theme.tint }]} onPress={() => setRecipient(name)}>
-                    <ThemedText type="smallBold" style={{ color: recipient === name ? '#fff' : theme.textSecondary }}>{name}</ThemedText>
-                  </Pressable>
-                ))}
-              </View>
             </Field>
             <Field label="Когда возник (ГГГГ-ММ-ДД)">
               <TextInput value={when} onChangeText={setWhen} placeholder="дата долга" placeholderTextColor={theme.textSecondary} autoCapitalize="none" style={[styles.input, { color: theme.text }]} />
@@ -317,8 +301,8 @@ const styles = StyleSheet.create({
   avatar: { width: 38, height: 38, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   item: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, paddingVertical: Spacing.three, paddingHorizontal: Spacing.three, borderTopWidth: StyleSheet.hairlineWidth },
-  seg: { flexDirection: 'row', gap: 4, padding: 4, borderRadius: Radius.md, backgroundColor: 'rgba(255,255,255,0.07)' },
+  seg: { flexDirection: 'row', gap: 4, padding: 4, borderRadius: Radius.md, backgroundColor: 'rgba(120,120,128,0.12)' },
   segBtn: { flex: 1, paddingVertical: Spacing.two, borderRadius: Radius.sm, alignItems: 'center' },
-  input: { borderRadius: Radius.md, paddingHorizontal: Spacing.three, paddingVertical: Spacing.three, fontSize: 16, backgroundColor: 'rgba(255,255,255,0.07)' },
+  input: { borderRadius: Radius.md, paddingHorizontal: Spacing.three, paddingVertical: Spacing.three, fontSize: 16, backgroundColor: 'rgba(120,120,128,0.12)' },
   bigBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.two, height: 50, borderRadius: Radius.md },
 });
