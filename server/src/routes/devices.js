@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { hub } from '../ara/instance.js';
+import { keepAlive } from '../ara/keepalive.js';
 import { one, query } from '../db.js';
 import { compactDeviceRows, normalizeDeviceRole } from '../devices.js';
 
@@ -39,6 +40,8 @@ export default async function deviceRoutes(app) {
         [request.user.id, token, name, deviceKey, role, hostname, platform],
       );
     }
+    // Старый ключ больше не действует — отключаем компьютер, который им пользовался
+    if (rotate) hub.disconnectToken(request.user.id, rec.id);
     return { pcToken: rec };
   });
 
@@ -54,15 +57,22 @@ export default async function deviceRoutes(app) {
 
   app.delete('/pc/tokens/:id', { preHandler: app.auth }, async (request) => {
     await query('DELETE FROM pc_tokens WHERE id = $1 AND user_id = $2', [request.params.id, request.user.id]);
+    hub.disconnectToken(request.user.id, request.params.id);
     return { ok: true };
   });
 
   // ---- WebSocket компьютера (ara-link) ----
   app.get('/agent', { websocket: true }, async (socket, request) => {
-    // Сообщения могут прийти, пока идёт запрос в БД — копим их.
+    // Сообщения и закрытие могут прийти, пока идёт запрос в БД — ловим их сразу.
     const early = [];
+    let closed = false;
+    let onClose = () => {
+      closed = true;
+    };
     const onEarly = (raw) => early.push(raw);
     socket.on('message', onEarly);
+    socket.on('close', () => onClose());
+    socket.on('error', () => onClose());
 
     const token = request.query?.token;
     const row = token ? await one('SELECT id, user_id, name, role FROM pc_tokens WHERE token = $1', [token]) : null;
@@ -71,10 +81,24 @@ export default async function deviceRoutes(app) {
       socket.close(4401, 'invalid token');
       return;
     }
+    if (closed) return;
     const userId = row.user_id;
     const tokenId = row.id;
-    await query('UPDATE pc_tokens SET last_seen = now() WHERE id = $1', [tokenId]).catch(() => {});
     hub.deviceConnected(userId, tokenId, { name: row.name, role: row.role }, socket);
+    keepAlive(socket);
+    query('UPDATE pc_tokens SET last_seen = now() WHERE id = $1', [tokenId]).catch(() => {});
+
+    // last_seen раз в минуту, пока сокет жив
+    const seen = setInterval(() => {
+      query('UPDATE pc_tokens SET last_seen = now() WHERE id = $1', [tokenId]).catch(() => {});
+    }, 60_000);
+    let done = false;
+    onClose = () => {
+      if (done) return;
+      done = true;
+      clearInterval(seen);
+      hub.deviceDisconnected(userId, tokenId, socket);
+    };
 
     const handle = (raw) => {
       let msg;
@@ -88,16 +112,5 @@ export default async function deviceRoutes(app) {
     socket.off('message', onEarly);
     socket.on('message', handle);
     for (const raw of early) handle(raw);
-
-    // last_seen раз в минуту, пока сокет жив
-    const seen = setInterval(() => {
-      query('UPDATE pc_tokens SET last_seen = now() WHERE id = $1', [tokenId]).catch(() => {});
-    }, 60_000);
-    const close = () => {
-      clearInterval(seen);
-      hub.deviceDisconnected(userId, tokenId, socket);
-    };
-    socket.on('close', close);
-    socket.on('error', close);
   });
 }

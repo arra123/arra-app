@@ -74,7 +74,29 @@ DEFAULTS: dict[str, Any] = {
 }
 
 MEDIA_RE = re.compile(r"\.(png|jpe?g|gif|webp|heic|mp4|mov|webm|m4v)$", re.I)
+PATH_RE = re.compile(r"(/[^\s\"'`<>()]+?\.(?:png|jpe?g|gif|webp|heic|mp4|mov|webm|m4v))(?=$|[\s\"'`<>(),;:!?]|\.(?:\s|$))", re.I)
+MAX_TRANSCRIPT_BYTES = 6 * 1024 * 1024  # сервер режет сообщения больше 8 МБ
 MODEL_RE = re.compile(r"^[A-Za-z0-9._:\-\[\]]{1,80}$")
+
+
+def media_paths(text: str) -> set[str]:
+    return set(PATH_RE.findall(text or ""))
+
+
+def fit_transcript(data: dict) -> dict:
+    """Огромная переписка (длинные выводы команд) не должна рвать соединение."""
+    if len(json.dumps(data, ensure_ascii=False).encode()) <= MAX_TRANSCRIPT_BYTES:
+        return data
+    messages = []
+    for message in data.get("messages") or []:
+        if isinstance(message.get("text"), str) and len(message["text"]) > 20_000:
+            message = {**message, "text": message["text"][:20_000] + "\n\n…(обрезано)"}
+        messages.append(message)
+    data = {**data, "messages": messages}
+    while len(messages) > 10 and len(json.dumps(data, ensure_ascii=False).encode()) > MAX_TRANSCRIPT_BYTES:
+        messages = messages[len(messages) // 5:]
+        data = {**data, "messages": messages}
+    return data
 
 
 def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
@@ -129,7 +151,7 @@ class AraLink:
         self.tx_mtime: dict[str, float] = {}
         self.tx_polled: dict[str, float] = {}
         self.transcripts: dict[str, dict] = {}  # key -> последняя переписка (для проверки путей)
-        self.ask_text: dict[str, str] = {}  # chatId -> всё, что было в вопросах/ответах Ары
+        self.ask_paths: dict[str, set[str]] = {}  # chatId -> пути к медиа из ответов Ары
         self.sessions: dict[str, Any] = {}
         self.wake = asyncio.Event()
         self.tasks: set[asyncio.Task] = set()
@@ -250,6 +272,7 @@ class AraLink:
         data = await self.fetch_transcript(entry)
         if not isinstance(data, dict) or data.get("same"):
             return
+        data = fit_transcript(data)
         stamp = hashlib.sha1(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         if not force and self.tx_seen.get(key) == stamp:
             return
@@ -393,15 +416,18 @@ class AraLink:
             "style": "talk" if msg.get("style") == "talk" else "brief",
             "name": "Ара",
         }
-        # Пути из вопроса, истории и ответа потом можно запросить через ara.file
-        def note(text: str) -> None:
-            if chat and text:
-                self.ask_text[chat] = (self.ask_text.get(chat, "") + "\n" + text)[-200_000:]
+        # Пути из ответа Ары потом можно запросить через ara.file. Текст телефона
+        # (вопрос, история) сюда не попадает: иначе любой путь можно было бы
+        # «упомянуть» и скачать.
+        answer: list[str] = []
 
-        note(prompt)
-        for item in payload["history"]:
-            if isinstance(item, dict):
-                note(str(item.get("text") or ""))
+        def note(text: str) -> None:
+            answer.append(text)
+            if chat:
+                paths = self.ask_paths.setdefault(chat, set())
+                paths.update(media_paths("".join(answer)))
+                if len(paths) > 500:
+                    self.ask_paths[chat] = set(list(paths)[-500:])
         try:
             proc = await asyncio.create_subprocess_exec(
                 self.script("ask"), json.dumps(payload, ensure_ascii=False),
@@ -458,21 +484,24 @@ class AraLink:
     # ---------- файлы ----------
 
     def path_allowed(self, path: str, key: str | None, chat: str | None) -> bool:
-        """Отдаём только файлы, упомянутые в переписке (агента или чата с Арой)."""
-        if not path.startswith("/") or "\x00" in path:
+        """Отдаём только медиа, которые показаны в переписке: точные пути из полей
+        images/videos или целые пути из текста агента / ответа Ары. Текст,
+        написанный с телефона, не считается — иначе можно «упомянуть» любой файл."""
+        if not path.startswith("/") or "\x00" in path or not MEDIA_RE.search(path):
             return False
-        if chat and path in self.ask_text.get(chat, ""):
-            return True
-        data = self.transcripts.get(key or "")
-        if not data:
-            return False
+        allowed: set[str] = set()
+        if chat:
+            allowed |= self.ask_paths.get(chat, set())
+        data = self.transcripts.get(key or "") or {}
         for message in data.get("messages") or []:
             for field in ("images", "videos"):
-                if path in (message.get(field) or []):
-                    return True
-            if path in (message.get("text") or ""):
-                return True
-        return False
+                allowed.update(p for p in message.get(field) or [] if isinstance(p, str))
+            if message.get("role") == "assistant":
+                allowed.update(media_paths(message.get("text") or ""))
+        if path not in allowed:
+            return False
+        # Симлинк вроде shot.png -> ~/.ssh/id_ed25519 не пройдёт: цель тоже должна быть медиа
+        return bool(MEDIA_RE.search(os.path.realpath(path)))
 
     async def cmd_file(self, msg: dict) -> None:
         req = msg.get("reqId")

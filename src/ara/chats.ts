@@ -126,6 +126,16 @@ class ChatStore {
     return chat.id;
   }
 
+  /** Убрать неудавшийся вопрос с ответом-ошибкой (перед повтором). */
+  dropExchange(chatId: string, answerId: string) {
+    this.update(chatId, (chat) => {
+      const i = chat.messages.findIndex((m) => m.id === answerId);
+      if (i < 0) return chat;
+      const from = i > 0 && chat.messages[i - 1].role === 'user' ? i - 1 : i;
+      return { ...chat, messages: [...chat.messages.slice(0, from), ...chat.messages.slice(i + 1)] };
+    });
+  }
+
   remove(chatId: string) {
     this.chats = this.chats.filter((c) => c.id !== chatId);
     this.emit();
@@ -158,7 +168,7 @@ class ChatStore {
     const prompt = [text.trim(), ...images].filter(Boolean).join('\n');
     if (!prompt) return;
     const history = chat.messages
-      .filter((m) => !m.error && m.text)
+      .filter((m) => !m.error && !m.streaming && m.text)
       .map((m) => ({ role: m.role, text: [m.text, ...(m.images || [])].join('\n') }));
 
     const now = Date.now();

@@ -47,7 +47,9 @@ export default function AgentScreen() {
   const { agent, recent } = useAgentItem(key);
   const transcript = useTranscript(key);
   const now = useNow(10_000);
-  const [pending, setPending] = useState<{ id: string; text: string; images: string[]; at: number }[]>([]);
+  // Отправленное с телефона висит «отправляю…», пока в переписке не появится
+  // соответствующее по счёту сообщение пользователя (или 90 с на всякий случай)
+  const [pending, setPending] = useState<{ id: string; text: string; images: string[]; at: number; index: number }[]>([]);
   const [stopping, setStopping] = useState(false);
 
   const item = agent || recent;
@@ -55,12 +57,8 @@ export default function AgentScreen() {
   const plan = transcript?.plan || [];
   const model = transcript?.model || agent?.model || '';
 
-  // Отправленное с телефона висит «отправляю…», пока не появится в переписке
-  const lastUserText = [...messages].reverse().find((m) => m.role === 'user')?.text || '';
-  useEffect(() => {
-    if (!pending.length) return;
-    setPending((list) => list.filter((p) => !lastUserText.includes(p.text.slice(0, 40)) && Date.now() - p.at < 60_000));
-  }, [lastUserText, pending.length]);
+  const userCount = messages.filter((m) => m.role === 'user').length;
+  const visiblePending = pending.filter((p) => userCount <= p.index && now - p.at < 90_000);
 
   useEffect(() => {
     if (agent?.state !== 'working') setStopping(false);
@@ -69,8 +67,8 @@ export default function AgentScreen() {
   const keys = useMemo(() => messageKeys(messages), [messages]);
   const rows: Row[] = useMemo(() => [
     ...messages.map((message, i) => ({ kind: 'message' as const, key: keys[i], message })),
-    ...pending.map((p) => ({ kind: 'pending' as const, key: `pending:${p.id}`, text: p.text, images: p.images })),
-  ], [messages, keys, pending]);
+    ...visiblePending.map((p) => ({ kind: 'pending' as const, key: `pending:${p.id}`, text: p.text, images: p.images })),
+  ], [messages, keys, visiblePending]);
   const isFresh = useFreshKeys(keys);
 
   async function send(text: string, photos: { uri: string; name: string; mime: string }[]) {
@@ -78,7 +76,11 @@ export default function AgentScreen() {
     const paths: string[] = [];
     for (const photo of photos) paths.push(await uploadPhoto(photo, { agentKey: agent.key }));
     const id = `${Date.now()}`;
-    setPending((list) => [...list, { id, text, images: paths, at: Date.now() }]);
+    const at = Date.now();
+    setPending((list) => {
+      const alive = list.filter((p) => userCount <= p.index && at - p.at < 90_000);
+      return [...alive, { id, text, images: paths, at, index: userCount + alive.length }];
+    });
     try {
       await ara.sendText(agent.key, text, paths);
     } catch (error) {

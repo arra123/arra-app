@@ -119,7 +119,10 @@ export default function ChatScreen() {
 
   function retry(answerIndex: number) {
     const question = messages[answerIndex - 1];
-    if (question?.role !== 'user') return;
+    const answer = messages[answerIndex];
+    if (question?.role !== 'user' || !answer) return;
+    // Иначе неудавшийся вопрос попал бы в историю и Ара увидела бы его дважды
+    chats.dropExchange(id, answer.id);
     chats.send(id, question.text, question.images || [], question.localImages || []);
   }
 
@@ -191,7 +194,7 @@ export default function ChatScreen() {
           <T v="title" weight="700">Спроси Ару</T>
           <View style={styles.suggestions}>
             {SUGGESTIONS.map((s) => (
-              <Press key={s} onPress={() => chats.send(id, s)} disabled={!online} style={styles.suggestion} accessibilityLabel={s}>
+              <Press key={s} onPress={() => chats.send(id, s)} disabled={!online || busy} style={styles.suggestion} accessibilityLabel={s}>
                 <T v="footnote" color={Colors.textSecondary}>{s}</T>
               </Press>
             ))}
@@ -199,7 +202,14 @@ export default function ChatScreen() {
         </Animated.View>
       }
       composer={(onHeight) => (
-        <Composer placeholder="Спроси Ару…" onSend={send} onHeight={onHeight} accessory={modelPicker} autoFocus={!messages.length} />
+        <Composer
+          placeholder={busy ? 'Ара отвечает…' : 'Спроси Ару…'}
+          onSend={send}
+          onHeight={onHeight}
+          accessory={modelPicker}
+          autoFocus={!messages.length}
+          disabled={busy}
+        />
       )}
     />
   );

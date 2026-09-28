@@ -185,7 +185,6 @@ export function Composer({ placeholder, onSend, working, onStop, disabled, acces
             placeholderTextColor={Colors.textTertiary}
             style={styles.input}
             multiline
-            editable={!disabled}
             autoFocus={autoFocus}
             keyboardAppearance="dark"
             selectionColor={Colors.text}

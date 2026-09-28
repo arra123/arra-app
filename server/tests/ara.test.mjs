@@ -277,6 +277,17 @@ test('хаб: ara.file и ara.upload', async () => {
   hub.clientMessage('u1', phone, { type: 'ara.file', reqId: 'f2', agentKey: 'live:laptop:58872', path: '/home/tima/shot.png' });
   assert.equal(laptop.all('ara.file').length, asksBefore);
   assert.equal(phone.last('ara.result').blobId, blob.id);
+  // тот же путь из другой переписки — кеш не используется, компьютер проверит сам
+  hub.clientMessage('u1', phone, { type: 'ara.file', reqId: 'f3', chatId: 'c1', path: '/home/tima/shot.png' });
+  assert.equal(laptop.all('ara.file').length, asksBefore + 1);
+  // пока идёт загрузка, таймер не обрывает запрос; повторно «занять» его нельзя
+  const slow = hub.pendingFile('u1', 'L', laptop.last('ara.file').reqId);
+  assert.ok(slow);
+  assert.equal(hub.pendingFile('u1', 'L', slow.id), null);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.notEqual(phone.last('ara.result').reqId, 'f3');
+  hub.fileFailed(slow.id, 'обрыв');
+  assert.deepEqual(phone.last('ara.result'), { type: 'ara.result', ok: false, error: 'обрыв', reqId: 'f3' });
 
   const photo = await blobs.save('u1', Readable.from([Buffer.from('jpg')]), { name: 'IMG 1.jpg' });
   const delivered = hub.deliverUpload('u1', { agentKey: 'live:pc:700' }, photo);
@@ -318,4 +329,34 @@ test('blobs: лимит размера и Range для видео', async () => 
   await app.close();
   await writeFile(join(dir, 'x'), '');
   await rm(dir, { recursive: true, force: true });
+});
+
+test('хаб: уснувший телефон с открытым экраном не глушит push', async () => {
+  const { hub, pushes, advance } = setup();
+  const laptop = fakeSocket();
+  const phone = fakeSocket();
+  hub.deviceConnected('u1', 'L', { role: 'laptop' }, laptop);
+  hub.clientConnected('u1', phone);
+  await hub.deviceMessage('u1', 'L', laptopSnapshot());
+  hub.clientMessage('u1', phone, { type: 'ara.subscribe', agentKey: 'live:laptop:58872' });
+  advance(60_000); // телефон молчит минуту — iOS его усыпил
+  const finished = laptopSnapshot();
+  finished.live[0].state = 'waiting';
+  await hub.deviceMessage('u1', 'L', finished);
+  assert.equal(pushes.length, 1);
+});
+
+test('хаб: отозванный ключ отключает компьютер', async () => {
+  const { hub } = setup();
+  const laptop = fakeSocket();
+  laptop.close = function close(code) { this.closedWith = code; };
+  const phone = fakeSocket();
+  hub.deviceConnected('u1', 'L', { role: 'laptop' }, laptop);
+  hub.clientConnected('u1', phone);
+  await hub.deviceMessage('u1', 'L', laptopSnapshot());
+  hub.disconnectToken('u1', 'L');
+  assert.equal(laptop.closedWith, 4401);
+  assert.deepEqual(hub.onlineTokenIds('u1'), []);
+  await tick();
+  assert.equal(phone.last('ara.state').agents.length, 0);
 });

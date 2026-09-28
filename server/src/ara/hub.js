@@ -17,6 +17,7 @@ import {
 
 const OPEN = 1;
 const PUSH_COOLDOWN_MS = 20_000;
+const CLIENT_ALIVE_MS = 40_000;
 
 function emit(socket, event) {
   if (!socket || (socket.readyState !== undefined && socket.readyState !== OPEN)) return false;
@@ -43,7 +44,9 @@ const text = (value, max) => (typeof value === 'string' ? value.slice(0, max) : 
  */
 export function createHub(deps = {}) {
   const now = deps.now || Date.now;
-  const timeouts = { command: 20_000, file: 120_000, ask: 180_000, upload: 120_000, ...(deps.timeouts || {}) };
+  // Больше, чем ждёт сам ara-link (ara-pc по ssh до 40 с), иначе команда выполнится,
+  // а телефон покажет ошибку и человек повторит (например, два терминала при запуске).
+  const timeouts = { command: 45_000, launch: 60_000, file: 120_000, ask: 180_000, upload: 120_000, ...(deps.timeouts || {}) };
   const users = new Map();
   const pending = new Map();
   let seq = 0;
@@ -163,8 +166,9 @@ export function createHub(deps = {}) {
 
   function maybePush(u, userId, transition) {
     const key = transition.agent.key;
-    // Экран этого агента открыт на телефоне — человек и так видит.
-    for (const client of u.clients.values()) if (client.watch === key) return;
+    // Экран этого агента открыт на телефоне, и телефон жив (пингует) — человек и так видит.
+    // Уснувший телефон с открытым экраном перестаёт пинговать, и push уходит.
+    for (const client of u.clients.values()) if (client.watch === key && now() - client.at < CLIENT_ALIVE_MS) return;
     const last = u.lastPush.get(key) || 0;
     if (now() - last < PUSH_COOLDOWN_MS) return;
     u.lastPush.set(key, now());
@@ -300,7 +304,7 @@ export function createHub(deps = {}) {
 
   function clientConnected(userId, socket) {
     const u = user(userId);
-    u.clients.set(socket, { watch: null });
+    u.clients.set(socket, { watch: null, at: now() });
     emit(socket, stateMessage(u));
     for (const tokenId of u.hosts.keys()) sendToHost(u, tokenId, { type: 'presence', phoneOnline: true });
   }
@@ -323,6 +327,8 @@ export function createHub(deps = {}) {
     const u = user(userId);
     const client = u.clients.get(socket);
     if (!client || !msg || typeof msg.type !== 'string') return;
+    client.at = now();
+    if (msg.type === 'ping') return;
     const entry = { socket, reqId: msg.reqId ?? null, kind: 'command' };
     const key = text(msg.agentKey, 200);
     const item = key ? findItem(u, key) : null;
@@ -366,7 +372,7 @@ export function createHub(deps = {}) {
           dir: text(msg.dir, 400),
           task: text(msg.task, 20_000),
           model: text(msg.model, 80),
-        }, entry);
+        }, { ...entry, kind: 'launch' });
         return;
       }
       case 'ara.ask': {
@@ -390,7 +396,9 @@ export function createHub(deps = {}) {
           return;
         }
         const target = key ? u.merged.hostOf.get(key) : pickAskHost(hostList(u));
-        const cached = deps.blobs?.bySourcePath(userId, `${target}:${path}`);
+        const scope = key || `chat:${text(msg.chatId, 80)}`;
+        // Кеш — только в той же переписке: компьютер проверял путь именно для неё
+        const cached = deps.blobs?.bySourcePath(userId, `${target}:${scope}:${path}`);
         if (cached) {
           emit(socket, { type: 'ara.result', reqId: entry.reqId, ok: true, ...blobInfo(cached) });
           return;
@@ -400,7 +408,7 @@ export function createHub(deps = {}) {
           path,
           agentKey: key || null,
           chatId: text(msg.chatId, 80) || null,
-        }, { ...entry, kind: 'file', path });
+        }, { ...entry, kind: 'file', path, scope });
         return;
       }
       default:
@@ -416,9 +424,12 @@ export function createHub(deps = {}) {
   /** Компьютер загружает файл по запросу ara.file. Вернёт запись, если запрос ждёт. */
   function pendingFile(userId, tokenId, id) {
     const entry = pending.get(String(id || ''));
-    if (!entry || entry.kind !== 'file' || entry.userId !== userId || entry.tokenId !== tokenId) return null;
-    arm(id); // большой файл может идти долго — не обрываем по таймеру, пока идёт загрузка
-    return { id, path: entry.path, source: `${tokenId}:${entry.path}` };
+    if (!entry || entry.kind !== 'file' || entry.uploading || entry.userId !== userId || entry.tokenId !== tokenId) return null;
+    // Большое видео может грузиться долго — пока идёт загрузка, таймер не нужен:
+    // закончится либо fileReady, либо fileFailed из HTTP-маршрута.
+    clearTimeout(entry.timer);
+    entry.uploading = true;
+    return { id, path: entry.path, source: `${tokenId}:${entry.scope}:${entry.path}` };
   }
 
   function fileReady(id, blob) {
@@ -447,6 +458,20 @@ export function createHub(deps = {}) {
     });
   }
 
+  /** Ключ удалён или перевыпущен — закрыть соединения этого компьютера. */
+  function disconnectToken(userId, tokenId) {
+    const host = users.get(userId)?.hosts.get(tokenId);
+    if (!host) return;
+    for (const socket of [...host.sockets]) {
+      try {
+        socket.close(4401, 'token revoked');
+      } catch {
+        /* уже закрыт */
+      }
+      deviceDisconnected(userId, tokenId, socket);
+    }
+  }
+
   function onlineTokenIds(userId) {
     return [...(users.get(userId)?.hosts.keys() || [])];
   }
@@ -463,6 +488,7 @@ export function createHub(deps = {}) {
     fileFailed,
     deliverUpload,
     onlineTokenIds,
+    disconnectToken,
     // для тестов
     _users: users,
     _pending: pending,

@@ -13,7 +13,16 @@ import deviceRoutes from './routes/devices.js';
 import pushRoutes from './routes/push.js';
 import relayRoutes from './routes/relay.js';
 
-const app = Fastify({ logger: true, bodyLimit: 25 * 1024 * 1024 });
+// В журнал не пишем ключи и JWT из query (?token=…)
+const redact = (url) => String(url || '').replace(/([?&](?:token|t)=)[^&]*/g, '$1***');
+const app = Fastify({
+  logger: {
+    serializers: {
+      req: (req) => ({ method: req.method, url: redact(req.url), hostname: req.hostname, remoteAddress: req.ip }),
+    },
+  },
+  bodyLimit: 25 * 1024 * 1024,
+});
 
 await app.register(cors, { origin: true });
 await app.register(jwt, { secret: config.jwtSecret });

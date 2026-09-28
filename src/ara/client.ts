@@ -56,10 +56,21 @@ class AraClient {
     this.token = token;
     this.connect();
     this.appStateSub = AppState.addEventListener('change', (next) => {
-      if (next !== 'active' || !this.token) return;
+      if (!this.token) return;
+      if (next === 'background') {
+        // Экран агента на заблокированном телефоне не должен глушить push про него
+        this.send({ type: 'ara.unsubscribe' });
+        return;
+      }
+      if (next !== 'active') return;
       // После фона iOS мог тихо убить сокет — проверяем сразу, а не ждём пинга
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN || Date.now() - this.lastMessageAt > 30_000) this.reconnectNow();
-      else this.send({ type: 'ara.refresh' });
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN || Date.now() - this.lastMessageAt > 30_000) {
+        this.reconnectNow();
+        return;
+      }
+      const watch = this.watchers[this.watchers.length - 1];
+      if (watch) this.send({ type: 'ara.subscribe', agentKey: watch });
+      this.send({ type: 'ara.refresh' });
     });
   }
 
@@ -84,6 +95,10 @@ class AraClient {
     const ws = this.ws;
     this.ws = null;
     ws?.close();
+    // onclose старого сокета уже не сработает (this.ws сменился) — завершаем ожидания здесь
+    if (this.pingTimer) clearInterval(this.pingTimer);
+    this.pingTimer = null;
+    this.failAll('Связь с сервером прервалась');
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retry = 0;
     this.connect();
@@ -246,7 +261,8 @@ class AraClient {
 
   // ---------- команды ----------
 
-  request<T = Record<string, unknown>>(msg: Record<string, unknown>, timeoutMs = 30_000): Promise<T> {
+  // Чуть дольше серверного таймаута (45 с), чтобы ошибку сформулировал сервер
+  request<T = Record<string, unknown>>(msg: Record<string, unknown>, timeoutMs = 50_000): Promise<T> {
     return new Promise((resolve, reject) => {
       const reqId = nextId();
       if (!this.send({ ...msg, reqId })) {
@@ -274,7 +290,7 @@ class AraClient {
   }
 
   launch(params: { device: string; agent: string; dir: string; task: string; model?: string }) {
-    return this.request({ type: 'ara.launch', ...params }, 45_000);
+    return this.request({ type: 'ara.launch', ...params }, 65_000);
   }
 
   private armAsk(reqId: string) {
@@ -308,7 +324,8 @@ class AraClient {
     const cacheKey = `${'agentKey' in scope ? scope.agentKey : scope.chatId}\n${path}`;
     const cached = this.files.get(cacheKey);
     if (cached) return cached;
-    const promise = this.request<RemoteFile>({ type: 'ara.file', path, ...scope }, 150_000).then((res) => ({
+    // Большое видео сначала целиком грузится с компьютера на сервер
+    const promise = this.request<RemoteFile>({ type: 'ara.file', path, ...scope }, 15 * 60_000).then((res) => ({
       url: `${API_URL}${res.url}`,
       mime: res.mime,
       name: res.name,

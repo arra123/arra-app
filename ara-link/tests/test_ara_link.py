@@ -50,6 +50,7 @@ open(__import__('os').environ['HOME'] + '/ask.json', 'w').write(sys.argv[1])
 print(json.dumps({"t": "delta", "text": "При"}), flush=True)
 print(json.dumps({"t": "action", "kind": "agent", "text": "Передала задачу"}), flush=True)
 print(json.dumps({"t": "delta", "text": "вет, " + p["style"]}), flush=True)
+print(json.dumps({"t": "delta", "text": " Вот кадр: /home/answer.png"}), flush=True)
 print(json.dumps({"t": "done"}), flush=True)
 """,
     ".local/bin/agent-telegram-bridge": r"""#!/bin/sh
@@ -244,6 +245,7 @@ class AraLinkTest(unittest.IsolatedAsyncioTestCase):
         first = await self.expect("ara.ask.delta")
         action = await self.expect("ara.ask.action")
         second = await self.expect("ara.ask.delta")
+        await self.expect("ara.ask.delta")
         await self.expect("ara.ask.done")
         self.assertEqual(first["text"] + second["text"], "Привет, talk")
         self.assertEqual(action["action"]["text"], "Передала задачу")
@@ -251,9 +253,10 @@ class AraLinkTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent["name"], "Ара")
         self.assertEqual(sent["model"], "haiku")
         self.assertEqual(sent["history"], [{"role": "user", "text": "ранее"}])
-        # путь из вопроса к Аре теперь можно запросить
-        self.assertTrue(self.link.path_allowed("/home/v.mp4", None, "c1"))
-        self.assertFalse(self.link.path_allowed("/home/v.mp4", None, "c2"))
+        # путь из ответа Ары можно запросить, из вопроса телефона — нет
+        self.assertTrue(self.link.path_allowed("/home/answer.png", None, "c1"))
+        self.assertFalse(self.link.path_allowed("/home/answer.png", None, "c2"))
+        self.assertFalse(self.link.path_allowed("/home/v.mp4", None, "c1"))
 
     async def test_files(self):
         await self.expect("ara.snapshot")
@@ -276,6 +279,12 @@ class AraLinkTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(denied["ok"])
         self.assertIn("не упоминается", denied["error"])
 
+        # Упоминание в тексте пользователя не даёт доступа; симлинк на не-медиа тоже
+        self.assertFalse(self.link.path_allowed(str(self.home / "t.jsonl"), key, None))
+        (self.home / "clip.mp4").symlink_to(self.home / "secret.txt")
+        self.assertFalse(self.link.path_allowed(str(self.home / "clip.mp4"), key, None))
+        (self.home / "clip.mp4").unlink()
+
         await self.command({"type": "ara.file", "reqId": "f3", "agentKey": key, "path": str(self.home / "clip.mp4")})
         missing = await self.expect("ara.result", lambda m: m["reqId"] == "f3")
         self.assertEqual(missing["error"], "Файл не найден")
@@ -292,6 +301,17 @@ class AraLinkTest(unittest.IsolatedAsyncioTestCase):
         pc = await self.expect("ara.result", lambda m: m["reqId"] == "u2")
         self.assertFalse(pc["ok"])
         self.assertIn("pcSsh", pc["error"])
+
+
+class FitTranscriptTest(unittest.TestCase):
+    def test_huge_transcript_is_trimmed(self):
+        big = {"messages": [{"role": "assistant", "text": "x" * 100_000} for _ in range(160)], "plan": []}
+        fitted = ara_link.fit_transcript(big)
+        size = len(json.dumps(fitted, ensure_ascii=False).encode())
+        self.assertLess(size, ara_link.MAX_TRANSCRIPT_BYTES)
+        self.assertTrue(fitted["messages"][-1]["text"].endswith("(обрезано)"))
+        small = {"messages": [{"role": "user", "text": "hi"}]}
+        self.assertIs(ara_link.fit_transcript(small), small)
 
 
 if __name__ == "__main__":

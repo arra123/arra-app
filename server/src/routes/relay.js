@@ -1,4 +1,5 @@
 import { hub } from '../ara/instance.js';
+import { keepAlive } from '../ara/keepalive.js';
 
 /**
  * WS-канал приложения (телефон). Авторизация: JWT в query (?token=<jwt>),
@@ -20,13 +21,13 @@ export default async function relayRoutes(app) {
     }
 
     hub.clientConnected(userId, socket);
+    keepAlive(socket);
 
     socket.on('message', (raw) => {
       let msg;
       try { msg = JSON.parse(raw.toString()); } catch { return; }
       if (msg?.type === 'ping') {
         try { socket.send(JSON.stringify({ type: 'pong' })); } catch {}
-        return;
       }
       hub.clientMessage(userId, socket, msg);
     });
