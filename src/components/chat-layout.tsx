@@ -2,7 +2,7 @@ import { router } from 'expo-router';
 import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { FlatList, StyleSheet, View, type ListRenderItem } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
-import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useDerivedValue, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Glass, IconButton } from '@/components/ui';
@@ -26,6 +26,11 @@ type Props<T> = {
   back?: boolean;
   /** Место над шапкой под чужую панель (шапка главного экрана) */
   headerTop?: number;
+  /**
+   * Поверх ленты (плавающий агент): top — нижний край шапки,
+   * bottom — сколько снизу занимает поле ввода вместе с клавиатурой.
+   */
+  overlay?: (bounds: { top: number; bottom: SharedValue<number> }) => ReactNode;
 };
 
 /** Какие ключи появились после первой загрузки — только они въезжают анимацией. */
@@ -48,7 +53,7 @@ export function useFreshKeys(keys: string[]) {
  * перевёрнутая лента (новое внизу, открывается на последнем сообщении),
  * поле ввода прилипает к клавиатуре, свайп от края — назад.
  */
-export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, composer, empty, back = true, headerTop = 0 }: Props<T>) {
+export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, composer, empty, back = true, headerTop = 0, overlay }: Props<T>) {
   const insets = useSafeAreaInsets();
   const [headerHeight, setHeaderHeight] = useState(insets.top + 56);
   const composerHeight = useSharedValue(90);
@@ -63,6 +68,8 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
   const emptyLift = useAnimatedStyle(() => ({
     paddingBottom: composerHeight.get() + Math.max(0, -keyboard.height.get() - bottomInset) + 16,
   }));
+
+  const occupiedBottom = useDerivedValue(() => composerHeight.get() + Math.max(0, -keyboard.height.get() - bottomInset));
 
   const reversed = [...data].reverse();
 
@@ -100,6 +107,8 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
           {below ? <View style={styles.below}>{below}</View> : null}
         </Glass>
       </View>
+
+      {overlay ? overlay({ top: headerHeight, bottom: occupiedBottom }) : null}
 
       <KeyboardStickyView offset={{ closed: 0, opened: bottomInset }} style={styles.composer}>
         {composer((h) => composerHeight.set(h))}

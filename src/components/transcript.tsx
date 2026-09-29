@@ -39,8 +39,8 @@ function PlanIcon({ status }: { status: PlanItem['status'] }) {
 }
 
 /** План: по умолчанию одна тонкая строка «План ▬▬ 8/9 ›», по тапу — чек-лист. */
-export function PlanCard({ plan }: { plan: PlanItem[] }) {
-  const [open, setOpen] = useState(false);
+export function PlanCard({ plan, initiallyOpen = false }: { plan: PlanItem[]; initiallyOpen?: boolean }) {
+  const [open, setOpen] = useState(initiallyOpen);
   const done = plan.filter((p) => p.status === 'completed').length;
   const progress = plan.length ? done / plan.length : 0;
   const bar = useAnimatedStyle(() => ({ transform: [{ scaleX: withTiming(progress, { duration: 500 }) }] }));

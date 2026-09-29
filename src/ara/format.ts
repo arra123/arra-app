@@ -96,6 +96,14 @@ export function limitColor(percent: number | undefined): string {
   return Colors.textSecondary;
 }
 
+/** Цвет заливки индикатора: зелёный — запас есть, жёлтый — больше 60%, красный — почти всё. */
+export function limitTint(percent: number | undefined): string {
+  if (percent == null) return Colors.textSecondary;
+  if (percent >= 85) return Colors.error;
+  if (percent >= 60) return Colors.waiting;
+  return Colors.success;
+}
+
 /** Лимит подписки для агента: Claude общий, Codex — того устройства, где агент. */
 export function limitFor(limits: Limits | null, agent: AgentKind, device: DeviceId): Limit | null {
   if (!limits) return null;

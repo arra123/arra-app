@@ -8,17 +8,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { confirmCloseAgent, stopAgent } from '@/ara/actions';
 import { ara } from '@/ara/client';
-import { DEVICE_META, limitFor, modelLabel, shortAgo, STATE_META, statusLine } from '@/ara/format';
+import { awaitedHelper, currentActivity, DEVICE_META, limitFor, modelLabel, shortAgo } from '@/ara/format';
 import { useAgentItem, useAra, useNow, useTranscript } from '@/ara/hooks';
 import type { TranscriptMessage } from '@/ara/types';
 import { uploadPhoto } from '@/ara/upload';
-import { HelpersStrip, NeedsCard, QuestionCard } from '@/components/agent-cards';
+import { NeedsCard, QuestionCard } from '@/components/agent-cards';
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { Composer } from '@/components/composer';
-import { LimitsInline } from '@/components/limits';
+import { FloatingAgent } from '@/components/floating-agent';
+import { WeekRing } from '@/components/limits';
 import { MenuTrigger, type MenuItem, type MenuSection } from '@/components/glass-menu';
 import { PlanCard, TranscriptRow, UserBubble } from '@/components/transcript';
-import { Glass, Press, ProjectIcon, Spinner, StatusDot, T } from '@/components/ui';
+import { Glass, Press, ProjectIcon, Spinner, T } from '@/components/ui';
 import { Colors, Radius } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -154,7 +155,9 @@ export default function AgentScreen() {
   if (tools.length) menu.push(tools);
   if (agent) menu.push([{ label: 'Закрыть терминал', icon: 'xmark', destructive: true, onPress: () => confirmCloseAgent(agent) }]);
 
-  const state = agent?.state;
+  // Чем занят сейчас — хвостом подзаголовка, только пока работает
+  const helper = agent?.state === 'working' ? awaitedHelper(agent, transcript, now) : null;
+  const doing = agent?.state !== 'working' ? '' : helper ? `ждёт помощника` : currentActivity(agent, transcript);
 
   const title = (
     <View style={styles.title}>
@@ -164,7 +167,9 @@ export default function AgentScreen() {
         {item ? (
           <View style={styles.subtitle}>
             <SymbolView name={DEVICE_META[item.device].icon} size={12} tintColor={Colors.textSecondary} accessibilityLabel={DEVICE_META[item.device].label} />
-            {agent?.ws != null ? <T v="caption" color={Colors.textSecondary}>стол {agent.ws}</T> : null}
+            <T v="caption" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>
+              {[agent?.ws != null ? `стол ${agent.ws}` : '', doing].filter(Boolean).join(' · ')}
+            </T>
           </View>
         ) : (
           <T v="caption" color={Colors.textSecondary} numberOfLines={1}>ищу агента…</T>
@@ -173,22 +178,38 @@ export default function AgentScreen() {
     </View>
   );
 
-  // Справа только статус коротко: сколько ждёт (жёлтым) или сколько работает (с дугой)
+  // Справа коротко статус (одно место): «ждёт · 3 мин» жёлтым или дуга и время работы,
+  // рядом кольцо недельного лимита (Claude или Codex этого устройства)
   const workFrom = transcript?.lastUser ? transcript.lastUser * 1000 : agent?.since;
-  const shortStatus = !agent ? null : agent.state === 'waiting' ? (
-    <T v="footnote" weight="600" color={Colors.waiting}>{agent.since ? shortAgo(now - agent.since) : 'ждёт'}</T>
+  const doneAt = transcript?.last ? transcript.last * 1000 : agent?.since;
+  const shortStatus = !agent ? null : stopping ? (
+    <T v="footnote" color={Colors.textSecondary}>стоп…</T>
+  ) : agent.state === 'waiting' ? (
+    <T v="footnote" weight="600" color={Colors.waiting} numberOfLines={1}>
+      {doneAt ? `ждёт · ${shortAgo(now - doneAt)}` : 'ждёт ответа'}
+    </T>
   ) : agent.state === 'working' ? (
     <View style={styles.shortStatus}>
       <Spinner size={12} />
-      {workFrom ? <T v="footnote" color={Colors.textSecondary}>{shortAgo(now - workFrom)}</T> : null}
+      {workFrom ? <T v="footnote" color={Colors.textSecondary} numberOfLines={1}>{shortAgo(now - workFrom)}</T> : null}
     </View>
   ) : agent.state === 'error' ? (
-    <T v="footnote" color={Colors.error}>прервался</T>
+    <T v="footnote" weight="600" color={Colors.error}>прервался</T>
+  ) : doneAt ? (
+    <T v="footnote" color={Colors.textSecondary} numberOfLines={1}>{shortAgo(now - doneAt)} назад</T>
   ) : null;
 
   const right = (
     <View style={styles.right}>
-      {shortStatus}
+      {shortStatus ? (
+        <Animated.View key={`${agent?.state}:${stopping}`} entering={FadeIn.duration(250)}>{shortStatus}</Animated.View>
+      ) : null}
+      {item ? (
+        <WeekRing
+          title={item.agent === 'claude' ? 'Claude' : `Codex ${item.device === 'pc' ? 'ПК' : 'ноутбук'}`}
+          limit={limitFor(limits, item.agent, item.device)}
+        />
+      ) : null}
       {menu.length ? (
         <MenuTrigger label="Модель и действия" sections={menu}>
           <Glass radius={18} style={styles.more}>
@@ -199,25 +220,8 @@ export default function AgentScreen() {
     </View>
   );
 
-  const below = (
-    <>
-      <Animated.View key={state || 'none'} entering={FadeIn.duration(250)} style={styles.status}>
-        {state ? <StatusDot state={state} /> : <View style={[styles.dotOff]} />}
-        <T v="footnote" color={state ? Colors.text : Colors.textSecondary} numberOfLines={1} style={{ flex: 1 }}>
-          {statusLine(agent, transcript, now)}
-        </T>
-        {state ? <T v="caption" color={STATE_META[state].color}>{stopping ? 'останавливаю…' : ''}</T> : null}
-      </Animated.View>
-      {item ? (
-        <LimitsInline
-          title={item.agent === 'claude' ? 'Claude' : `Codex ${item.device === 'pc' ? 'ПК' : 'ноутбук'}`}
-          limit={limitFor(limits, item.agent, item.device)}
-        />
-      ) : null}
-      {agent ? <HelpersStrip helpers={helpers} /> : null}
-      {plan.length ? <PlanCard plan={plan} /> : null}
-    </>
-  );
+  // План и помощники — у плавающего агентика (тап — подробности); у закрытой сессии план в шапке
+  const below = !agent && plan.length ? <PlanCard plan={plan} /> : null;
 
   const scope = { agentKey: key };
   const loading = !transcript && !!item;
@@ -227,6 +231,11 @@ export default function AgentScreen() {
       title={title}
       right={right}
       below={below}
+      overlay={({ top, bottom }) =>
+        agent ? (
+          <FloatingAgent agent={agent} transcript={transcript} plan={plan} helpers={helpers} now={now} stopping={stopping} top={top} bottom={bottom} />
+        ) : null
+      }
       data={rows}
       keyOf={(row) => row.key}
       renderItem={({ item: row }) =>
@@ -291,11 +300,9 @@ function ClosedBar({ onHeight, onNew }: { onHeight: (h: number) => void; onNew?:
 const styles = StyleSheet.create({
   title: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   subtitle: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 1 },
-  right: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  right: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 0 },
   shortStatus: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   more: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  status: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  dotOff: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.old },
   pendingRow: { paddingHorizontal: 16, paddingVertical: 7 },
   empty: { alignItems: 'center' },
   // Непрозрачная подложка: лента не просвечивает между карточками

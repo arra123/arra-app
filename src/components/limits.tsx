@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { limitColor, resetLabel } from '@/ara/format';
+import { limitColor, limitTint, resetLabel } from '@/ara/format';
 import type { Limit, Limits } from '@/ara/types';
 import { Appear } from '@/components/glass-menu';
 import { Press, T } from '@/components/ui';
@@ -14,7 +14,7 @@ const clamp = (n: number) => Math.max(0, Math.min(100, n));
 function Bar({ percent, width = 28 }: { percent: number; width?: number }) {
   return (
     <View style={[styles.track, { width }]}>
-      <View style={[styles.fill, { width: `${clamp(percent)}%`, backgroundColor: limitColor(percent) }]} />
+      <View style={[styles.fill, { width: `${clamp(percent)}%`, backgroundColor: limitTint(percent) }]} />
     </View>
   );
 }
@@ -86,6 +86,54 @@ function LimitSheet({ title, limit, onClose }: { title: string; limit: Limit | n
   );
 }
 
+/**
+ * Кольцо с процентом: дуга заполняется по значению (две половинки,
+ * каждая — круг с цветной верхней и правой границей, повёрнутый и обрезанный).
+ */
+export function Ring({ percent, size = 30, stroke = 3, color }: { percent: number; size?: number; stroke?: number; color: string }) {
+  const deg = (clamp(percent) / 100) * 360;
+  const right = Math.min(deg, 180);
+  const left = Math.max(0, deg - 180);
+  const half = size / 2;
+  const arc = { width: size, height: size, borderRadius: half, borderWidth: stroke, position: 'absolute' as const, top: 0 };
+  const colored = { borderTopColor: color, borderRightColor: color, borderBottomColor: 'transparent', borderLeftColor: 'transparent' };
+  return (
+    <View style={{ width: size, height: size }}>
+      <View style={[arc, { left: 0, borderColor: Colors.separator }]} />
+      {right > 0 ? (
+        <View style={[styles.clip, { left: half, width: half, height: size }]}>
+          <View style={[arc, colored, { left: -half, transform: [{ rotate: `${right - 135}deg` }] }]} />
+        </View>
+      ) : null}
+      {left > 0 ? (
+        <View style={[styles.clip, { left: 0, width: half, height: size }]}>
+          <View style={[arc, colored, { left: 0, transform: [{ rotate: `${left + 45}deg` }] }]} />
+        </View>
+      ) : null}
+      <View style={[StyleSheet.absoluteFill, styles.ringLabel]}>
+        <T v="tiny" weight="700" color={Colors.text} maxFontSizeMultiplier={1} style={{ fontSize: size * 0.33, lineHeight: size * 0.4, fontVariant: ['tabular-nums'] }}>
+          {Math.round(clamp(percent))}
+        </T>
+      </View>
+    </View>
+  );
+}
+
+/** Недельный лимит одним кольцом с процентом (шапка агента); тап — подробности. */
+export function WeekRing({ title, limit }: { title: string; limit: Limit | null }) {
+  const [open, setOpen] = useState(false);
+  if (limit?.week == null) return null;
+  const pct = Math.round(limit.week);
+  return (
+    <>
+      <Press onPress={() => setOpen(true)} feedback="select" scaleTo={0.92} hitSlop={8} accessibilityLabel={`Недельный лимит ${title}: ${pct}%`}>
+        <Ring percent={limit.week} color={limitTint(limit.week)} />
+      </Press>
+      {open ? <LimitSheet title={title} limit={limit} onClose={() => setOpen(false)} /> : null}
+    </>
+  );
+}
+
 /** Компактные лимиты в шапке; тап — подробности. */
 export function LimitsInline({ title, limit, v = 'caption' }: { title: string; limit: Limit | null; v?: 'caption' | 'tiny' }) {
   const [open, setOpen] = useState(false);
@@ -137,6 +185,8 @@ export function LimitsSection({ limits }: { limits: Limits | null }) {
 }
 
 const styles = StyleSheet.create({
+  clip: { position: 'absolute', top: 0, overflow: 'hidden' },
+  ringLabel: { alignItems: 'center', justifyContent: 'center' },
   track: { height: 3, borderRadius: 2, backgroundColor: Colors.separator, overflow: 'hidden' },
   fill: { height: 3, borderRadius: 2 },
   meter: { flexDirection: 'row', alignItems: 'center', gap: 5 },

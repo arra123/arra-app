@@ -1,9 +1,3 @@
-import {
-  RecordingPresets,
-  requestRecordingPermissionsAsync,
-  setAudioModeAsync,
-  useAudioRecorder,
-} from 'expo-audio';
 import { Image } from 'expo-image';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
@@ -12,23 +6,20 @@ import { SymbolView } from 'expo-symbols';
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import Animated, {
-  cancelAnimation,
   FadeIn,
   FadeOut,
   useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSequence,
-  withTiming,
   ZoomIn,
   ZoomOut,
+  type SharedValue,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { transcribe, type LocalPhoto } from '@/ara/upload';
+import type { LocalPhoto } from '@/ara/upload';
 import { MenuTrigger } from '@/components/glass-menu';
-import { Glass, IconButton, Press, T } from '@/components/ui';
+import { Glass, Press, T } from '@/components/ui';
 import { Colors, Radius, Type } from '@/constants/theme';
+import { useDictation } from '@/lib/dictation';
 import { haptic } from '@/lib/haptics';
 
 type Props = {
@@ -57,14 +48,13 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
   const [text, setText] = useState('');
   const [photos, setPhotos] = useState<LocalPhoto[]>([]);
   const [sending, setSending] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const [recordStart, setRecordStart] = useState(0);
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const dictation = useDictation(text, setText);
+  const listening = dictation.mode === 'live' || dictation.mode === 'record';
+  const transcribing = dictation.mode === 'transcribing';
   const ownInput = useRef<TextInput>(null);
   const input = inputRef ?? ownInput;
 
-  const canSend = !disabled && !sending && (text.trim().length > 0 || photos.length > 0);
+  const canSend = !disabled && !sending && !listening && !transcribing && (text.trim().length > 0 || photos.length > 0);
 
   async function send() {
     if (!canSend) return;
@@ -154,49 +144,6 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
     }
   }
 
-  async function toggleDictation() {
-    if (transcribing) return;
-    if (!recording) {
-      const perm = await requestRecordingPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Нет доступа к микрофону', 'Разреши микрофон для «Ары» в Настройках.', [
-          { text: 'Настройки', onPress: () => Linking.openSettings() },
-          { text: 'OK', style: 'cancel' },
-        ]);
-        return;
-      }
-      try {
-        await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-        await recorder.prepareToRecordAsync();
-        recorder.record();
-        setRecordStart(Date.now());
-        setRecording(true);
-        haptic.press();
-      } catch (error: any) {
-        Alert.alert('Запись не началась', error?.message || '');
-      }
-      return;
-    }
-    setRecording(false);
-    setTranscribing(true);
-    haptic.tap();
-    try {
-      await recorder.stop();
-      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
-      const uri = recorder.uri;
-      if (!uri) throw new Error('Запись пустая');
-      const heard = await transcribe(uri);
-      if (heard) {
-        setText((current) => (current.trim() ? `${current.trimEnd()} ${heard}` : heard));
-        haptic.success();
-      }
-    } catch (error: any) {
-      Alert.alert('Не расслышала', error?.message || 'Попробуй ещё раз');
-    } finally {
-      setTranscribing(false);
-    }
-  }
-
   return (
     <View
       style={[styles.outer, { paddingBottom: Math.max(insets.bottom, 10) }]}
@@ -219,24 +166,21 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
           </ScrollView>
         ) : null}
 
-        {recording ? (
-          <RecordingBar since={recordStart} />
-        ) : (
-          <TextInput
-            ref={input}
-            value={text}
-            onChangeText={setText}
-            placeholder={transcribing ? 'Расшифровываю…' : placeholder}
-            placeholderTextColor={Colors.textTertiary}
-            style={styles.input}
-            multiline
-            autoFocus={autoFocus}
-            keyboardAppearance="dark"
-            selectionColor={Colors.text}
-            maxFontSizeMultiplier={1.5}
-            accessibilityLabel={placeholder}
-          />
-        )}
+        <TextInput
+          ref={input}
+          value={text}
+          onChangeText={setText}
+          editable={!listening}
+          placeholder={dictation.mode === 'live' ? 'Говори — текст появится здесь' : dictation.mode === 'record' ? 'Слушаю… нажми ■, чтобы расшифровать' : transcribing ? 'Расшифровываю…' : placeholder}
+          placeholderTextColor={Colors.textTertiary}
+          style={styles.input}
+          multiline
+          autoFocus={autoFocus}
+          keyboardAppearance="dark"
+          selectionColor={Colors.text}
+          maxFontSizeMultiplier={1.5}
+          accessibilityLabel={placeholder}
+        />
 
         <View style={styles.toolbar}>
           <MenuTrigger
@@ -247,73 +191,86 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
               { label: 'Снять камерой', icon: 'camera', onPress: () => pick(true) },
             ]]}>
             <View style={styles.tool}>
-              <SymbolView name="plus" size={19} tintColor={Colors.textSecondary} weight="semibold" />
+              <View style={styles.plusCircle}>
+                <SymbolView name={{ ios: 'plus', android: 'add', web: 'add' }} size={17} tintColor={Colors.text} weight="semibold" />
+              </View>
             </View>
           </MenuTrigger>
-          <Press onPress={attachLatest} feedback="none" accessibilityLabel="Прикрепить последнее фото" style={styles.tool} hitSlop={6}>
+          <Press onPress={attachLatest} feedback="none" accessibilityLabel="Прикрепить последнее фото" style={styles.tool}>
             {grabbing ? (
               <ActivityIndicator size="small" color={Colors.textSecondary} />
             ) : (
-              <SymbolView name="photo.badge.arrow.down" size={19} tintColor={Colors.textSecondary} weight="regular" />
+              <SymbolView name={{ ios: 'photo', android: 'photo', web: 'photo' }} size={23} tintColor={Colors.textSecondary} weight="regular" />
             )}
           </Press>
-          <Press onPress={toggleDictation} feedback="none" accessibilityLabel={recording ? 'Остановить диктовку' : 'Диктовка'} style={styles.tool} hitSlop={6}>
+          <Press
+            onPress={dictation.toggle}
+            feedback="none"
+            accessibilityLabel={listening ? 'Остановить диктовку' : 'Диктовка'}
+            style={styles.tool}>
             {transcribing ? (
               <ActivityIndicator size="small" color={Colors.textSecondary} />
+            ) : listening ? (
+              <Animated.View entering={ZoomIn.duration(160)} style={styles.micActive}>
+                <SymbolView name={{ ios: 'stop.fill', android: 'stop', web: 'stop' }} size={13} tintColor={Colors.text} weight="bold" />
+              </Animated.View>
             ) : (
-              <SymbolView name={recording ? 'stop.circle.fill' : 'mic'} size={recording ? 22 : 19} tintColor={recording ? Colors.danger : Colors.textSecondary} weight="semibold" />
+              <SymbolView name={{ ios: 'mic', android: 'mic', web: 'mic' }} size={23} tintColor={Colors.textSecondary} weight="regular" />
             )}
           </Press>
-          <View style={{ flex: 1 }} />
+          <View style={styles.middle}>
+            {listening ? <DictationMeter since={dictation.startedAt} level={dictation.level} live={dictation.mode === 'live'} /> : null}
+          </View>
           {accessory}
-          <View style={styles.sendSlot}>
+          <Press onPress={send} disabled={!canSend} feedback="none" accessibilityLabel="Отправить" style={styles.tool}>
             {sending ? (
-              <View style={[styles.send, { backgroundColor: Colors.cardPressed }]}>
-                <ActivityIndicator size="small" color={Colors.text} />
-              </View>
+              <ActivityIndicator size="small" color={Colors.text} />
             ) : (
-              <IconButton
-                icon="arrow.up"
-                label="Отправить"
-                onPress={send}
+              <SymbolView
+                name={{ ios: 'arrow.up.circle.fill', android: 'arrow_circle_up', web: 'arrow_circle_up' }}
                 size={32}
-                disabled={!canSend}
-                background={canSend ? Colors.text : Colors.cardPressed}
-                color={canSend ? Colors.onAccent : Colors.textTertiary}
+                tintColor={canSend ? Colors.text : Colors.textTertiary}
+                weight="regular"
               />
             )}
-          </View>
+          </Press>
         </View>
       </Glass>
     </View>
   );
 }
 
-function RecordingBar({ since }: { since: number }) {
+/** Волна громкости и таймер, пока идёт диктовка. */
+function DictationMeter({ since, level, live }: { since: number; level: SharedValue<number>; live: boolean }) {
   const [now, setNow] = useState(since);
-  const pulse = useSharedValue(0.4);
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 250);
-    pulse.set(withRepeat(withSequence(withTiming(1, { duration: 600 }), withTiming(0.4, { duration: 600 })), -1));
-    return () => {
-      clearInterval(id);
-      cancelAnimation(pulse);
-    };
-  }, [pulse]);
-  const dot = useAnimatedStyle(() => ({ opacity: pulse.get() }));
+    return () => clearInterval(id);
+  }, []);
   const seconds = Math.max(0, Math.floor((now - since) / 1000));
   return (
-    <Animated.View entering={FadeIn.duration(150)} exiting={FadeOut.duration(100)} style={styles.recording}>
-      <Animated.View style={[styles.recDot, dot]} />
-      <T v="callout" color={Colors.text}>{`${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`}</T>
-      <T v="footnote" color={Colors.textSecondary}>Говори — нажми ■, чтобы закончить</T>
+    <Animated.View entering={FadeIn.duration(150)} exiting={FadeOut.duration(100)} style={styles.meter} accessibilityLabel={live ? 'Идёт диктовка' : 'Идёт запись'}>
+      <View style={styles.wave}>
+        {WAVE.map((k, i) => <WaveBar key={i} k={k} level={level} />)}
+      </View>
+      <T v="footnote" color={Colors.textSecondary} style={{ fontVariant: ['tabular-nums'] }}>
+        {`${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`}
+      </T>
     </Animated.View>
   );
 }
 
+/** Высоты полосок волны относительно громкости: выше в середине */
+const WAVE = [0.45, 0.7, 1, 0.8, 0.55, 0.9, 0.6];
+
+function WaveBar({ k, level }: { k: number; level: SharedValue<number> }) {
+  const style = useAnimatedStyle(() => ({ height: 4 + Math.min(1, level.get() * 1.3) * 16 * k }));
+  return <Animated.View style={[styles.waveBar, style]} />;
+}
+
 const styles = StyleSheet.create({
   outer: { paddingHorizontal: 10, paddingTop: 6 },
-  box: { paddingHorizontal: 6, paddingTop: 6, paddingBottom: 6 },
+  box: { paddingHorizontal: 4, paddingTop: 4, paddingBottom: 2 },
   input: {
     color: Colors.text,
     fontSize: Type.body,
@@ -324,11 +281,15 @@ const styles = StyleSheet.create({
     paddingTop: 9,
     paddingBottom: 6,
   },
-  // Все кнопки на одной линии: одна высота, центр по вертикали
-  toolbar: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 2, height: 36 },
-  tool: { width: 38, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 17 },
-  sendSlot: { width: 38, height: 34, alignItems: 'center', justifyContent: 'center' },
-  send: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  // Все кнопки на одной линии: зона касания 44 pt, центр по вертикали
+  toolbar: { flexDirection: 'row', alignItems: 'center', height: 44 },
+  tool: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  plusCircle: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.cardPressed, alignItems: 'center', justifyContent: 'center' },
+  micActive: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.danger, alignItems: 'center', justifyContent: 'center' },
+  middle: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  meter: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  wave: { flexDirection: 'row', alignItems: 'center', gap: 3, height: 22 },
+  waveBar: { width: 3, borderRadius: 2, backgroundColor: Colors.danger },
   photos: { gap: 8, paddingHorizontal: 6, paddingTop: 4, paddingBottom: 4 },
   photo: { width: 62, height: 62, borderRadius: Radius.md, overflow: 'hidden', backgroundColor: Colors.card },
   photoRemove: {
@@ -342,6 +303,4 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  recording: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44, paddingHorizontal: 12 },
-  recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.danger },
 });
