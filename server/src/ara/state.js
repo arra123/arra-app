@@ -26,6 +26,22 @@ export function recentKey(device, id) {
 }
 
 /** Снимок от ara-link → проверенный и обрезанный вид. device — чей это снимок. */
+// subscription limits from ara-limits: only numbers and short strings go through
+function limitsOf(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const pick = (o) => {
+    if (!o || typeof o !== 'object') return null;
+    const out = {};
+    for (const k of ['session', 'sessionReset', 'week', 'weekReset']) if (typeof o[k] === 'number') out[k] = o[k];
+    for (const k of ['email', 'plan']) if (typeof o[k] === 'string') out[k] = o[k].slice(0, 120);
+    if (o.credit && typeof o.credit === 'object') {
+      out.credit = { left: num(o.credit.left), limit: num(o.credit.limit), reset: num(o.credit.reset) };
+    }
+    return out;
+  };
+  return { claude: pick(raw.claude), codex: { laptop: pick(raw.codex?.laptop), pc: pick(raw.codex?.pc) }, at: num(raw.at) };
+}
+
 export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
   const device = normalizeDevice(msg?.device, fallbackDevice);
   const live = [];
@@ -68,7 +84,7 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
       transcript: str(raw.transcript, 600),
     });
   }
-  return { device, live, recent, pcOnline: !!msg?.pcOnline };
+  return { device, live, recent, pcOnline: !!msg?.pcOnline, limits: limitsOf(msg?.limits) };
 }
 
 /**
@@ -114,7 +130,8 @@ export function mergeHosts(hosts) {
   const recentList = [...recent.values()].map((v) => v.item)
     .sort((a, b) => (b.mtime || 0) - (a.mtime || 0))
     .slice(0, 40);
-  return { agents: agentList, recent: recentList, devices, hostOf };
+  const limits = ordered.map((h) => h.snapshot.limits).find(Boolean) ?? null;
+  return { agents: agentList, recent: recentList, devices, hostOf, limits };
 }
 
 /** Устройство, которое выполнит команду для машины device (запуск, ответ Ары). */
@@ -166,6 +183,7 @@ export function publicState(merged, since) {
     })),
     recent: merged.recent,
     devices: merged.devices,
+    limits: merged.limits ?? null,
   };
 }
 

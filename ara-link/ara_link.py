@@ -48,6 +48,7 @@ SCRIPTS = {
     "send": "~/.config/quickshell/ii/modules/ii/notchIsland/scripts/island-agent-send",
     "ask": "~/.config/quickshell/ii/modules/ii/notchIsland/scripts/island-ask",
     "bridge": "~/.local/bin/agent-telegram-bridge",
+    "limits": "~/.config/quickshell/ara/scripts/ara-limits",
 }
 
 DEFAULTS: dict[str, Any] = {
@@ -219,12 +220,18 @@ class AraLink:
         for agent in live:
             agent.setdefault("device", self.device)
         self.sessions = data
+        # subscription limits: the script caches for a minute, ask as rarely
+        if time.monotonic() - getattr(self, "limits_at", -1e9) > 60:
+            self.limits_at = time.monotonic()
+            with contextlib.suppress(Exception):
+                self.limits = await self.run_json([self.script("limits")], timeout=20)
         return {
             "type": "ara.snapshot",
             "device": self.device,
             "live": live,
             "recent": data.get("recent") or [],
             "pcOnline": bool(data.get("pcOnline")) or self.device == "pc",
+            "limits": getattr(self, "limits", None),
         }
 
     async def snapshot_loop(self) -> None:
