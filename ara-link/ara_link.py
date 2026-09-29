@@ -515,6 +515,10 @@ class AraLink:
             raise RuntimeError("Этот файл не упоминается в переписке")
         device = key.split(":")[1] if key and key.count(":") >= 2 else self.device
         limit = int(self.cfg["maxFileMb"]) * 1024 * 1024
+        # ara-pc уже скачивает картинки ПК в ~/.cache/notch-island/pc и подменяет
+        # пути в переписке на локальные: такие файлы берём с диска ноутбука
+        if self.remote(device) and os.path.isfile(path):
+            device = self.device
         if self.remote(device):
             host = self.cfg.get("pcSsh")
             if not host:

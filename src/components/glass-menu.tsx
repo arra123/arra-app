@@ -127,7 +127,9 @@ const styles = StyleSheet.create({
     shadowRadius: 30,
     shadowOffset: { width: 0, height: 12 },
   },
-  glass: { paddingVertical: 4 },
+  // Прозрачное стекло поверх ленты читалось плохо: пункты наезжали на текст.
+  // Под меню — плотная подложка, стекло остаётся сверху для блика.
+  glass: { paddingVertical: 4, backgroundColor: Colors.glassFallback, borderRadius: Radius.lg, overflow: 'hidden' },
   section: { borderTopWidth: 6, borderTopColor: 'rgba(0,0,0,0.25)' },
   item: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, minHeight: 46, paddingVertical: 8 },
   itemBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.separator },
