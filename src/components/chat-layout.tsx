@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
-import { FlatList, StyleSheet, View, type ListRenderItem } from 'react-native';
+import { FlatList, Platform, StyleSheet, View, type ListRenderItem } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Animated, { useAnimatedStyle, useDerivedValue, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -92,7 +92,9 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator
         indicatorStyle="white"
-        maintainVisibleContentPosition={{ minIndexForVisible: 0, autoscrollToTopThreshold: 80 }}
+        // iOS уже удерживает нижний край inverted-списка при движении клавиатуры.
+        // Вторая коррекция слегка подбрасывала сообщения после её закрытия.
+        maintainVisibleContentPosition={Platform.OS === 'ios' ? undefined : { minIndexForVisible: 0, autoscrollToTopThreshold: 80 }}
         initialNumToRender={14}
         windowSize={11}
         removeClippedSubviews={false}

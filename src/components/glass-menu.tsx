@@ -84,12 +84,20 @@ export function GlassMenu({
   const insets = useSafeAreaInsets();
   const { width: screenW, height: screenH } = useWindowDimensions();
   const list = sections.filter((s) => itemsOf(s).length);
+  const [submenu, setSubmenu] = useState<number | null>(null);
+  useEffect(() => {
+    if (!anchor) setSubmenu(null);
+  }, [anchor]);
+  const submenuSection = submenu == null ? null : list[submenu];
+  const submenuItems = submenuSection && !Array.isArray(submenuSection) ? submenuSection.items : [];
 
   let position: ViewStyle = {};
   let below = true;
   if (anchor) {
-    const count = list.reduce((n, s) => n + itemsOf(s).length, 0);
-    const titles = list.filter((s) => titleOf(s)).length;
+    const count = submenuSection
+      ? submenuItems.length + 1
+      : list.reduce((n, s) => n + (!Array.isArray(s) && s.submenu ? 1 : itemsOf(s).length), 0);
+    const titles = submenuSection ? 0 : list.filter((s) => titleOf(s) && (Array.isArray(s) || !s.submenu)).length;
     const estimated = count * ITEM_H + titles * 26 + (list.length - 1) * 8 + 10;
     below = anchor.y + anchor.height + 6 + estimated < screenH - insets.bottom - 8;
     const left = align === 'right'
@@ -106,36 +114,49 @@ export function GlassMenu({
       {anchor ? (
         <Appear from={below ? -5 : 5} style={[styles.menu, position]}>
           <View style={styles.box}>
-            {list.map((section, si) => (
+            {submenuSection && !Array.isArray(submenuSection) ? (
+              <View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Назад к действиям"
+                  onPress={() => {
+                    haptic.select();
+                    setSubmenu(null);
+                  }}
+                  style={({ pressed }) => [styles.item, pressed && styles.pressed]}>
+                  <View style={styles.check}>
+                    <SymbolView name="chevron.left" size={13} tintColor={Colors.textSecondary} weight="semibold" />
+                  </View>
+                  <T v="callout" weight="600" style={{ flex: 1 }}>{submenuSection.title || 'Модель'}</T>
+                </Pressable>
+                {submenuItems.map((item, ii) => (
+                  <MenuRow key={item.label} item={item} border={ii >= 0} onClose={onClose} />
+                ))}
+              </View>
+            ) : list.map((section, si) => (
               <View key={si} style={si > 0 ? styles.section : undefined}>
-                {titleOf(section) ? (
-                  <T v="caption" weight="600" color={Colors.textTertiary} style={styles.title}>{titleOf(section)}</T>
-                ) : null}
-                {itemsOf(section).map((item, ii) => (
+                {!Array.isArray(section) && section.submenu ? (
                   <Pressable
-                    key={item.label}
                     accessibilityRole="menuitem"
-                    accessibilityState={{ checked: item.checked }}
                     onPress={() => {
                       haptic.select();
-                      onClose();
-                      // Меню успевает закрыться, прежде чем откроется следующий экран
-                      setTimeout(item.onPress, 60);
+                      setSubmenu(si);
                     }}
-                    style={({ pressed }) => [styles.item, ii > 0 && styles.itemBorder, pressed && styles.pressed]}>
+                    style={({ pressed }) => [styles.item, pressed && styles.pressed]}>
                     <View style={styles.check}>
-                      {item.checked ? <SymbolView name="checkmark" size={13} tintColor={Colors.text} weight="semibold" /> : null}
+                      {section.icon ? <SymbolView name={section.icon} size={16} tintColor={Colors.textSecondary} /> : null}
                     </View>
                     <View style={{ flex: 1 }}>
-                      <T v="callout" color={item.destructive ? Colors.danger : Colors.text} numberOfLines={1}>{item.label}</T>
-                      {item.subtitle ? <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{item.subtitle}</T> : null}
+                      <T v="callout" numberOfLines={1}>{section.title || 'Модель'}</T>
+                      {section.subtitle ? <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{section.subtitle}</T> : null}
                     </View>
-                    {item.icon ? (
-                      <View style={styles.icon}>
-                        <SymbolView name={item.icon} size={16} weight="regular" tintColor={item.destructive ? Colors.danger : Colors.textSecondary} />
-                      </View>
-                    ) : null}
+                    <SymbolView name="chevron.right" size={13} tintColor={Colors.textTertiary} weight="semibold" />
                   </Pressable>
+                ) : titleOf(section) ? (
+                  <T v="caption" weight="600" color={Colors.textTertiary} style={styles.title}>{titleOf(section)}</T>
+                ) : null}
+                {(!Array.isArray(section) && section.submenu ? [] : itemsOf(section)).map((item, ii) => (
+                  <MenuRow key={item.label} item={item} border={ii > 0} onClose={onClose} />
                 ))}
               </View>
             ))}
@@ -143,6 +164,33 @@ export function GlassMenu({
         </Appear>
       ) : null}
     </Modal>
+  );
+}
+
+function MenuRow({ item, border, onClose }: { item: MenuItem; border: boolean; onClose: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="menuitem"
+      accessibilityState={{ checked: item.checked }}
+      onPress={() => {
+        haptic.select();
+        onClose();
+        setTimeout(item.onPress, 60);
+      }}
+      style={({ pressed }) => [styles.item, border && styles.itemBorder, pressed && styles.pressed]}>
+      <View style={styles.check}>
+        {item.checked ? <SymbolView name="checkmark" size={13} tintColor={Colors.text} weight="semibold" /> : null}
+      </View>
+      <View style={{ flex: 1 }}>
+        <T v="callout" color={item.destructive ? Colors.danger : Colors.text} numberOfLines={1}>{item.label}</T>
+        {item.subtitle ? <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{item.subtitle}</T> : null}
+      </View>
+      {item.icon ? (
+        <View style={styles.icon}>
+          <SymbolView name={item.icon} size={16} weight="regular" tintColor={item.destructive ? Colors.danger : Colors.textSecondary} />
+        </View>
+      ) : null}
+    </Pressable>
   );
 }
 
@@ -157,8 +205,9 @@ export function MenuTrigger(props: {
   align?: 'left' | 'right';
   style?: StyleProp<ViewStyle>;
   label: string;
+  native?: boolean;
 }) {
-  return Platform.OS === 'ios' ? <NativeMenuTrigger {...props} /> : <JsMenuTrigger {...props} />;
+  return Platform.OS === 'ios' && props.native !== false ? <NativeMenuTrigger {...props} /> : <JsMenuTrigger {...props} />;
 }
 
 /**
@@ -171,6 +220,7 @@ function NativeMenuTrigger({ sections, children, align = 'right', style, label }
   align?: 'left' | 'right';
   style?: StyleProp<ViewStyle>;
   label: string;
+  native?: boolean;
 }) {
   const list = sections.filter((s) => itemsOf(s).length);
   const byId = new Map<string, MenuItem>();

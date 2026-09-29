@@ -336,7 +336,7 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, i
                 <Press onPress={() => void send()} disabled={!canSend} feedback="none" style={styles.tool} accessibilityRole="button" accessibilityLabel="Отправить">
                   <Animated.View entering={ZoomIn.duration(140)} style={[styles.whiteCircle, !canSend && { opacity: 0.45 }]}>
                     {sending ? (
-                      <ActivityIndicator size="small" color={Colors.onAccent} />
+                      <SymbolView name={{ ios: 'stop.fill', android: 'stop', web: 'stop' }} size={13} tintColor={Colors.onAccent} />
                     ) : (
                       <SymbolView name={{ ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' }} size={17} tintColor={Colors.onAccent} weight="bold" />
                     )}

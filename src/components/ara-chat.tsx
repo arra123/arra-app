@@ -13,7 +13,6 @@ import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { ChatSidebar } from '@/components/chat-sidebar';
 import { Composer } from '@/components/composer';
 import { MenuTrigger, type MenuSection } from '@/components/glass-menu';
-import { LimitsInline } from '@/components/limits';
 import { AssistantMessage, UserBubble } from '@/components/transcript';
 import { Chip, Glass, Press, T } from '@/components/ui';
 import { Colors, Spacing } from '@/constants/theme';
@@ -88,10 +87,9 @@ export function AraChat({ id }: { id: string }) {
 
   async function send(text: string, photos: LocalPhoto[]) {
     const device = state.devices.laptop.online ? 'laptop' : 'pc';
-    const paths: string[] = [];
-    for (const photo of photos) paths.push(await uploadPhoto(photo, { device }));
-    // Ответ идёт потоком — не ждём его, чтобы поле ввода сразу освободилось
-    chats.send(id, text, paths, photos.filter((p) => p.mime.startsWith('image/')).map((p) => p.uri));
+    const uploads = Promise.all(photos.map((photo) => uploadPhoto(photo, { device })));
+    // Вопрос и локальные превью появляются сразу; загрузка и ответ идут фоном.
+    void chats.send(id, text, uploads, photos.filter((p) => p.mime.startsWith('image/')).map((p) => p.uri));
   }
 
   function retry(answerIndex: number) {
@@ -145,11 +143,7 @@ export function AraChat({ id }: { id: string }) {
       </View>
       <View style={{ flexShrink: 1, minWidth: 0 }}>
         <T v="subhead" weight="700" numberOfLines={1}>{messages.length ? chat.title : 'Ара'}</T>
-        {status || !state.limits?.claude ? (
-          <T v="caption" color={online ? Colors.textSecondary : Colors.error} numberOfLines={1}>{status || 'Ара'}</T>
-        ) : (
-          <LimitsInline title="Claude" limit={state.limits.claude} v="tiny" />
-        )}
+        {status ? <T v="caption" color={online ? Colors.textSecondary : Colors.error} numberOfLines={1}>{status}</T> : null}
       </View>
     </View>
   );
@@ -217,6 +211,8 @@ export function AraChat({ id }: { id: string }) {
         onClose={() => setSidebar(false)}
         onSelect={switchTo}
         onNew={startNew}
+        onWork={() => router.dismissTo('/')}
+        onTalk={() => setSidebar(false)}
       />
     </View>
   );

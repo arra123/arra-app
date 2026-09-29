@@ -1,5 +1,4 @@
 import { router } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
 import { useMemo } from 'react';
 import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, { Easing, FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
@@ -7,9 +6,8 @@ import Animated, { Easing, FadeIn, FadeOut, LinearTransition } from 'react-nativ
 import { chats, useChats, type Chat } from '@/ara/chats';
 import { ago } from '@/ara/format';
 import { useNow } from '@/ara/hooks';
-import { AraMascot } from '@/components/ara-mascot';
 import { Press, T } from '@/components/ui';
-import { Colors, Radius, ScreenPadding } from '@/constants/theme';
+import { Colors, ScreenPadding } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
 const layout = LinearTransition.duration(220).easing(Easing.out(Easing.cubic));
@@ -49,15 +47,9 @@ export function ChatList({ top, bottom }: { top: number; bottom: number }) {
   return (
     <ScrollView contentContainerStyle={{ paddingTop: top, paddingBottom: bottom }} indicatorStyle="white">
       <Animated.View entering={FadeIn.duration(220)}>
-        <Press onPress={openNewChat} scaleTo={0.985} style={styles.newRow} accessibilityLabel="Новый диалог">
-          <View style={styles.newIcon}>
-            <SymbolView name="plus" size={15} tintColor={Colors.onAccent} weight="semibold" />
-          </View>
-          <T v="callout" weight="600">Новый диалог</T>
-        </Press>
-
         {items.length ? (
           <Animated.View layout={layout} style={styles.list}>
+            <T v="title" weight="700" style={styles.heading}>Недавние</T>
             {items.map((chat, i) => (
               <Animated.View key={chat.id} layout={layout} exiting={FadeOut.duration(150)}>
                 <Press
@@ -65,22 +57,22 @@ export function ChatList({ top, bottom }: { top: number; bottom: number }) {
                   onLongPress={() => remove(chat)}
                   delayLongPress={350}
                   scaleTo={0.99}
-                  style={[styles.row, i > 0 && styles.rowBorder]}
+                  style={styles.row}
                   accessibilityLabel={chat.title}
                   accessibilityHint="Долгое нажатие — удалить">
                   <View style={styles.rowTop}>
-                    <T v="callout" weight="600" numberOfLines={1} style={{ flex: 1 }}>{chat.title}</T>
+                    <T v="body" weight="600" numberOfLines={1} style={{ flex: 1 }}>{chat.title}</T>
                     <T v="caption" color={Colors.textTertiary}>{ago(chat.updatedAt, now)}</T>
                   </View>
-                  <T v="footnote" color={Colors.textSecondary} numberOfLines={1}>{lastLine(chat)}</T>
+                  <T v="callout" color={Colors.textSecondary} numberOfLines={1}>{lastLine(chat)}</T>
                 </Press>
               </Animated.View>
             ))}
           </Animated.View>
         ) : (
           <View style={styles.empty}>
-            <AraMascot size={52} interactive />
-            <T v="subhead" color={Colors.textSecondary}>Диалогов пока нет</T>
+            <T v="title" weight="700">Начни разговор</T>
+            <T v="subhead" color={Colors.textSecondary}>Нажми кнопку справа сверху</T>
           </View>
         )}
       </Animated.View>
@@ -89,18 +81,9 @@ export function ChatList({ top, bottom }: { top: number; bottom: number }) {
 }
 
 const styles = StyleSheet.create({
-  newRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginHorizontal: ScreenPadding,
-    paddingHorizontal: 4,
-    paddingVertical: 10,
-  },
-  newIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.text, alignItems: 'center', justifyContent: 'center' },
-  list: { marginTop: 8, marginHorizontal: ScreenPadding, backgroundColor: Colors.card, borderRadius: Radius.lg, overflow: 'hidden' },
-  row: { paddingHorizontal: 14, paddingVertical: 11, gap: 2, backgroundColor: Colors.card },
-  rowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.separator },
+  list: { paddingTop: 18 },
+  heading: { paddingHorizontal: ScreenPadding, paddingBottom: 12 },
+  row: { marginHorizontal: 10, paddingHorizontal: 12, paddingVertical: 14, gap: 3, borderRadius: 14 },
   rowTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  empty: { alignItems: 'center', gap: 12, marginTop: 80 },
+  empty: { alignItems: 'center', gap: 8, marginTop: 100 },
 });

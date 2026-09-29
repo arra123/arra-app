@@ -60,12 +60,12 @@ function Failed({ error, onRetry, name }: { error: string; onRetry: () => void; 
 }
 
 /** Картинка из переписки: миниатюра, по нажатию — на весь экран с зумом. */
-export function RemoteImage({ path, scope, size = 180 }: { path: string; scope: FileScope; size?: number }) {
+export function RemoteImage({ path, scope, size = 180, square = false }: { path: string; scope: FileScope; size?: number; square?: boolean }) {
   const { file, error, retry, broken } = useRemoteFile(path, scope);
   const [open, setOpen] = useState(false);
   const [ratio, setRatio] = useState(4 / 3);
   if (error) return <Failed error={error} onRetry={retry} name={baseName(path)} />;
-  const width = Math.min(size * ratio, 280);
+  const width = square ? size : Math.min(size * ratio, 280);
   return (
     <>
       <Press onPress={() => file && setOpen(true)} scaleTo={0.98} accessibilityLabel={`Картинка ${baseName(path)}`} style={[styles.thumb, { width, height: width / ratio }]}>
@@ -76,7 +76,7 @@ export function RemoteImage({ path, scope, size = 180 }: { path: string; scope: 
             contentFit="cover"
             transition={200}
             recyclingKey={file.url}
-            onLoad={(e) => e.source.width && setRatio(Math.max(0.5, Math.min(2.2, e.source.width / e.source.height)))}
+            onLoad={(e) => !square && e.source.width && setRatio(Math.max(0.5, Math.min(2.2, e.source.width / e.source.height)))}
             onError={broken}
           />
         ) : (

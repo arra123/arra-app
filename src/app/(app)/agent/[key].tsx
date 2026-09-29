@@ -33,6 +33,13 @@ const CLAUDE_MODELS = [
   { value: 'haiku', label: 'Haiku', hint: 'самая быстрая' },
 ];
 
+const CODEX_MODELS = [
+  { value: 'gpt-6-astra', label: 'GPT-6 Astra', hint: 'новейшая' },
+  { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', hint: 'сложные задачи' },
+  { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', hint: 'баланс' },
+  { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', hint: 'быстрее' },
+];
+
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Стабильный ключ записи: роль + начало текста (+ номер повтора). */
@@ -54,8 +61,8 @@ export default function AgentScreen() {
   const transcript = useTranscript(key);
   const { limits } = useAra();
   const now = useNow(10_000);
-  // Отправленное с телефона висит «отправляю…», пока в переписке не появится
-  // соответствующее по счёту сообщение пользователя (или 90 с на всякий случай)
+  // Отправленное с телефона сразу выглядит как обычное сообщение. Оно исчезает
+  // из локальной очереди, когда появляется в переписке компьютера (или через 90 с).
   const [pending, setPending] = useState<{
     id: string;
     text: string;
@@ -120,7 +127,7 @@ export default function AgentScreen() {
   ], [messages, keys, visiblePending]);
   const isFresh = useFreshKeys(keys);
 
-  /** Сообщение агенту с «отправляю…», пока оно не появится в переписке. */
+  /** Оптимистичное сообщение, пока оно не появилось в переписке компьютера. */
   function addPending(text: string, photos: { uri: string }[]) {
     const id = `${Date.now()}`;
     const at = Date.now();
@@ -242,21 +249,20 @@ export default function AgentScreen() {
     }
   }
 
-  // «⋯»: только то, что имеет смысл с телефона. Модель — подменю у Claude
-  // (у Codex смена модели не поддержана), «Остановить» — пока агент работает,
-  // закрытие терминала — с подтверждением.
+  // Компактное меню под «⋯»: сначала модель и действия, затем отдельный список моделей.
   const menu: MenuSection[] = [];
-  if (agent?.agent === 'claude') {
+  if (agent) {
     const currentModel = modelLabel(model);
+    const models = agent.agent === 'claude' ? CLAUDE_MODELS : CODEX_MODELS;
     menu.push({
       title: 'Модель',
       subtitle: currentModel || undefined,
       icon: 'cpu',
       submenu: true,
-      items: CLAUDE_MODELS.map((m) => ({
+      items: models.map((m) => ({
         label: m.label,
         subtitle: m.hint,
-        checked: currentModel.toLowerCase().startsWith(m.value),
+        checked: model.toLowerCase() === m.value || currentModel.toLowerCase() === m.label.toLowerCase(),
         onPress: () => changeModel(m.value),
       })),
     });
@@ -319,7 +325,7 @@ export default function AgentScreen() {
     <Glass radius={22} backing style={styles.right}>
       {ring}
       {menu.length ? (
-        <MenuTrigger label="Модель и действия" sections={menu}>
+        <MenuTrigger label="Модель и действия" sections={menu} native={false}>
           <View style={styles.more}>
             <SymbolView name="ellipsis" size={18} tintColor={Colors.text} weight="semibold" />
           </View>
@@ -357,7 +363,7 @@ export default function AgentScreen() {
               localImages={row.localImages}
               scope={scope}
               pending
-              pendingLabel={row.total > row.progress ? `Загружаю фото ${row.progress + 1} из ${row.total}` : 'Отправляю…'}
+              progress={row.total ? row.progress / row.total : 1}
             />
           </Animated.View>
         )

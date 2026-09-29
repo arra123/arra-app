@@ -3,9 +3,11 @@ import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useRef, useState, type ReactNode } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { Easing, FadeIn, FadeInDown, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { confirmCloseAgent, stopAgent } from '@/ara/actions';
 import { ara } from '@/ara/client';
@@ -13,10 +15,11 @@ import { AGENT_LABEL, ago, DEVICE_META, STATE_META } from '@/ara/format';
 import { useAra, useNow } from '@/ara/hooks';
 import { pins, usePins } from '@/ara/pins';
 import type { Agent, DeviceId, RecentSession } from '@/ara/types';
-import { ChatList, openNewChat } from '@/components/chat-list';
+import { useCurrentChatId } from '@/ara/chats';
+import { ChatList, openChat, openNewChat } from '@/components/chat-list';
+import { ChatSidebar } from '@/components/chat-sidebar';
 import { LimitsSection } from '@/components/limits';
 import { GlassMenu, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
-import { Segmented } from '@/components/segmented';
 import { DeskBadge, IconButton, Press, ProjectIcon, StatusDot, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
@@ -35,6 +38,8 @@ export default function Home() {
   const pinned = usePins();
   const now = useNow(30_000);
   const [tab, setTab] = useState<Tab>('work');
+  const [sidebar, setSidebar] = useState(false);
+  const currentChatId = useCurrentChatId() || '';
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [showAllRecent, setShowAllRecent] = useState(false);
@@ -50,6 +55,13 @@ export default function Home() {
     ara.refresh();
     setTimeout(() => setRefreshing(false), 700);
   };
+
+  const openDrawer = Gesture.Pan()
+    .activeOffsetX(12)
+    .failOffsetY([-14, 14])
+    .onEnd((e) => {
+      if (e.translationX > 48 || e.velocityX > 500) scheduleOnRN(setSidebar, true);
+    });
 
   return (
     <View style={styles.root}>
@@ -123,18 +135,10 @@ export default function Home() {
         </ScrollView>
       )}
 
-      {/* Шапка: настройки · Работа/Разговор · новый агент или диалог */}
+      {/* Один спокойный заголовок; Работа / Разговоры живут в левой панели. */}
       <View style={[styles.top, { paddingTop: insets.top + 6 }]}>
-        <IconButton icon="gearshape" label="Настройки" onPress={() => router.push('/settings')} />
-        <Segmented
-          style={styles.segmented}
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: 'work', label: 'Работа', icon: 'terminal' },
-            { value: 'talk', label: 'Разговор', icon: 'bubble.left' },
-          ]}
-        />
+        <IconButton icon="line.3.horizontal" label="Меню" onPress={() => setSidebar(true)} />
+        <T v="headline" weight="700" style={styles.topTitle}>{tab === 'work' ? 'Работа' : 'Разговоры'}</T>
         {tab === 'talk' ? (
           <IconButton icon="square.and.pencil" label="Новый диалог" onPress={openNewChat} />
         ) : (
@@ -142,6 +146,18 @@ export default function Home() {
           <IconButton icon="square.and.pencil" label="Новый агент" onPress={() => router.push('/new')} />
         )}
       </View>
+      <GestureDetector gesture={openDrawer}>
+        <View style={styles.edgeSwipe} accessibilityElementsHidden />
+      </GestureDetector>
+      <ChatSidebar
+        open={sidebar}
+        currentId={currentChatId}
+        onClose={() => setSidebar(false)}
+        onSelect={openChat}
+        onNew={openNewChat}
+        onWork={() => setTab('work')}
+        onTalk={() => setTab('talk')}
+      />
     </View>
   );
 }
@@ -323,7 +339,8 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     backgroundColor: 'rgba(10,10,12,0.72)',
   },
-  segmented: { flex: 1 },
+  topTitle: { flex: 1, textAlign: 'center' },
+  edgeSwipe: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 24, zIndex: 4 },
   banner: {
     flexDirection: 'row',
     alignItems: 'center',

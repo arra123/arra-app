@@ -206,18 +206,20 @@ class ChatStore {
     this.update(chatId, (chat) => ({ ...chat, ...options }));
   }
 
-  /** Отправить вопрос Аре. images — пути на компьютере (фото уже загружены). */
-  async send(chatId: string, text: string, images: string[] = [], localImages: string[] = []) {
+  /**
+   * Отправить вопрос Аре. Локальный пузырь появляется сразу, пока фото ещё
+   * загружаются; после загрузки пути добавляются в вопрос для Claude.
+   */
+  async send(chatId: string, text: string, images: string[] | Promise<string[]> = [], localImages: string[] = []) {
     const chat = this.get(chatId);
     if (!chat) return;
-    const prompt = [text.trim(), ...images].filter(Boolean).join('\n');
-    if (!prompt) return;
+    if (!text.trim() && !localImages.length && Array.isArray(images) && !images.length) return;
     const history = chat.messages
       .filter((m) => !m.error && !m.streaming && m.text)
       .map((m) => ({ role: m.role, text: [m.text, ...(m.images || [])].join('\n') }));
 
     const now = Date.now();
-    const question: ChatMessage = { id: id(), role: 'user', text: text.trim(), images, localImages, at: now };
+    const question: ChatMessage = { id: id(), role: 'user', text: text.trim(), images: Array.isArray(images) ? images : [], localImages, at: now };
     const answer: ChatMessage = { id: id(), role: 'assistant', text: '', at: now, streaming: true };
     this.update(chatId, (c) => ({
       ...c,
@@ -227,6 +229,9 @@ class ChatStore {
     }));
 
     try {
+      const uploaded = await images;
+      const prompt = [text.trim(), ...uploaded].filter(Boolean).join('\n');
+      this.updateMessage(chatId, question.id, (m) => ({ ...m, images: uploaded }));
       await ara.ask(
         { chatId, prompt, history, style: chat.style, model: chat.model },
         (delta) => this.updateMessage(chatId, answer.id, (m) => ({ ...m, text: m.text + delta })),

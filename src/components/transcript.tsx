@@ -1,6 +1,6 @@
 import { SymbolView } from 'expo-symbols';
 import { memo, useState, type ReactNode } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import Animated, {
   Easing,
   FadeIn,
@@ -160,24 +160,25 @@ function MediaRow({ children }: { children: ReactNode }) {
   return <View style={styles.media}>{children}</View>;
 }
 
-export function UserBubble({ text, images = [], localImages = [], scope, pending, pendingLabel, time }: {
+export function UserBubble({ text, images = [], localImages = [], scope, pending, progress = 1, time }: {
   text: string;
   images?: string[];
   localImages?: string[];
   scope: FileScope;
   pending?: boolean;
-  pendingLabel?: string;
+  /** Тонкая полоса под фото; без крутилки и служебной надписи. */
+  progress?: number;
   /** «12:40» под пузырём */
   time?: string;
 }) {
   return (
-    <View style={styles.userWrap}>
+    <View style={[styles.userWrap, (localImages.length > 0 || images.length > 0) && styles.userMediaWrap]}>
       {localImages.length ? (
-        <MediaRow>{localImages.map((uri) => <LocalImage key={uri} uri={uri} size={110} />)}</MediaRow>
+        <MediaRow>{localImages.map((uri) => <LocalImage key={uri} uri={uri} size={104} />)}</MediaRow>
       ) : images.length ? (
         <MediaRow>{images.map((p) => {
           const local = localPhotoUri(p);
-          return local ? <LocalImage key={p} uri={local} size={110} /> : <RemoteImage key={p} path={p} scope={scope} size={110} />;
+          return local ? <LocalImage key={p} uri={local} size={104} /> : <RemoteImage key={p} path={p} scope={scope} size={104} square />;
         })}</MediaRow>
       ) : null}
       {text ? (
@@ -185,10 +186,9 @@ export function UserBubble({ text, images = [], localImages = [], scope, pending
           <T selectable>{text}</T>
         </View>
       ) : null}
-      {pending ? (
-        <View style={styles.pendingStatus}>
-          <ActivityIndicator size="small" color={Colors.textTertiary} />
-          <T v="tiny" color={Colors.textTertiary}>{pendingLabel || 'Отправляю…'}</T>
+      {pending && (localImages.length > 0 || images.length > 0) && progress < 1 ? (
+        <View style={styles.uploadTrack}>
+          <View style={[styles.uploadFill, { width: `${Math.max(8, Math.round(progress * 100))}%` }]} />
         </View>
       ) : time ? <T v="tiny" color={Colors.textTertiary}>{time}</T> : null}
     </View>
@@ -277,18 +277,19 @@ const styles = StyleSheet.create({
   thoughtText: { flexShrink: 1, gap: 2 },
   stepsList: { marginTop: 8, marginLeft: 6, gap: 6, borderLeftWidth: 1, borderLeftColor: Colors.separator, paddingLeft: 12 },
   stepRow: { flexDirection: 'row', gap: 8 },
-  userWrap: { alignItems: 'flex-end', alignSelf: 'flex-end', gap: 6, maxWidth: '88%' },
+  userWrap: { alignItems: 'flex-end', alignSelf: 'flex-end', gap: 6, maxWidth: '82%' },
+  userMediaWrap: { width: '88%' },
   userBubble: {
     backgroundColor: Colors.userBubble,
-    borderRadius: 16,
-    borderBottomRightRadius: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
   },
-  pendingStatus: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingRight: 2 },
+  uploadTrack: { width: 104, height: 2, borderRadius: 1, overflow: 'hidden', backgroundColor: Colors.separator },
+  uploadFill: { height: 2, borderRadius: 1, backgroundColor: Colors.textSecondary },
   assistant: { gap: 10 },
   time: { marginTop: -4 },
-  media: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  media: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 },
   mediaBlock: { alignItems: 'flex-start' },
   sites: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
 });

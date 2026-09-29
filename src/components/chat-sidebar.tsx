@@ -22,12 +22,14 @@ const EASE = Easing.out(Easing.cubic);
  * текущим диалогом, снизу белая капсула «Новый чат». Закрывается тапом мимо
  * или смахиванием влево.
  */
-export function ChatSidebar({ open, currentId, onClose, onSelect, onNew }: {
+export function ChatSidebar({ open, currentId, onClose, onSelect, onNew, onWork, onTalk }: {
   open: boolean;
   currentId: string;
   onClose: () => void;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onWork?: () => void;
+  onTalk?: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const { width: screenW } = useWindowDimensions();
@@ -127,7 +129,8 @@ export function ChatSidebar({ open, currentId, onClose, onSelect, onNew }: {
             indicatorStyle="white">
             {q ? null : (
               <View style={styles.nav}>
-                <NavRow icon="terminal" label="Агенты" onPress={go(() => router.dismissTo('/'))} />
+                <NavRow icon="terminal" label="Работа" onPress={go(onWork || (() => router.dismissTo('/')))} />
+                <NavRow icon="bubble.left" label="Разговоры" onPress={go(onTalk || onClose)} />
               </View>
             )}
 

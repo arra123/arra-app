@@ -14,7 +14,7 @@ export const Colors = {
   textTertiary: '#5e606a',
   separator: 'rgba(255,255,255,0.08)',
   hairline: 'rgba(255,255,255,0.12)',
-  userBubble: '#1f2025',
+  userBubble: '#3a3a3e',
   codeBackground: '#0f1013',
   inlineCode: 'rgba(255,255,255,0.09)',
   link: '#8ab4ff',
