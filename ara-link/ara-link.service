@@ -4,6 +4,8 @@ After=network-online.target graphical-session.target
 Wants=network-online.target
 
 [Service]
+# claude, codex and the helpers live in ~/.local/bin: systemd does not add it
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Type=simple
 ExecStart=/usr/bin/python3 %h/.local/share/ara-link/ara_link.py
 Restart=always
