@@ -68,10 +68,32 @@ type GlassProps = {
   style?: StyleProp<ViewStyle>;
   radius?: number;
   interactive?: boolean;
+  /**
+   * Тёмная подложка под стеклом: поверх текста ленты чистое стекло
+   * почти прозрачно и иногда не рисуется — фон должен быть всегда.
+   */
+  backing?: boolean;
 };
 
 /** Liquid Glass на iOS 26, на старых iOS — системный размытый материал. */
-export function Glass({ children, style, radius = Radius.xl, interactive = false }: GlassProps) {
+export function Glass({ children, style, radius = Radius.xl, interactive = false, backing = false }: GlassProps) {
+  if (LIQUID && backing) {
+    const flat = StyleSheet.flatten(style) || {};
+    const { margin, marginLeft, marginRight, marginTop, marginBottom, marginHorizontal, marginVertical, position, top, left, right, bottom, flex, flexShrink, flexGrow, alignSelf, maxWidth, width } = flat;
+    const outer = { margin, marginLeft, marginRight, marginTop, marginBottom, marginHorizontal, marginVertical, position, top, left, right, bottom, flex, flexShrink, flexGrow, alignSelf, maxWidth, width };
+    return (
+      <View style={[outer, { borderRadius: radius, backgroundColor: Colors.glassBacking }]}>
+        <GlassView
+          glassEffectStyle="regular"
+          colorScheme="dark"
+          tintColor={Colors.glassTint}
+          isInteractive={interactive}
+          style={[{ borderRadius: radius, overflow: 'hidden' }, style, { margin: 0, marginLeft: 0, marginRight: 0, marginTop: 0, marginBottom: 0, position: 'relative', top: 0, left: 0, right: 0, bottom: 0, flex: undefined, flexShrink: undefined, alignSelf: undefined, width: undefined, maxWidth: undefined }]}>
+          {children}
+        </GlassView>
+      </View>
+    );
+  }
   if (LIQUID) {
     return (
       <GlassView

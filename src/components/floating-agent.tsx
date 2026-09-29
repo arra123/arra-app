@@ -13,13 +13,13 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
-import { awaitedHelper, currentActivity, shortAgo, statusLine } from '@/ara/format';
+import { awaitedHelper, currentActivity, statusLine } from '@/ara/format';
 import type { Agent, PlanItem, SubAgent, Transcript } from '@/ara/types';
 import { HelpersStrip } from '@/components/agent-cards';
 import { AraMascot } from '@/components/ara-mascot';
 import { Appear } from '@/components/glass-menu';
 import { PlanCard } from '@/components/transcript';
-import { Glass, Spinner, T } from '@/components/ui';
+import { Spinner, T } from '@/components/ui';
 import { Colors, Radius } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -64,7 +64,7 @@ function savePlace(place: Place) {
   }
 }
 
-const H = 40;
+const H = 34;
 const MARGIN = 10;
 /** Зона касания язычка у края; сама полоска тоньше */
 const TAB_HIT = 24;
@@ -237,23 +237,9 @@ export function FloatingAgent({ agent, transcript, plan, helpers, now, stopping,
 
   const state = agent.state;
   const tint = state === 'waiting' ? Colors.waiting : state === 'error' ? Colors.error : Colors.textSecondary;
-  const doneAt = transcript?.last ? transcript.last * 1000 : agent.since;
-  const status = stopping ? (
-    <T v="footnote" color={Colors.textSecondary}>останавливаю…</T>
-  ) : state === 'working' ? (
-    <View style={styles.statusRow}>
-      <Spinner size={11} />
-      <T v="footnote" weight="600" color={Colors.working}>работает</T>
-    </View>
-  ) : state === 'waiting' ? (
-    <T v="footnote" weight="600" color={Colors.waiting} numberOfLines={1}>
-      {doneAt ? `ждёт ${shortAgo(now - doneAt)}` : 'ждёт'}
-    </T>
-  ) : state === 'error' ? (
-    <T v="footnote" weight="600" color={Colors.error}>прервался</T>
-  ) : (
-    <T v="footnote" color={Colors.textSecondary}>тихо</T>
-  );
+  // На агентике только план и помощники; статус и минуты — в шапке
+  const done = plan.filter((p) => p.status === 'completed').length;
+  const active = helpers.filter((h) => h.active);
 
   return (
     <>
@@ -266,15 +252,23 @@ export function FloatingAgent({ agent, transcript, plan, helpers, now, stopping,
           accessibilityRole="button"
           accessibilityLabel="Агент: подробности"
           accessibilityHint="Тяни, чтобы передвинуть; смахни за край, чтобы спрятать">
-          <Glass radius={H / 2} style={styles.capsule}>
-            <AraMascot size={30} mood={state === 'working' ? 'thinking' : 'idle'} />
-            {status}
+          <View style={styles.capsule}>
+            <AraMascot size={24} mood={state === 'working' ? 'thinking' : 'idle'} />
+            {state === 'working' || stopping ? <Spinner size={10} color={Colors.working} /> : null}
             {plan.length ? (
-              <T v="caption" color={Colors.textTertiary} style={{ fontVariant: ['tabular-nums'] }}>
-                {plan.filter((p) => p.status === 'completed').length}/{plan.length}
+              <T v="caption" weight="600" color={Colors.textSecondary} style={{ fontVariant: ['tabular-nums'] }}>
+                {done}/{plan.length}
               </T>
             ) : null}
-          </Glass>
+            {active.length ? (
+              <View style={styles.helpers} accessibilityLabel={`Помощников: ${active.length}`}>
+                {active.slice(0, 4).map((h, i) => (
+                  <View key={h.id} style={[styles.helperDot, { backgroundColor: Colors.helpers[i % Colors.helpers.length] }]} />
+                ))}
+                {active.length > 4 ? <T v="tiny" color={Colors.textSecondary}>+{active.length - 4}</T> : null}
+              </View>
+            ) : null}
+          </View>
         </Animated.View>
       </GestureDetector>
 
@@ -361,8 +355,22 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },
   },
-  capsule: { height: H, flexDirection: 'row', alignItems: 'center', gap: 7, paddingLeft: 6, paddingRight: 13 },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  // Непрозрачный фон всегда: стекло поверх текста ленты на телефоне пропадало
+  capsule: {
+    height: H,
+    borderRadius: H / 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingLeft: 6,
+    paddingRight: 10,
+    minWidth: H + 8,
+    backgroundColor: Colors.cardRaised,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.hairline,
+  },
+  helpers: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  helperDot: { width: 7, height: 7, borderRadius: 4 },
   tab: { position: 'absolute', top: 0, left: 0, width: TAB_HIT, height: TAB_H, justifyContent: 'center', paddingHorizontal: 2 },
   tabBar: { width: 5, height: 40, borderRadius: 3, opacity: 0.85 },
   sheet: {

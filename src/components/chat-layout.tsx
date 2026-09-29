@@ -97,15 +97,27 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
         <Animated.View pointerEvents="box-none" style={[styles.empty, { paddingTop: headerHeight }, emptyLift]}>{empty}</Animated.View>
       ) : null}
 
-      <View style={styles.header} onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}>
-        <Glass radius={0} style={[styles.headerGlass, { paddingTop: insets.top + 4 + headerTop }]}>
-          <View style={styles.headerRow}>
-            {back ? <IconButton icon="chevron.left" label="Назад" onPress={() => router.back()} size={38} /> : null}
-            <View style={styles.headerTitle}>{title}</View>
-            {right}
-          </View>
-          {below ? <View style={styles.below}>{below}</View> : null}
-        </Glass>
+      {/* Как в ChatGPT: сплошной полосы нет, лента уходит под плавающие капсулы, верх мягко затемнён */}
+      <View pointerEvents="none" style={[styles.fade, { height: insets.top + headerTop + 84 }]}>
+        {FADE.map((opacity, i) => (
+          <View key={i} style={{ flex: 1, backgroundColor: Colors.background, opacity }} />
+        ))}
+      </View>
+      <View
+        style={[styles.header, { paddingTop: insets.top + 4 + headerTop }]}
+        pointerEvents="box-none"
+        onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}>
+        <View style={styles.headerRow} pointerEvents="box-none">
+          {back ? (
+            <Glass radius={22} backing style={styles.backButton}>
+              <IconButton icon="chevron.left" label="Назад" onPress={() => router.back()} size={44} glass={false} />
+            </Glass>
+          ) : null}
+          <Glass radius={22} backing style={styles.titleCapsule}>{title}</Glass>
+          <View style={{ flex: 1 }} pointerEvents="none" />
+          {right}
+        </View>
+        {below ? <Glass radius={18} backing style={styles.below}>{below}</Glass> : null}
       </View>
 
       {overlay ? overlay({ top: headerHeight, bottom: occupiedBottom }) : null}
@@ -117,23 +129,23 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
   );
 }
 
+/** Затемнение сверху: от почти сплошного к прозрачному */
+const FADE = [0.96, 0.94, 0.9, 0.85, 0.78, 0.7, 0.6, 0.48, 0.36, 0.24, 0.13, 0.05];
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
-  header: { position: 'absolute', top: 0, left: 0, right: 0 },
-  headerGlass: {
-    paddingBottom: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: Colors.separator,
-  },
+  fade: { position: 'absolute', top: 0, left: 0, right: 0 },
+  header: { position: 'absolute', top: 0, left: 0, right: 0, paddingBottom: 6 },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     paddingHorizontal: 12,
     minHeight: 44,
   },
-  headerTitle: { flex: 1, minWidth: 0 },
-  below: { paddingHorizontal: ScreenPadding, paddingTop: 8, gap: 8 },
+  backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  titleCapsule: { flexShrink: 1, minWidth: 0, minHeight: 44, justifyContent: 'center', paddingLeft: 5, paddingRight: 14, paddingVertical: 4 },
+  below: { marginHorizontal: 12, marginTop: 8, paddingHorizontal: ScreenPadding - 4, paddingVertical: 8, gap: 8 },
   composer: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   empty: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center' },
 });

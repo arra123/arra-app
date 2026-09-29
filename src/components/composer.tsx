@@ -2,21 +2,25 @@ import { Image } from 'expo-image';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library/legacy';
+import * as DocumentPicker from 'expo-document-picker';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import Animated, {
+  Easing,
   FadeIn,
   FadeOut,
   useAnimatedStyle,
+  useSharedValue,
+  withTiming,
   ZoomIn,
   ZoomOut,
   type SharedValue,
 } from 'react-native-reanimated';
+import type { SFSymbol } from 'sf-symbols-typescript';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { LocalPhoto } from '@/ara/upload';
-import { MenuTrigger } from '@/components/glass-menu';
 import { Glass, Press, T } from '@/components/ui';
 import { Colors, Radius, Type } from '@/constants/theme';
 import { useDictation } from '@/lib/dictation';
@@ -54,11 +58,25 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
   const ownInput = useRef<TextInput>(null);
   const input = inputRef ?? ownInput;
 
-  const canSend = !disabled && !sending && !listening && !transcribing && (text.trim().length > 0 || photos.length > 0);
+  const hasContent = text.trim().length > 0 || photos.length > 0;
+  const canSend = !disabled && !sending && !listening && !transcribing && hasContent;
+  const plusRef = useRef<View>(null);
+  const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
 
-  async function send() {
-    if (!canSend) return;
-    const body = text;
+  function openMenu() {
+    haptic.tap();
+    plusRef.current?.measureInWindow((x, y, width, height) => setMenuAnchor({ x, y, width, height }));
+  }
+
+  /** ↑ во время диктовки: остановить, дождаться текста и сразу отправить. */
+  async function finishAndSend() {
+    const final = await dictation.finish();
+    await send(final);
+  }
+
+  async function send(override?: string) {
+    const body = override ?? text;
+    if (disabled || sending || (!body.trim() && !photos.length)) return;
     const attached = photos;
     setSending(true);
     haptic.press();
@@ -96,6 +114,18 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
       haptic.tap();
     } catch (error: any) {
       Alert.alert('Не удалось открыть', error?.message || '');
+    }
+  }
+
+  async function pickFiles() {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
+      if (result.canceled) return;
+      const files = result.assets.map((a) => ({ uri: a.uri, name: a.name || `file-${Date.now()}`, mime: a.mimeType || 'application/octet-stream' }));
+      setPhotos((current) => [...current, ...files].slice(0, 6));
+      haptic.tap();
+    } catch (error: any) {
+      Alert.alert('Не удалось открыть файлы', error?.message || '');
     }
   }
 
@@ -144,154 +174,292 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
     }
   }
 
+  const dictating = listening || transcribing;
+
   return (
     <View
-      style={[styles.outer, { paddingBottom: Math.max(insets.bottom, 10) }]}
+      style={[styles.outer, { paddingBottom: Math.max(insets.bottom, 8) }]}
       onLayout={(e) => onHeight?.(e.nativeEvent.layout.height)}>
-      <Glass radius={26} style={styles.box}>
+      {dictation.notice ? (
+        <Animated.View entering={FadeIn.duration(150)} exiting={FadeOut.duration(120)}>
+          <Press onPress={dictation.clearNotice} feedback="none" style={styles.notice} accessibilityLabel={`Диктовка: ${dictation.notice}. Нажми, чтобы скрыть`}>
+            <SymbolView name={{ ios: 'exclamationmark.bubble', android: 'error', web: 'error' }} size={14} tintColor={Colors.waiting} />
+            <T v="caption" color={Colors.textSecondary} style={{ flex: 1 }}>{dictation.notice}</T>
+            <SymbolView name={{ ios: 'xmark', android: 'close', web: 'close' }} size={11} tintColor={Colors.textTertiary} />
+          </Press>
+        </Animated.View>
+      ) : null}
+      <Glass radius={28} backing style={styles.capsule}>
         {photos.length ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photos} keyboardShouldPersistTaps="handled">
             {photos.map((photo) => (
               <Animated.View key={photo.uri} entering={ZoomIn.duration(200)} exiting={ZoomOut.duration(150)} style={styles.photo}>
-                <Image source={{ uri: photo.uri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                {photo.mime.startsWith('image/') ? (
+                  <Image source={{ uri: photo.uri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+                ) : (
+                  <View style={styles.fileTile}>
+                    <SymbolView name={{ ios: 'doc', android: 'description', web: 'description' }} size={20} tintColor={Colors.textSecondary} />
+                    <T v="tiny" color={Colors.textSecondary} numberOfLines={2} style={{ textAlign: 'center' }}>{photo.name}</T>
+                  </View>
+                )}
                 <Press
                   onPress={() => setPhotos((current) => current.filter((p) => p.uri !== photo.uri))}
                   style={styles.photoRemove}
-                  accessibilityLabel="Убрать фото"
+                  accessibilityLabel="Убрать вложение"
                   hitSlop={8}>
-                  <SymbolView name="xmark" size={9} tintColor={Colors.text} weight="bold" />
+                  <SymbolView name={{ ios: 'xmark', android: 'close', web: 'close' }} size={9} tintColor={Colors.text} weight="bold" />
                 </Press>
               </Animated.View>
             ))}
           </ScrollView>
         ) : null}
 
-        <TextInput
-          ref={input}
-          value={text}
-          onChangeText={setText}
-          editable={!listening}
-          placeholder={dictation.mode === 'live' ? 'Говори — текст появится здесь' : dictation.mode === 'record' ? 'Слушаю… нажми ■, чтобы расшифровать' : transcribing ? 'Расшифровываю…' : placeholder}
-          placeholderTextColor={Colors.textTertiary}
-          style={styles.input}
-          multiline
-          autoFocus={autoFocus}
-          keyboardAppearance="dark"
-          selectionColor={Colors.text}
-          maxFontSizeMultiplier={1.5}
-          accessibilityLabel={placeholder}
-        />
-
-        <View style={styles.toolbar}>
-          <MenuTrigger
-            label="Прикрепить фото"
-            align="left"
-            sections={[[
-              { label: 'Фото из галереи', icon: 'photo.on.rectangle', onPress: () => pick(false) },
-              { label: 'Снять камерой', icon: 'camera', onPress: () => pick(true) },
-            ]]}>
-            <View style={styles.tool}>
-              <View style={styles.plusCircle}>
-                <SymbolView name={{ ios: 'plus', android: 'add', web: 'add' }} size={17} tintColor={Colors.text} weight="semibold" />
+        {dictating ? (
+          <>
+            {/* Надиктованное видно сразу, пока говоришь */}
+            <Animated.View entering={FadeIn.duration(150)} style={styles.live}>
+              {text.trim() ? (
+                <T v="body" color={Colors.text} numberOfLines={5}>{text}</T>
+              ) : (
+                <T v="body" color={Colors.textTertiary}>{transcribing ? 'Расшифровываю на ноутбуке…' : dictation.mode === 'record' ? 'Говори — расшифрую на ноутбуке' : 'Говори — текст появится здесь'}</T>
+              )}
+            </Animated.View>
+            <View style={styles.row}>
+              <Press onPress={dictation.cancel} feedback="none" style={styles.tool} accessibilityLabel="Отменить диктовку">
+                <View style={styles.greyCircle}>
+                  <SymbolView name={{ ios: 'xmark', android: 'close', web: 'close' }} size={15} tintColor={Colors.text} weight="semibold" />
+                </View>
+              </Press>
+              <View style={styles.waveSlot}>
+                {transcribing ? (
+                  <ActivityIndicator size="small" color={Colors.textSecondary} />
+                ) : (
+                  <ScrollingWave level={dictation.level} />
+                )}
               </View>
+              <Press onPress={() => void dictation.finish()} disabled={transcribing} feedback="none" style={styles.tool} accessibilityLabel="Остановить диктовку, текст останется в поле">
+                <View style={styles.greyCircle}>
+                  <SymbolView name={{ ios: 'stop.fill', android: 'stop', web: 'stop' }} size={13} tintColor={Colors.text} />
+                </View>
+              </Press>
+              <Press onPress={() => void finishAndSend()} disabled={transcribing || disabled} feedback="none" style={styles.tool} accessibilityLabel="Остановить и сразу отправить">
+                <View style={styles.whiteCircle}>
+                  <SymbolView name={{ ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' }} size={17} tintColor={Colors.onAccent} weight="bold" />
+                </View>
+              </Press>
             </View>
-          </MenuTrigger>
-          <Press onPress={attachLatest} feedback="none" accessibilityLabel="Прикрепить последнее фото" style={styles.tool}>
-            {grabbing ? (
-              <ActivityIndicator size="small" color={Colors.textSecondary} />
+          </>
+        ) : (
+          <View style={styles.row}>
+            <View ref={plusRef} collapsable={false}>
+              <Press onPress={openMenu} feedback="none" style={styles.tool} accessibilityLabel="Прикрепить">
+                <SymbolView name={{ ios: 'plus', android: 'add', web: 'add' }} size={22} tintColor={Colors.text} weight="regular" />
+              </Press>
+            </View>
+            <TextInput
+              ref={input}
+              value={text}
+              onChangeText={setText}
+              placeholder={placeholder}
+              placeholderTextColor={Colors.textTertiary}
+              style={styles.input}
+              multiline
+              autoFocus={autoFocus}
+              keyboardAppearance="dark"
+              selectionColor={Colors.text}
+              maxFontSizeMultiplier={1.4}
+              accessibilityLabel={placeholder}
+            />
+            {accessory}
+            <Press onPress={() => void dictation.start()} feedback="none" style={styles.tool} accessibilityLabel="Диктовка">
+              <SymbolView name={{ ios: 'mic', android: 'mic', web: 'mic' }} size={22} tintColor={Colors.text} weight="regular" />
+            </Press>
+            {hasContent || sending ? (
+              <Press onPress={() => void send()} disabled={!canSend} feedback="none" style={styles.tool} accessibilityLabel="Отправить">
+                <Animated.View entering={ZoomIn.duration(140)} style={[styles.whiteCircle, !canSend && { opacity: 0.45 }]}>
+                  {sending ? (
+                    <ActivityIndicator size="small" color={Colors.onAccent} />
+                  ) : (
+                    <SymbolView name={{ ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' }} size={17} tintColor={Colors.onAccent} weight="bold" />
+                  )}
+                </Animated.View>
+              </Press>
             ) : (
-              <SymbolView name={{ ios: 'photo', android: 'photo', web: 'photo' }} size={23} tintColor={Colors.textSecondary} weight="regular" />
+              <Press onPress={() => void dictation.start()} feedback="none" style={styles.tool} accessibilityLabel="Голосом">
+                <Animated.View entering={ZoomIn.duration(140)} style={styles.whiteCircle}>
+                  <SymbolView name={{ ios: 'waveform', android: 'graphic_eq', web: 'graphic_eq' }} size={18} tintColor={Colors.onAccent} weight="semibold" />
+                </Animated.View>
+              </Press>
             )}
-          </Press>
-          <Press
-            onPress={dictation.toggle}
-            feedback="none"
-            accessibilityLabel={listening ? 'Остановить диктовку' : 'Диктовка'}
-            style={styles.tool}>
-            {transcribing ? (
-              <ActivityIndicator size="small" color={Colors.textSecondary} />
-            ) : listening ? (
-              <Animated.View entering={ZoomIn.duration(160)} style={styles.micActive}>
-                <SymbolView name={{ ios: 'stop.fill', android: 'stop', web: 'stop' }} size={13} tintColor={Colors.text} weight="bold" />
-              </Animated.View>
-            ) : (
-              <SymbolView name={{ ios: 'mic', android: 'mic', web: 'mic' }} size={23} tintColor={Colors.textSecondary} weight="regular" />
-            )}
-          </Press>
-          <View style={styles.middle}>
-            {listening ? <DictationMeter since={dictation.startedAt} level={dictation.level} live={dictation.mode === 'live'} /> : null}
           </View>
-          {accessory}
-          <Press onPress={send} disabled={!canSend} feedback="none" accessibilityLabel="Отправить" style={styles.tool}>
-            {sending ? (
-              <ActivityIndicator size="small" color={Colors.text} />
-            ) : (
-              <SymbolView
-                name={{ ios: 'arrow.up.circle.fill', android: 'arrow_circle_up', web: 'arrow_circle_up' }}
-                size={32}
-                tintColor={canSend ? Colors.text : Colors.textTertiary}
-                weight="regular"
-              />
-            )}
-          </Press>
-        </View>
+        )}
       </Glass>
+
+      <AttachMenu
+        anchor={menuAnchor}
+        onClose={() => setMenuAnchor(null)}
+        onLatest={attachLatest}
+        onCamera={() => pick(true)}
+        onLibrary={() => pick(false)}
+        onFiles={pickFiles}
+        grabbing={grabbing}
+      />
     </View>
   );
 }
 
-/** Волна громкости и таймер, пока идёт диктовка. */
-function DictationMeter({ since, level, live }: { since: number; level: SharedValue<number>; live: boolean }) {
-  const [now, setNow] = useState(since);
+type Anchor = { x: number; y: number; width: number; height: number };
+
+/**
+ * Меню «+» как в ChatGPT: большой поповер растёт из кнопки вверх
+ * (масштаб от её угла и прозрачность, без пружины), пункты с иконкой в круге.
+ */
+function AttachMenu({ anchor, onClose, onLatest, onCamera, onLibrary, onFiles, grabbing }: {
+  anchor: Anchor | null;
+  onClose: () => void;
+  onLatest: () => void;
+  onCamera: () => void;
+  onLibrary: () => void;
+  onFiles: () => void;
+  grabbing: boolean;
+}) {
+  const { height: screenH } = useWindowDimensions();
+  const [thumb, setThumb] = useState<string | null>(null);
+  const t = useSharedValue(0);
+  const open = !!anchor;
+
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(id);
-  }, []);
-  const seconds = Math.max(0, Math.floor((now - since) / 1000));
+    if (!open) return;
+    t.set(0);
+    t.set(withTiming(1, { duration: 200, easing: Easing.out(Easing.cubic) }));
+    // Миниатюра последнего фото — только если доступ уже дан (без лишнего запроса)
+    let alive = true;
+    (async () => {
+      try {
+        const perm = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+        if (!perm.granted) return;
+        const page = await MediaLibrary.getAssetsAsync({ first: 1, mediaType: MediaLibrary.MediaType.photo, sortBy: [[MediaLibrary.SortBy.creationTime, false]] });
+        if (alive && page.assets[0]) setThumb(page.assets[0].uri);
+      } catch {
+        /* без миниатюры */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [open, t]);
+
+  const appear = useAnimatedStyle(() => ({
+    opacity: t.get(),
+    transform: [{ scale: 0.55 + 0.45 * t.get() }],
+  }));
+
+  if (!anchor) return null;
+  const choose = (action: () => void) => () => {
+    haptic.select();
+    onClose();
+    setTimeout(action, 120);
+  };
+  const items: { label: string; icon: SFSymbol; android: string; onPress: () => void; thumb?: string | null }[] = [
+    { label: 'Последнее фото', icon: 'photo.badge.arrow.down', android: 'photo', onPress: onLatest, thumb },
+    { label: 'Камера', icon: 'camera', android: 'photo_camera', onPress: onCamera },
+    { label: 'Фото', icon: 'photo.on.rectangle', android: 'photo_library', onPress: onLibrary },
+    { label: 'Файлы', icon: 'paperclip', android: 'attach_file', onPress: onFiles },
+  ];
+
   return (
-    <Animated.View entering={FadeIn.duration(150)} exiting={FadeOut.duration(100)} style={styles.meter} accessibilityLabel={live ? 'Идёт диктовка' : 'Идёт запись'}>
-      <View style={styles.wave}>
-        {WAVE.map((k, i) => <WaveBar key={i} k={k} level={level} />)}
-      </View>
-      <T v="footnote" color={Colors.textSecondary} style={{ fontVariant: ['tabular-nums'] }}>
-        {`${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`}
-      </T>
-    </Animated.View>
+    <Modal visible transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Закрыть меню" />
+      <Animated.View
+        style={[
+          styles.menu,
+          { left: Math.max(12, anchor.x - 4), bottom: screenH - anchor.y + 10, transformOrigin: 'left bottom' },
+          appear,
+        ]}>
+        <Glass radius={28} backing style={styles.menuBox}>
+          {items.map((item) => (
+            <Pressable
+              key={item.label}
+              onPress={choose(item.onPress)}
+              accessibilityRole="menuitem"
+              style={({ pressed }) => [styles.menuItem, pressed && { backgroundColor: Colors.cardPressed }]}>
+              <View style={styles.menuIcon}>
+                {item.thumb ? (
+                  <Image source={{ uri: item.thumb }} style={styles.menuThumb} contentFit="cover" />
+                ) : item.label === 'Последнее фото' && grabbing ? (
+                  <ActivityIndicator size="small" color={Colors.textSecondary} />
+                ) : (
+                  <SymbolView name={{ ios: item.icon, android: item.android as any, web: item.android as any }} size={20} tintColor={Colors.text} weight="regular" />
+                )}
+              </View>
+              <T v="body" color={Colors.text} style={styles.menuLabel}>{item.label}</T>
+            </Pressable>
+          ))}
+        </Glass>
+      </Animated.View>
+    </Modal>
   );
 }
 
-/** Высоты полосок волны относительно громкости: выше в середине */
-const WAVE = [0.45, 0.7, 1, 0.8, 0.55, 0.9, 0.6];
+/**
+ * Волна как в ChatGPT: бежит справа налево; тихо — точки, громко — столбики.
+ * Раз в 70 мс берём громкость и сдвигаем историю.
+ */
+const WAVE_BARS = 34;
 
-function WaveBar({ k, level }: { k: number; level: SharedValue<number> }) {
-  const style = useAnimatedStyle(() => ({ height: 4 + Math.min(1, level.get() * 1.3) * 16 * k }));
-  return <Animated.View style={[styles.waveBar, style]} />;
+function ScrollingWave({ level }: { level: SharedValue<number> }) {
+  const [history, setHistory] = useState<number[]>(() => Array(WAVE_BARS).fill(0));
+  useEffect(() => {
+    const id = setInterval(() => {
+      const v = level.get();
+      setHistory((h) => [...h.slice(1), v]);
+    }, 70);
+    return () => clearInterval(id);
+  }, [level]);
+  return (
+    <View style={styles.wave} accessibilityLabel="Идёт диктовка">
+      {history.map((v, i) => {
+        const h = v < 0.08 ? 3 : 4 + Math.min(1, v) * 22;
+        return <View key={i} style={[styles.waveBar, { height: h, opacity: 0.35 + 0.65 * Math.min(1, v * 1.6 + 0.2) }]} />;
+      })}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  outer: { paddingHorizontal: 10, paddingTop: 6 },
-  box: { paddingHorizontal: 4, paddingTop: 4, paddingBottom: 2 },
+  outer: { paddingHorizontal: 12, paddingTop: 6, gap: 6 },
+  capsule: { paddingHorizontal: 6, paddingVertical: 6, minHeight: 56 },
+  row: { flexDirection: 'row', alignItems: 'flex-end' },
   input: {
+    flex: 1,
     color: Colors.text,
     fontSize: Type.body,
-    lineHeight: 21,
-    minHeight: 38,
-    maxHeight: 150,
-    paddingHorizontal: 10,
-    paddingTop: 9,
-    paddingBottom: 6,
+    lineHeight: 22,
+    minHeight: 44,
+    maxHeight: 160,
+    paddingHorizontal: 4,
+    paddingTop: 11,
+    paddingBottom: 11,
   },
-  // Все кнопки на одной линии: зона касания 44 pt, центр по вертикали
-  toolbar: { flexDirection: 'row', alignItems: 'center', height: 44 },
   tool: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  plusCircle: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.cardPressed, alignItems: 'center', justifyContent: 'center' },
-  micActive: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.danger, alignItems: 'center', justifyContent: 'center' },
-  middle: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  meter: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  wave: { flexDirection: 'row', alignItems: 'center', gap: 3, height: 22 },
-  waveBar: { width: 3, borderRadius: 2, backgroundColor: Colors.danger },
-  photos: { gap: 8, paddingHorizontal: 6, paddingTop: 4, paddingBottom: 4 },
+  whiteCircle: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.text, alignItems: 'center', justifyContent: 'center' },
+  greyCircle: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.cardPressed, alignItems: 'center', justifyContent: 'center' },
+  live: { paddingHorizontal: 12, paddingTop: 6, paddingBottom: 4, maxHeight: 140 },
+  waveSlot: { flex: 1, height: 44, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  wave: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 2.5, height: 30 },
+  waveBar: { width: 3, borderRadius: 1.5, backgroundColor: Colors.text },
+  notice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: Radius.lg,
+    backgroundColor: Colors.card,
+  },
+  photos: { gap: 8, paddingHorizontal: 6, paddingTop: 4, paddingBottom: 6 },
   photo: { width: 62, height: 62, borderRadius: Radius.md, overflow: 'hidden', backgroundColor: Colors.card },
+  fileTile: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2, padding: 4 },
   photoRemove: {
     position: 'absolute',
     top: 4,
@@ -303,4 +471,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  menu: {
+    position: 'absolute',
+    width: 270,
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 30,
+    shadowOffset: { width: 0, height: 12 },
+  },
+  menuBox: { paddingVertical: 10, paddingHorizontal: 8 },
+  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 18 },
+  menuIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.cardPressed, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  menuThumb: { width: 44, height: 44 },
+  menuLabel: { fontSize: 17 },
 });

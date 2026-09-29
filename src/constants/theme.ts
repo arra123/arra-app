@@ -23,6 +23,8 @@ export const Colors = {
   scrim: 'rgba(0,0,0,0.55)',
   glassTint: 'rgba(20,21,24,0.55)',
   glassFallback: 'rgba(22,23,27,0.88)',
+  /** Непрозрачная подложка под Liquid Glass поверх ленты */
+  glassBacking: 'rgba(24,25,29,0.9)',
 
   // Статусы агентов: «работает» — спокойный светло-серый, жёлтый только для «ждёт тебя»
   working: '#c9cad2',

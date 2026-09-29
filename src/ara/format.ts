@@ -88,20 +88,17 @@ export function resetLabel(ts: number | null | undefined, now = Date.now()): str
   return `${d.getDate()} ${MONTHS[d.getMonth()]} в ${hm}`;
 }
 
-/** Цвет расхода лимита: обычный, ≥80% жёлтый, ≥95% красный. */
-export function limitColor(percent: number | undefined): string {
-  if (percent == null) return Colors.textSecondary;
-  if (percent >= 95) return Colors.error;
-  if (percent >= 80) return Colors.waiting;
-  return Colors.textSecondary;
+/** Сколько процентов лимита осталось (с компьютера приходит израсходованное). */
+export function limitLeft(used: number): number {
+  return Math.max(0, Math.min(100, 100 - used));
 }
 
-/** Цвет заливки индикатора: зелёный — запас есть, жёлтый — больше 60%, красный — почти всё. */
-export function limitTint(percent: number | undefined): string {
-  if (percent == null) return Colors.textSecondary;
-  if (percent >= 85) return Colors.error;
-  if (percent >= 60) return Colors.waiting;
-  return Colors.success;
+/** Цвет по остатку: обычный, меньше 15% — жёлтый, меньше 5% — красный. */
+export function limitColor(left: number | undefined, normal: string = Colors.textSecondary): string {
+  if (left == null) return normal;
+  if (left < 5) return Colors.error;
+  if (left < 15) return Colors.waiting;
+  return normal;
 }
 
 /** Лимит подписки для агента: Claude общий, Codex — того устройства, где агент. */

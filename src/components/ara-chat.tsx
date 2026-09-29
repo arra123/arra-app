@@ -82,7 +82,7 @@ export function AraChat({ id }: { id: string }) {
     const paths: string[] = [];
     for (const photo of photos) paths.push(await uploadPhoto(photo, { device }));
     // Ответ идёт потоком — не ждём его, чтобы поле ввода сразу освободилось
-    chats.send(id, text, paths, photos.map((p) => p.uri));
+    chats.send(id, text, paths, photos.filter((p) => p.mime.startsWith('image/')).map((p) => p.uri));
   }
 
   function retry(answerIndex: number) {
@@ -135,8 +135,8 @@ export function AraChat({ id }: { id: string }) {
       <View style={styles.avatar}>
         <AraMascot size={22} mood={busy ? 'thinking' : 'idle'} interactive />
       </View>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <T v="headline" weight="700" numberOfLines={1}>{messages.length ? chat.title : 'Новый диалог'}</T>
+      <View style={{ flexShrink: 1, minWidth: 0 }}>
+        <T v="subhead" weight="700" numberOfLines={1}>{messages.length ? chat.title : 'Новый диалог'}</T>
         {status || !state.limits?.claude ? (
           <T v="caption" color={online ? Colors.textSecondary : Colors.error} numberOfLines={1}>{status || 'Ара'}</T>
         ) : (
@@ -148,8 +148,8 @@ export function AraChat({ id }: { id: string }) {
 
   const right = (
     <MenuTrigger label="Стиль, модель и действия" sections={menu}>
-      <Glass radius={18} style={styles.more}>
-        <SymbolView name="ellipsis" size={16} tintColor={Colors.text} weight="semibold" />
+      <Glass radius={22} backing style={styles.more}>
+        <SymbolView name="ellipsis" size={18} tintColor={Colors.text} weight="semibold" />
       </Glass>
     </MenuTrigger>
   );
@@ -195,7 +195,7 @@ const styles = StyleSheet.create({
   title: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   row: { paddingHorizontal: Spacing.lg, paddingVertical: 7 },
   avatar: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.cardRaised },
-  more: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  more: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   error: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   empty: { alignItems: 'center' },

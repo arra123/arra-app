@@ -1,7 +1,9 @@
+import { MenuView, type MenuAction } from '@react-native-menu/menu';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   useWindowDimensions,
@@ -146,7 +148,68 @@ export function GlassMenu({
  * Меряем обычный View-обёртку (а не анимированную кнопку) и открываем один раз:
  * пока меню открыто или меряется, повторные тапы ничего не делают.
  */
-export function MenuTrigger({
+export function MenuTrigger(props: {
+  sections: MenuSection[];
+  children: ReactNode;
+  align?: 'left' | 'right';
+  style?: StyleProp<ViewStyle>;
+  label: string;
+}) {
+  return Platform.OS === 'ios' ? <NativeMenuTrigger {...props} /> : <JsMenuTrigger {...props} />;
+}
+
+/**
+ * На iPhone — системное меню iOS (UIMenu): стекло, группы с разделителями,
+ * галочка у выбранного, SF Symbols справа. Открывается обычным тапом.
+ */
+function NativeMenuTrigger({ sections, children, align = 'right', style, label }: {
+  sections: MenuSection[];
+  children: ReactNode;
+  align?: 'left' | 'right';
+  style?: StyleProp<ViewStyle>;
+  label: string;
+}) {
+  const list = sections.filter((s) => itemsOf(s).length);
+  const byId = new Map<string, MenuItem>();
+  const actions: MenuAction[] = list.map((section, si) => ({
+    id: `section-${si}`,
+    title: titleOf(section) || '',
+    displayInline: true,
+    subactions: itemsOf(section).map((item, ii) => {
+      const id = `${si}:${ii}`;
+      byId.set(id, item);
+      return {
+        id,
+        title: item.label,
+        subtitle: item.subtitle,
+        image: item.icon,
+        imageColor: item.destructive ? Colors.danger : undefined,
+        state: item.checked ? ('on' as const) : ('off' as const),
+        attributes: item.destructive ? { destructive: true } : undefined,
+      };
+    }),
+  }));
+  return (
+    <MenuView
+      style={style}
+      actions={actions}
+      isAnchoredToRight={align === 'right'}
+      themeVariant="dark"
+      onOpenMenu={() => haptic.tap()}
+      onPressAction={({ nativeEvent }) => {
+        const item = byId.get(nativeEvent.event);
+        if (!item) return;
+        haptic.select();
+        setTimeout(item.onPress, 60);
+      }}>
+      <View accessible accessibilityRole="button" accessibilityLabel={label}>
+        {children}
+      </View>
+    </MenuView>
+  );
+}
+
+function JsMenuTrigger({
   sections,
   children,
   align = 'right',

@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { confirmCloseAgent, stopAgent } from '@/ara/actions';
 import { ara } from '@/ara/client';
-import { awaitedHelper, currentActivity, DEVICE_META, limitFor, modelLabel, shortAgo } from '@/ara/format';
+import { DEVICE_META, limitFor, modelLabel, shortAgo } from '@/ara/format';
 import { useAgentItem, useAra, useNow, useTranscript } from '@/ara/hooks';
 import type { TranscriptMessage } from '@/ara/types';
 import { uploadPhoto } from '@/ara/upload';
@@ -155,21 +155,41 @@ export default function AgentScreen() {
   if (tools.length) menu.push(tools);
   if (agent) menu.push([{ label: 'Закрыть терминал', icon: 'xmark', destructive: true, onPress: () => confirmCloseAgent(agent) }]);
 
-  // Чем занят сейчас — хвостом подзаголовка, только пока работает
-  const helper = agent?.state === 'working' ? awaitedHelper(agent, transcript, now) : null;
-  const doing = agent?.state !== 'working' ? '' : helper ? `ждёт помощника` : currentActivity(agent, transcript);
+  // Статус в одном месте — в капсуле с названием: «ждёт · 3 мин» жёлтым или дуга и время работы
+  const workFrom = transcript?.lastUser ? transcript.lastUser * 1000 : agent?.since;
+  const doneAt = transcript?.last ? transcript.last * 1000 : agent?.since;
+  const shortStatus = !agent ? null : stopping ? (
+    <T v="caption" color={Colors.textSecondary}>останавливаю…</T>
+  ) : agent.state === 'waiting' ? (
+    <T v="caption" weight="600" color={Colors.waiting} numberOfLines={1}>
+      {doneAt ? `ждёт · ${shortAgo(now - doneAt)}` : 'ждёт ответа'}
+    </T>
+  ) : agent.state === 'working' ? (
+    <View style={styles.shortStatus}>
+      <Spinner size={10} />
+      <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{workFrom ? shortAgo(now - workFrom) : 'работает'}</T>
+    </View>
+  ) : agent.state === 'error' ? (
+    <T v="caption" weight="600" color={Colors.error}>прервался</T>
+  ) : doneAt ? (
+    <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{shortAgo(now - doneAt)} назад</T>
+  ) : null;
 
   const title = (
     <View style={styles.title}>
-      {item ? <ProjectIcon iconName={item.iconName} agent={item.agent} size={34} /> : null}
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <T v="headline" weight="700" numberOfLines={1}>{item?.project || (recent ? recent.title : 'Агент')}</T>
+      {item ? <ProjectIcon iconName={item.iconName} agent={item.agent} size={32} /> : null}
+      <View style={{ flexShrink: 1, minWidth: 0 }}>
+        <T v="subhead" weight="700" numberOfLines={1}>{item?.project || (recent ? recent.title : 'Агент')}</T>
         {item ? (
           <View style={styles.subtitle}>
-            <SymbolView name={DEVICE_META[item.device].icon} size={12} tintColor={Colors.textSecondary} accessibilityLabel={DEVICE_META[item.device].label} />
-            <T v="caption" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>
-              {[agent?.ws != null ? `стол ${agent.ws}` : '', doing].filter(Boolean).join(' · ')}
-            </T>
+            <SymbolView name={DEVICE_META[item.device].icon} size={11} tintColor={Colors.textSecondary} accessibilityLabel={DEVICE_META[item.device].label} />
+            {agent?.ws != null ? <T v="caption" color={Colors.textSecondary}>стол {agent.ws}</T> : null}
+            {shortStatus ? (
+              <Animated.View key={`${agent?.state}:${stopping}`} entering={FadeIn.duration(250)} style={styles.shortStatus}>
+                {agent?.ws != null ? <T v="caption" color={Colors.textTertiary}>·</T> : null}
+                {shortStatus}
+              </Animated.View>
+            ) : null}
           </View>
         ) : (
           <T v="caption" color={Colors.textSecondary} numberOfLines={1}>ищу агента…</T>
@@ -178,47 +198,26 @@ export default function AgentScreen() {
     </View>
   );
 
-  // Справа коротко статус (одно место): «ждёт · 3 мин» жёлтым или дуга и время работы,
-  // рядом кольцо недельного лимита (Claude или Codex этого устройства)
-  const workFrom = transcript?.lastUser ? transcript.lastUser * 1000 : agent?.since;
-  const doneAt = transcript?.last ? transcript.last * 1000 : agent?.since;
-  const shortStatus = !agent ? null : stopping ? (
-    <T v="footnote" color={Colors.textSecondary}>стоп…</T>
-  ) : agent.state === 'waiting' ? (
-    <T v="footnote" weight="600" color={Colors.waiting} numberOfLines={1}>
-      {doneAt ? `ждёт · ${shortAgo(now - doneAt)}` : 'ждёт ответа'}
-    </T>
-  ) : agent.state === 'working' ? (
-    <View style={styles.shortStatus}>
-      <Spinner size={12} />
-      {workFrom ? <T v="footnote" color={Colors.textSecondary} numberOfLines={1}>{shortAgo(now - workFrom)}</T> : null}
-    </View>
-  ) : agent.state === 'error' ? (
-    <T v="footnote" weight="600" color={Colors.error}>прервался</T>
-  ) : doneAt ? (
-    <T v="footnote" color={Colors.textSecondary} numberOfLines={1}>{shortAgo(now - doneAt)} назад</T>
+  // Справа отдельная капсула: кольцо остатка недельного лимита и «⋯» (системное меню)
+  const ring = item ? (
+    <WeekRing
+      title={item.agent === 'claude' ? 'Claude' : `Codex ${item.device === 'pc' ? 'ПК' : 'ноутбук'}`}
+      limit={limitFor(limits, item.agent, item.device)}
+      size={28}
+    />
   ) : null;
-
-  const right = (
-    <View style={styles.right}>
-      {shortStatus ? (
-        <Animated.View key={`${agent?.state}:${stopping}`} entering={FadeIn.duration(250)}>{shortStatus}</Animated.View>
-      ) : null}
-      {item ? (
-        <WeekRing
-          title={item.agent === 'claude' ? 'Claude' : `Codex ${item.device === 'pc' ? 'ПК' : 'ноутбук'}`}
-          limit={limitFor(limits, item.agent, item.device)}
-        />
-      ) : null}
+  const right = ring || menu.length ? (
+    <Glass radius={22} backing style={styles.right}>
+      {ring}
       {menu.length ? (
         <MenuTrigger label="Модель и действия" sections={menu}>
-          <Glass radius={18} style={styles.more}>
-            <SymbolView name="ellipsis" size={16} tintColor={Colors.text} weight="semibold" />
-          </Glass>
+          <View style={styles.more}>
+            <SymbolView name="ellipsis" size={18} tintColor={Colors.text} weight="semibold" />
+          </View>
         </MenuTrigger>
       ) : null}
-    </View>
-  );
+    </Glass>
+  ) : null;
 
   // План и помощники — у плавающего агентика (тап — подробности); у закрытой сессии план в шапке
   const below = !agent && plan.length ? <PlanCard plan={plan} /> : null;
@@ -265,7 +264,7 @@ export default function AgentScreen() {
             ) : null}
             <Composer
               inputRef={inputRef}
-              placeholder={question ? 'Свой ответ…' : agent.state === 'working' ? 'Напиши — агент увидит после текущего шага' : 'Напиши агенту — уйдёт в его терминал'}
+              placeholder={question ? 'Свой ответ…' : agent.state === 'working' ? 'Увидит после шага…' : 'Написать агенту'}
               onSend={send}
             />
           </View>
@@ -298,11 +297,11 @@ function ClosedBar({ onHeight, onNew }: { onHeight: (h: number) => void; onNew?:
 }
 
 const styles = StyleSheet.create({
-  title: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  title: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   subtitle: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 1 },
-  right: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 0 },
-  shortStatus: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  more: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  right: { flexDirection: 'row', alignItems: 'center', gap: 2, height: 44, paddingLeft: 9, flexShrink: 0 },
+  shortStatus: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1 },
+  more: { width: 42, height: 44, alignItems: 'center', justifyContent: 'center' },
   pendingRow: { paddingHorizontal: 16, paddingVertical: 7 },
   empty: { alignItems: 'center' },
   // Непрозрачная подложка: лента не просвечивает между карточками

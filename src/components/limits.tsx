@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { limitColor, limitTint, resetLabel } from '@/ara/format';
+import { limitColor, limitLeft, resetLabel } from '@/ara/format';
 import type { Limit, Limits } from '@/ara/types';
 import { Appear } from '@/components/glass-menu';
 import { Press, T } from '@/components/ui';
@@ -10,23 +10,24 @@ import { Colors, Radius, ScreenPadding } from '@/constants/theme';
 
 const clamp = (n: number) => Math.max(0, Math.min(100, n));
 
-/** Тонкая мини-полоска расхода. */
-function Bar({ percent, width = 28 }: { percent: number; width?: number }) {
+/** Тонкая мини-полоска остатка. */
+function Bar({ left, width = 28 }: { left: number; width?: number }) {
   return (
     <View style={[styles.track, { width }]}>
-      <View style={[styles.fill, { width: `${clamp(percent)}%`, backgroundColor: limitTint(percent) }]} />
+      <View style={[styles.fill, { width: `${clamp(left)}%`, backgroundColor: limitColor(left, Colors.text) }]} />
     </View>
   );
 }
 
-/** «сессия 53% ▬» */
+/** «сессия 47% ▬» — сколько осталось. percent — израсходовано. */
 function Meter({ label, percent, v = 'caption' }: { label: string; percent: number; v?: 'caption' | 'tiny' | 'footnote' }) {
+  const left = limitLeft(percent);
   return (
     <View style={styles.meter}>
-      <T v={v} color={limitColor(percent)} numberOfLines={1}>
-        {label} {Math.round(percent)}%
+      <T v={v} color={limitColor(left)} numberOfLines={1}>
+        {label} {Math.round(left)}%
       </T>
-      <Bar percent={percent} />
+      <Bar left={left} />
     </View>
   );
 }
@@ -44,7 +45,7 @@ function Meters({ limit, v }: { limit: Limit; v?: 'caption' | 'tiny' | 'footnote
     return (
       <T v="tiny" color={Colors.textSecondary} numberOfLines={1}>
         {parts.map(([label, pct], i) => (
-          <T key={label} v="tiny" color={limitColor(pct)}>{i ? ' · ' : ''}{label} {Math.round(pct)}%</T>
+          <T key={label} v="tiny" color={limitColor(limitLeft(pct))}>{i ? ' · ' : ''}{label} {Math.round(limitLeft(pct))}%</T>
         ))}
       </T>
     );
@@ -61,8 +62,8 @@ function Meters({ limit, v }: { limit: Limit; v?: 'caption' | 'tiny' | 'footnote
 function LimitSheet({ title, limit, onClose }: { title: string; limit: Limit | null; onClose: () => void }) {
   const insets = useSafeAreaInsets();
   const rows: [string, string][] = [];
-  if (limit?.session != null) rows.push([`Сессия ${Math.round(limit.session)}%`, limit.sessionReset ? `обновится ${resetLabel(limit.sessionReset)}` : '']);
-  if (limit?.week != null) rows.push([`Неделя ${Math.round(limit.week)}%`, limit.weekReset ? `обновится ${resetLabel(limit.weekReset)}` : '']);
+  if (limit?.session != null) rows.push([`Сессия: осталось ${Math.round(limitLeft(limit.session))}%`, limit.sessionReset ? `обновится ${resetLabel(limit.sessionReset)}` : '']);
+  if (limit?.week != null) rows.push([`Неделя: осталось ${Math.round(limitLeft(limit.week))}%`, limit.weekReset ? `обновится ${resetLabel(limit.weekReset)}` : '']);
   if (limit?.credit?.limit) {
     rows.push([`Облако $${Math.round(limit.credit.left)} из $${Math.round(limit.credit.limit)}`, limit.credit.reset ? `пополнится ${resetLabel(limit.credit.reset)}` : '']);
   }
@@ -119,15 +120,15 @@ export function Ring({ percent, size = 30, stroke = 3, color }: { percent: numbe
   );
 }
 
-/** Недельный лимит одним кольцом с процентом (шапка агента); тап — подробности. */
-export function WeekRing({ title, limit }: { title: string; limit: Limit | null }) {
+/** Остаток недельного лимита одним кольцом с процентом (шапка агента); тап — подробности. */
+export function WeekRing({ title, limit, size = 30 }: { title: string; limit: Limit | null; size?: number }) {
   const [open, setOpen] = useState(false);
   if (limit?.week == null) return null;
-  const pct = Math.round(limit.week);
+  const left = limitLeft(limit.week);
   return (
     <>
-      <Press onPress={() => setOpen(true)} feedback="select" scaleTo={0.92} hitSlop={8} accessibilityLabel={`Недельный лимит ${title}: ${pct}%`}>
-        <Ring percent={limit.week} color={limitTint(limit.week)} />
+      <Press onPress={() => setOpen(true)} feedback="select" scaleTo={0.92} hitSlop={8} accessibilityLabel={`Недельный лимит ${title}: осталось ${Math.round(left)}%`}>
+        <Ring percent={left} size={size} color={limitColor(left, Colors.text)} />
       </Press>
       {open ? <LimitSheet title={title} limit={limit} onClose={() => setOpen(false)} /> : null}
     </>
@@ -178,7 +179,7 @@ export function LimitsSection({ limits }: { limits: Limits | null }) {
   if (!shown.length) return null;
   return (
     <View style={styles.section}>
-      <T v="caption" weight="600" color={Colors.textSecondary} style={styles.caps}>Подписки</T>
+      <T v="caption" weight="600" color={Colors.textSecondary} style={styles.caps}>Подписки · осталось</T>
       {shown.map(([title, limit]) => <LimitRow key={title} title={title} limit={limit} />)}
     </View>
   );
