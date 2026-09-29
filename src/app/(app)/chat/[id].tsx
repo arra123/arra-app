@@ -1,22 +1,15 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
+import type { SFSymbol } from 'sf-symbols-typescript';
 import { useEffect, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
-import Animated, {
-  cancelAnimation,
-  FadeIn,
-  FadeInDown,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSequence,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import { chats, useChat, type AskModel, type ChatMessage } from '@/ara/chats';
 import { mediaPaths } from '@/ara/format';
 import { useAra } from '@/ara/hooks';
 import { uploadPhoto, type LocalPhoto } from '@/ara/upload';
+import { AraMascot } from '@/components/ara-mascot';
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { Composer } from '@/components/composer';
 import { MenuTrigger } from '@/components/glass-menu';
@@ -31,20 +24,19 @@ const MODELS: { value: AskModel; label: string; hint: string }[] = [
   { value: 'opus', label: 'Opus', hint: 'самая умная' },
 ];
 
-const SUGGESTIONS = [
-  'Что сейчас делают агенты?',
-  'Сравни в таблице Haiku, Sonnet и Opus',
-  'Попроси агента в helper проверить тесты',
+const SUGGESTIONS: { text: string; icon: SFSymbol }[] = [
+  { text: 'Что сейчас делают агенты?', icon: 'rectangle.stack' },
+  { text: 'Кто из агентов ждёт моего ответа?', icon: 'bell.badge' },
+  { text: 'Что сделано за сегодня?', icon: 'checklist' },
+  { text: 'Как задеплоить мой сервер?', icon: 'server.rack' },
 ];
 
-function Typing() {
-  const t = useSharedValue(0);
-  useEffect(() => {
-    t.set(withRepeat(withSequence(withTiming(1, { duration: 500 }), withTiming(0, { duration: 500 })), -1));
-    return () => cancelAnimation(t);
-  }, [t]);
-  const style = useAnimatedStyle(() => ({ opacity: 0.35 + t.get() * 0.65 }));
-  return <Animated.View style={[styles.typing, style]} />;
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 5) return 'Доброй ночи';
+  if (h < 12) return 'Доброе утро';
+  if (h < 18) return 'Добрый день';
+  return 'Добрый вечер';
 }
 
 function AraAnswer({ message, chatId, onRetry }: { message: ChatMessage; chatId: string; onRetry?: () => void }) {
@@ -67,7 +59,7 @@ function AraAnswer({ message, chatId, onRetry }: { message: ChatMessage; chatId:
               ))}
             </View>
           ) : null}
-          {message.streaming && !message.text ? <Typing /> : null}
+          {message.streaming && !message.text ? <AraMascot size={34} mood="thinking" /> : null}
           {message.error ? (
             <View style={styles.error}>
               <SymbolView name="exclamationmark.triangle" size={13} tintColor={Colors.error} />
@@ -190,13 +182,19 @@ export default function ChatScreen() {
       }}
       empty={
         <Animated.View entering={FadeIn.duration(300)} style={styles.empty}>
-          <AgentIcon agent="ara" size={56} />
-          <T v="title" weight="700">Спроси Ару</T>
+          <AraMascot size={96} interactive mood={busy ? 'thinking' : 'idle'} />
+          <T v="title" weight="700" style={{ marginTop: 14 }}>{greeting()}!</T>
+          <T v="subhead" color={Colors.textSecondary} style={{ textAlign: 'center' }}>
+            Я знаю всех твоих агентов на ноутбуке и ПК. Спроси или дай задачу.
+          </T>
           <View style={styles.suggestions}>
-            {SUGGESTIONS.map((s) => (
-              <Press key={s} onPress={() => chats.send(id, s)} disabled={!online || busy} style={styles.suggestion} accessibilityLabel={s}>
-                <T v="footnote" color={Colors.textSecondary}>{s}</T>
-              </Press>
+            {SUGGESTIONS.map((s, i) => (
+              <Animated.View key={s.text} entering={FadeInDown.delay(80 + i * 60).duration(260)} style={styles.suggestionCell}>
+                <Press onPress={() => chats.send(id, s.text)} disabled={!online || busy} style={styles.suggestion} feedback="press" accessibilityLabel={s.text}>
+                  <SymbolView name={s.icon} size={17} tintColor={Colors.ara} />
+                  <T v="footnote" weight="600" numberOfLines={2}>{s.text}</T>
+                </Press>
+              </Animated.View>
             ))}
           </View>
         </Animated.View>
@@ -207,7 +205,7 @@ export default function ChatScreen() {
           onSend={send}
           onHeight={onHeight}
           accessory={modelPicker}
-          autoFocus={!messages.length}
+          autoFocus={false}
           disabled={busy}
         />
       )}
@@ -219,15 +217,17 @@ const styles = StyleSheet.create({
   title: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   row: { paddingHorizontal: Spacing.lg, paddingVertical: 7 },
   modelButton: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, height: 34 },
-  typing: { width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.text },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   error: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  empty: { alignItems: 'center', gap: 10 },
-  suggestions: { marginTop: 10, gap: 8, alignItems: 'center' },
+  empty: { alignItems: 'center', gap: 6, alignSelf: 'stretch' },
+  suggestions: { marginTop: 18, flexDirection: 'row', flexWrap: 'wrap', gap: 10, alignSelf: 'stretch' },
+  suggestionCell: { width: '48%', flexGrow: 1 },
   suggestion: {
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    gap: 8,
+    padding: 14,
+    minHeight: 88,
     borderRadius: 18,
+    backgroundColor: Colors.card,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.hairline,
   },

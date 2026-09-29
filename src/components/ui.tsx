@@ -28,6 +28,7 @@ import type { SFSymbol } from 'sf-symbols-typescript';
 
 import type { AgentKind, AgentState } from '@/ara/types';
 import { STATE_META } from '@/ara/format';
+import { AraMascot } from '@/components/ara-mascot';
 import { Colors, Radius, Type } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -194,6 +195,13 @@ export function AgentIcon({ agent, size = 32 }: { agent: AgentKind | 'ara'; size
     codex: { icon: 'chevron.left.forwardslash.chevron.right' as SFSymbol, color: Colors.codex, bg: 'rgba(255,255,255,0.08)' },
     ara: { icon: 'sparkles' as SFSymbol, color: Colors.ara, bg: 'rgba(185,164,255,0.14)' },
   }[agent];
+  if (agent === 'ara') {
+    return (
+      <View style={[styles.center, { width: size, height: size, borderRadius: size * 0.32, backgroundColor: 'rgba(255,255,255,0.07)' }]}>
+        <AraMascot size={size * 0.68} still />
+      </View>
+    );
+  }
   return (
     <View style={[styles.center, { width: size, height: size, borderRadius: size * 0.32, backgroundColor: meta.bg }]}>
       <SymbolView name={meta.icon} size={size * 0.52} tintColor={meta.color} weight="bold" />

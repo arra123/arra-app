@@ -4,12 +4,14 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Alert, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { SFSymbol } from 'sf-symbols-typescript';
 
 import { chats, useChats, type Chat } from '@/ara/chats';
 import { ara } from '@/ara/client';
 import { AGENT_LABEL, ago, DEVICE_META, STATE_META } from '@/ara/format';
 import { useAra, useNow } from '@/ara/hooks';
 import type { Agent, DeviceId, RecentSession } from '@/ara/types';
+import { AraMascot } from '@/components/ara-mascot';
 import { MenuTrigger } from '@/components/glass-menu';
 import { Segmented } from '@/components/segmented';
 import { AgentIcon, Chip, Glass, IconButton, Press, StatusDot, T } from '@/components/ui';
@@ -22,6 +24,20 @@ const layout = LinearTransition.springify().damping(22).stiffness(200);
 
 function openAgent(key: string) {
   router.push({ pathname: '/agent/[key]', params: { key } });
+}
+
+const QUICK: { text: string; icon: SFSymbol }[] = [
+  { text: 'Что делают агенты?', icon: 'rectangle.stack' },
+  { text: 'Кто ждёт ответа?', icon: 'bell.badge' },
+  { text: 'Итоги за сегодня', icon: 'checklist' },
+  { text: 'Какие у меня серверы?', icon: 'server.rack' },
+];
+
+function quickAsk(text: string) {
+  haptic.tap();
+  const id = chats.create();
+  router.push({ pathname: '/chat/[id]', params: { id } });
+  setTimeout(() => chats.send(id, text), 250);
 }
 
 function newChat() {
@@ -266,15 +282,28 @@ function ChatList({ chats: list, now }: { chats: Chat[]; now: number }) {
   const sorted = useMemo(() => [...list].sort((a, b) => b.updatedAt - a.updatedAt), [list]);
   return (
     <View style={styles.section}>
-      <SectionTitle title="Чаты с Арой" />
-      <Press onPress={newChat} style={styles.newChat} feedback="press" accessibilityLabel="Новый чат с Арой">
-        <AgentIcon agent="ara" size={34} />
-        <View style={styles.rowText}>
-          <T v="callout" weight="600">Новый чат</T>
-          <T v="footnote" color={Colors.textSecondary}>Быстрые ответы и задачи агентам</T>
-        </View>
-        <SymbolView name="plus" size={16} tintColor={Colors.textSecondary} weight="semibold" />
-      </Press>
+      <Animated.View entering={FadeInDown.duration(300)} style={styles.hero}>
+        <AraMascot size={76} interactive />
+        <T v="title" weight="700" style={{ marginTop: 12 }}>Привет, я Ара</T>
+        <T v="footnote" color={Colors.textSecondary} style={{ textAlign: 'center' }}>
+          Знаю твоих агентов на ноутбуке и ПК, отвечаю за секунды и передаю им задачи
+        </T>
+        <Press onPress={newChat} style={styles.askButton} feedback="press" accessibilityLabel="Новый чат с Арой">
+          <SymbolView name="square.and.pencil" size={15} tintColor={Colors.onAccent} weight="semibold" />
+          <T v="callout" weight="700" color={Colors.onAccent}>Спросить Ару</T>
+        </Press>
+      </Animated.View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickRow} style={styles.quickScroll}>
+        {QUICK.map((q, i) => (
+          <Animated.View key={q.text} entering={FadeInDown.delay(60 + i * 50).duration(240)}>
+            <Press onPress={() => quickAsk(q.text)} style={styles.quick} feedback="press" accessibilityLabel={q.text}>
+              <SymbolView name={q.icon} size={14} tintColor={Colors.ara} />
+              <T v="footnote" weight="600">{q.text}</T>
+            </Press>
+          </Animated.View>
+        ))}
+      </ScrollView>
+      {sorted.length ? <SectionTitle title="Чаты" /> : null}
       {sorted.length ? (
         <Animated.View layout={layout} style={[styles.group, { marginTop: 12 }]}>
           {sorted.map((chat, i) => {
@@ -294,7 +323,7 @@ function ChatList({ chats: list, now }: { chats: Chat[]; now: number }) {
                   style={[styles.row, i > 0 && styles.rowBorder]}
                   accessibilityLabel={chat.title}
                   accessibilityHint="Долгое нажатие — удалить">
-                  <SymbolView name="bubble.left" size={17} tintColor={Colors.textSecondary} style={{ width: 28 }} />
+                  <AgentIcon agent="ara" size={30} />
                   <View style={styles.rowText}>
                     <T v="subhead" numberOfLines={1}>{chat.title}</T>
                     <T v="caption" color={Colors.textSecondary} numberOfLines={1}>
@@ -308,7 +337,7 @@ function ChatList({ chats: list, now }: { chats: Chat[]; now: number }) {
         </Animated.View>
       ) : (
         <T v="footnote" color={Colors.textTertiary} style={{ marginTop: 16, textAlign: 'center' }}>
-          Чатов пока нет
+          Здесь появятся твои чаты
         </T>
       )}
     </View>
@@ -317,6 +346,39 @@ function ChatList({ chats: list, now }: { chats: Chat[]; now: number }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
+  hero: {
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 24,
+    paddingHorizontal: 20,
+    borderRadius: 24,
+    backgroundColor: Colors.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.hairline,
+  },
+  askButton: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: Colors.accent,
+  },
+  quickScroll: { marginHorizontal: -ScreenPadding, marginTop: 12, marginBottom: 6 },
+  quickRow: { paddingHorizontal: ScreenPadding, gap: 8 },
+  quick: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 13,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.hairline,
+  },
   top: {
     position: 'absolute',
     top: 0,

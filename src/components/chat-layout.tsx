@@ -55,6 +55,11 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
     height: composerHeight.get() + Math.max(0, -keyboard.height.get() - bottomInset) + 8,
   }));
 
+  // Пустой экран поднимается вместе с клавиатурой и полем ввода, а не прячется под ними
+  const emptyLift = useAnimatedStyle(() => ({
+    paddingBottom: composerHeight.get() + Math.max(0, -keyboard.height.get() - bottomInset) + 16,
+  }));
+
   const reversed = [...data].reverse();
 
   return (
@@ -78,7 +83,7 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
       />
 
       {!data.length && empty ? (
-        <View pointerEvents="box-none" style={[styles.empty, { paddingTop: headerHeight }]}>{empty}</View>
+        <Animated.View pointerEvents="box-none" style={[styles.empty, { paddingTop: headerHeight }, emptyLift]}>{empty}</Animated.View>
       ) : null}
 
       <View style={styles.header} onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}>
@@ -117,5 +122,5 @@ const styles = StyleSheet.create({
   headerTitle: { flex: 1, minWidth: 0 },
   below: { paddingHorizontal: ScreenPadding, paddingTop: 8, gap: 8 },
   composer: { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  empty: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, paddingHorizontal: 32, paddingBottom: 120, alignItems: 'center', justifyContent: 'center' },
+  empty: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center' },
 });
