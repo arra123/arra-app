@@ -16,7 +16,6 @@ import type { Agent, DeviceId, RecentSession } from '@/ara/types';
 import { chats, useCurrentChatId } from '@/ara/chats';
 import { openChat, openNewChat } from '@/components/chat-list';
 import { ChatSidebar } from '@/components/chat-sidebar';
-import { LimitsSection } from '@/components/limits';
 import { GlassMenu, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
 import { DeskBadge, IconButton, Press, ProjectIcon, StatusDot, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
@@ -56,6 +55,8 @@ export default function Home() {
     <ChatSidebar
       open={sidebar}
       currentId={currentChatId}
+      mode="work"
+      limits={state.limits}
       onOpen={() => setSidebar(true)}
       onClose={() => setSidebar(false)}
       onSelect={openChat}
@@ -125,13 +126,12 @@ export default function Home() {
               </View>
             ) : null}
 
-            <LimitsSection limits={state.limits} />
           </Animated.View>
         </ScrollView>
         {/* Работа и диалоги переключаются только через левую панель. */}
         <View style={[styles.top, { paddingTop: insets.top + 6 }]}>
           <IconButton icon="line.3.horizontal" label="Меню" onPress={() => setSidebar(true)} />
-          <T v="headline" weight="700" style={styles.topTitle}>Работа</T>
+          <View style={styles.topTitle} />
           <IconButton icon="square.and.pencil" label="Новый агент" onPress={() => router.push('/new')} />
         </View>
       </View>

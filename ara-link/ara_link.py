@@ -360,6 +360,26 @@ class AraLink:
         if isinstance(result, dict) and result.get("ok") is False:
             raise RuntimeError(result.get("error") or "Терминал не принял текст")
 
+    async def confirm_submission(self, agent: dict) -> None:
+        """Контрольный Enter после длинной вставки.
+
+        Мост уже нажимает Enter, но TUI может еще разбирать большой текст и пути
+        к вложениям. Повтор через короткую паузу либо отправит оставшийся в поле
+        текст, либо окажется безвредным во время уже начавшегося ответа.
+        """
+        await asyncio.sleep(0.8)
+        term = str(agent.get("term"))
+        if self.remote(agent.get("device")):
+            result = await self.run_json([self.script("pc"), "key", term, "enter"], timeout=15)
+        else:
+            result = await self.run_json(
+                [self.script("bridge"), "--terminal-action", "send-key", term, "enter"],
+                timeout=15,
+                env=graphical_env(),
+            )
+        if isinstance(result, dict) and result.get("ok") is False:
+            raise RuntimeError(result.get("error") or "Терминал не подтвердил отправку")
+
     async def cmd_send(self, msg: dict) -> dict:
         agent = msg.get("agent") or {}
         text = (msg.get("text") or "").strip()
@@ -369,6 +389,7 @@ class AraLink:
         if not text:
             raise RuntimeError("Пустое сообщение")
         await self.type_into(agent, text)
+        await self.confirm_submission(agent)
         self.wake.set()
         return {}
 

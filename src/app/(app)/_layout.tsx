@@ -34,6 +34,7 @@ export default function AppLayout() {
       <Stack.Screen name="index" />
       <Stack.Screen name="agent/[key]" />
       <Stack.Screen name="chat/[id]" />
+      <Stack.Screen name="ask" />
       <Stack.Screen
         name="new"
         options={{

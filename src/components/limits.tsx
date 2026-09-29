@@ -168,7 +168,7 @@ function LimitRow({ title, limit }: { title: string; limit: Limit }) {
 }
 
 /** Секция «Подписки» внизу главного экрана. */
-export function LimitsSection({ limits }: { limits: Limits | null }) {
+export function LimitsSection({ limits, compact = false }: { limits: Limits | null; compact?: boolean }) {
   if (!limits) return null;
   const rows: [string, Limit | null][] = [
     ['Claude', limits.claude],
@@ -178,7 +178,7 @@ export function LimitsSection({ limits }: { limits: Limits | null }) {
   const shown = rows.filter((r): r is [string, Limit] => hasData(r[1]));
   if (!shown.length) return null;
   return (
-    <View style={styles.section}>
+    <View style={[styles.section, compact && styles.sectionCompact]}>
       <T v="caption" weight="600" color={Colors.textSecondary} style={styles.caps}>Подписки · осталось</T>
       {shown.map(([title, limit]) => <LimitRow key={title} title={title} limit={limit} />)}
     </View>
@@ -194,6 +194,7 @@ const styles = StyleSheet.create({
   meters: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
   inline: { alignSelf: 'flex-start' },
   section: { marginTop: 26, paddingHorizontal: ScreenPadding + 4, gap: 2 },
+  sectionCompact: { marginTop: 18, paddingHorizontal: 20, paddingBottom: 10 },
   caps: { textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4 },
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 7 },
   rowTitle: { width: 118 },

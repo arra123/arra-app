@@ -38,12 +38,16 @@ function Num({ n }: { n: number }) {
  * первый пункт; по нажатию раскрывается весь список, «Свернуть» — обратно.
  * Состояние раскрытия держит экран агента.
  */
-export function NeedsCard({ needs, open, onToggle, onReply }: {
+export function NeedsCard({ needs, open, completed, busy, onToggle, onReply, onComplete }: {
   needs: string[];
   open: boolean;
+  completed: Set<string>;
+  busy: Set<string>;
   onToggle: () => void;
   onReply: () => void;
+  onComplete: (need: string) => void;
 }) {
+  const left = needs.filter((need) => !completed.has(need)).length;
   return (
     <Animated.View entering={FadeInDown.duration(220)} exiting={FadeOut.duration(150)} layout={layout} style={[styles.card, styles.needs]}>
       <Press
@@ -54,20 +58,25 @@ export function NeedsCard({ needs, open, onToggle, onReply }: {
         accessibilityRole="button"
         accessibilityState={{ expanded: open }}
         accessibilityLabel={`Нужно от тебя: ${needs.length} ${pointsWord(needs.length)}. ${open ? 'Свернуть' : needs[0]}`}>
-        <Num n={needs.length} />
+        <Num n={left} />
         <View style={{ flex: 1, minWidth: 0 }}>
           <T v="caption" weight="700" color={Colors.waiting} style={styles.caps}>Нужно от тебя</T>
-          {open ? null : <T v="footnote" numberOfLines={1}>{needs[0]}</T>}
+          {open ? null : <T v="footnote" numberOfLines={1}>{left ? needs.find((need) => !completed.has(need)) : 'Всё сделано'}</T>}
         </View>
         <Chevron open={open} />
       </Press>
       {open ? (
         <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)} style={styles.needsList}>
-          {needs.map((need, i) => (
-            <View key={i} style={styles.needRow}>
-              <T v="footnote" weight="700" color={Colors.waiting} style={styles.needNum}>{i + 1}</T>
+          {needs.map((need) => (
+            <Press key={need} onPress={() => onComplete(need)} disabled={completed.has(need) || busy.has(need)} feedback="select"
+              style={[styles.needRow, completed.has(need) && styles.needDone]} accessibilityRole="checkbox"
+              accessibilityState={{ checked: completed.has(need), busy: busy.has(need) }}
+              accessibilityLabel={`${completed.has(need) ? 'Сделано' : 'Отметить выполненным'}: ${need}`}>
+              <View style={[styles.needCheck, completed.has(need) && styles.needCheckDone]}>
+                {busy.has(need) ? <ActivityIndicator size="small" color={Colors.waiting} /> : completed.has(need) ? <SymbolView name="checkmark" size={12} tintColor={Colors.onAccent} weight="bold" /> : null}
+              </View>
               <T v="subhead" selectable style={{ flex: 1 }}>{need}</T>
-            </View>
+            </Press>
           ))}
           <View style={styles.needsActions}>
             <Press onPress={onReply} feedback="tap" style={styles.pill} accessibilityRole="button" accessibilityLabel="Ответить агенту">
@@ -334,8 +343,10 @@ const styles = StyleSheet.create({
   needs: { paddingVertical: 0, gap: 0 },
   needsHead: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48, paddingVertical: 6 },
   needsList: { gap: 10, paddingBottom: 12, paddingTop: 2 },
-  needRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  needNum: { width: 18, textAlign: 'center' },
+  needRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 4 },
+  needDone: { opacity: 0.52 },
+  needCheck: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: Colors.waitingLine, alignItems: 'center', justifyContent: 'center' },
+  needCheckDone: { backgroundColor: Colors.waiting, borderColor: Colors.waiting },
   needsActions: { flexDirection: 'row', gap: 8, marginTop: 2 },
   pill: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, paddingHorizontal: 14, borderRadius: Radius.pill, backgroundColor: Colors.text },
   pillGhost: { height: 36, paddingHorizontal: 14, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.cardPressed },

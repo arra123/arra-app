@@ -205,10 +205,12 @@ class AraLinkTest(unittest.IsolatedAsyncioTestCase):
         await self.command({"type": "ara.send", "reqId": "r1", "agent": laptop_agent, "text": "продолжай", "images": ["/home/x/a.jpg"]})
         self.assertTrue((await self.expect("ara.result", lambda m: m["reqId"] == "r1"))["ok"])
         self.assertIn("send 111 <продолжай\n\n/home/x/a.jpg>", self.calls())
+        self.assertIn("bridge --terminal-action send-key 111 enter", self.calls())
 
         await self.command({"type": "ara.send", "reqId": "r2", "agent": pc_agent, "text": "на ПК"})
         self.assertTrue((await self.expect("ara.result", lambda m: m["reqId"] == "r2"))["ok"])
         self.assertIn("pc send 222 <на ПК>", self.calls())
+        self.assertIn("pc key 222 enter", self.calls())
 
         await self.command({"type": "ara.stop", "reqId": "r3", "agent": laptop_agent})
         await self.command({"type": "ara.stop", "reqId": "r4", "agent": pc_agent})

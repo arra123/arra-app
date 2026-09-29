@@ -6,7 +6,7 @@ import { AraChat } from '@/components/ara-chat';
 
 /** Диалог с Arra на весь экран; вход — список на вкладке «Разговор». */
 export default function ChatScreen() {
-  const { id: rawId } = useLocalSearchParams<{ id: string }>();
+  const { id: rawId, ask } = useLocalSearchParams<{ id: string; ask?: string }>();
   const id = String(rawId || '');
   const chat = useChat(id);
 
@@ -20,5 +20,5 @@ export default function ChatScreen() {
     if (current && !current.messages.length) chats.remove(id);
   }, [id]);
 
-  return <AraChat id={id} />;
+  return <AraChat id={id} autoFocus={ask === '1'} />;
 }

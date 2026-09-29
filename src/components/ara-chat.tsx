@@ -1,7 +1,7 @@
 import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useMemo, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { useMemo, useRef, useState } from 'react';
+import { Alert, StyleSheet, TextInput, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import { chats, useChat, type AskModel, type ChatMessage } from '@/ara/chats';
@@ -72,10 +72,11 @@ function switchTo(next: string) {
  * по центру название, справа капсула «новый чат · ⋯» (стиль, модель, удаление),
  * лента и поле ввода.
  */
-export function AraChat({ id }: { id: string }) {
+export function AraChat({ id, autoFocus = false }: { id: string; autoFocus?: boolean }) {
   const chat = useChat(id);
   const state = useAra();
   const [sidebar, setSidebar] = useState(false);
+  const inputRef = useRef<TextInput>(null);
   const messages = useMemo(() => chat?.messages || [], [chat]);
   const keys = useMemo(() => messages.map((m) => m.id), [messages]);
   const isFresh = useFreshKeys(keys);
@@ -173,6 +174,8 @@ export function AraChat({ id }: { id: string }) {
     <ChatSidebar
       open={sidebar}
       currentId={id}
+      mode="chat"
+      limits={state.limits}
       onOpen={() => setSidebar(true)}
       onClose={() => setSidebar(false)}
       onSelect={switchTo}
@@ -205,10 +208,11 @@ export function AraChat({ id }: { id: string }) {
         }
         composer={(onHeight) => (
           <Composer
+            inputRef={inputRef}
+            autoFocus={autoFocus}
             placeholder={busy ? 'Arra отвечает…' : 'Спроси Arra…'}
             onSend={send}
             onHeight={onHeight}
-            autoFocus={false}
             disabled={busy}
           />
         )}

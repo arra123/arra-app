@@ -81,14 +81,19 @@ export default function AgentScreen() {
   const messages = useMemo(() => transcript?.messages || [], [transcript]);
   const plan = transcript?.plan || [];
   const model = transcript?.model || agent?.model || '';
-  const needs = agent ? transcript?.needs || [] : [];
+  const needs = useMemo(() => agent ? transcript?.needs || [] : [], [agent, transcript?.needs]);
   const question = agent ? transcript?.question || null : null;
   const helpers = transcript?.agents || [];
 
   // «Нужно от тебя» свёрнуто в строку; новый список снова приходит свёрнутым
   const needsKey = needs.join('\n');
   const [needsOpen, setNeedsOpen] = useState(false);
+  const [completedNeeds, setCompletedNeeds] = useState<Set<string>>(new Set());
+  const [busyNeeds, setBusyNeeds] = useState<Set<string>>(new Set());
   useEffect(() => setNeedsOpen(false), [needsKey]);
+  useEffect(() => {
+    setCompletedNeeds((done) => new Set([...done].filter((need) => needs.includes(need))));
+  }, [needs, needsKey]);
 
   // Ответ на вопрос: выбор, статус отправки и раскрытие живут здесь, а не в карточке —
   // при сетевой ошибке ничего не теряется, повторное нажатие не шлёт ответ дважды
@@ -156,6 +161,21 @@ export default function AgentScreen() {
     } catch (error) {
       setPending((list) => list.filter((p) => p.id !== id));
       throw error;
+    }
+  }
+
+  async function completeNeed(need: string) {
+    if (completedNeeds.has(need) || busyNeeds.has(need)) return;
+    setBusyNeeds((items) => new Set(items).add(need));
+    try {
+      await sendMessage(`Готово: ${need}`, []);
+      setCompletedNeeds((items) => new Set(items).add(need));
+      haptic.success();
+    } catch (error: any) {
+      haptic.error();
+      Alert.alert('Не удалось сообщить агенту', error?.message || 'Попробуй ещё раз');
+    } finally {
+      setBusyNeeds((items) => { const next = new Set(items); next.delete(need); return next; });
     }
   }
 
@@ -399,7 +419,9 @@ export default function AgentScreen() {
                   />
                 ) : null}
                 {needs.length && !questionOpen ? (
-                  <NeedsCard needs={needs} open={needsOpen} onToggle={() => setNeedsOpen((v) => !v)} onReply={() => inputRef.current?.focus()} />
+                  <NeedsCard needs={needs} open={needsOpen} completed={completedNeeds} busy={busyNeeds}
+                    onToggle={() => setNeedsOpen((v) => !v)} onReply={() => inputRef.current?.focus()}
+                    onComplete={(need) => void completeNeed(need)} />
                 ) : null}
               </ScrollView>
             ) : null}
