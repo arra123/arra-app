@@ -4,8 +4,8 @@ import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import * as DocumentPicker from 'expo-document-picker';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useRef, useState, type RefObject } from 'react';
-import { ActivityIndicator, Alert, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
+import { useEffect, useEffectEvent, useRef, useState, type RefObject } from 'react';
+import { ActivityIndicator, Alert, AppState, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import Animated, {
   Easing,
   FadeIn,
@@ -22,7 +22,7 @@ import Animated, {
 import type { SFSymbol } from 'sf-symbols-typescript';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { LocalPhoto } from '@/ara/upload';
+import { rememberAttachment, type LocalPhoto } from '@/ara/upload';
 import { Glass, Press, T } from '@/components/ui';
 import { Colors, Radius, Type } from '@/constants/theme';
 import { useDictation } from '@/lib/dictation';
@@ -35,6 +35,7 @@ type Props = {
   disabled?: boolean;
   onHeight?: (height: number) => void;
   autoFocus?: boolean;
+  voiceRequest?: string;
   /** Снаружи — чтобы поставить курсор в поле (тап по карточке «нужно от тебя») */
   inputRef?: RefObject<TextInput | null>;
 };
@@ -42,17 +43,33 @@ type Props = {
 let photoSeq = 0;
 
 function toPhoto(asset: ImagePicker.ImagePickerAsset): LocalPhoto {
-  const mime = asset.mimeType || 'image/jpeg';
-  const ext = mime.includes('png') ? 'png' : mime.includes('heic') ? 'heic' : 'jpg';
-  return { uri: asset.uri, name: asset.fileName || `photo-${Date.now()}-${++photoSeq}.${ext}`, mime };
+  const mime = asset.mimeType || (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
+  const ext = mime.startsWith('video/') ? (mime.includes('quicktime') ? 'mov' : 'mp4') : mime.includes('png') ? 'png' : mime.includes('heic') ? 'heic' : 'jpg';
+  return rememberAttachment({ uri: asset.uri, name: asset.fileName || `attachment-${Date.now()}-${++photoSeq}.${ext}`, mime });
 }
 
-export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, inputRef }: Props) {
+export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, voiceRequest, inputRef }: Props) {
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [photos, setPhotos] = useState<LocalPhoto[]>([]);
   const [sending, setSending] = useState(false);
   const dictation = useDictation(text, setText);
+  const voiceHandled = useRef('');
+  const startRequestedVoice = useEffectEvent(() => { void dictation.start(); });
+  useEffect(() => {
+    if (!voiceRequest || voiceHandled.current === voiceRequest || disabled) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const start = () => {
+      if (AppState.currentState !== 'active' || voiceHandled.current === voiceRequest) return;
+      timer = setTimeout(() => {
+        voiceHandled.current = voiceRequest;
+        startRequestedVoice();
+      }, 300);
+    };
+    start();
+    const listener = AppState.addEventListener('change', state => { if (state === 'active') start(); });
+    return () => { if (timer) clearTimeout(timer); listener.remove(); };
+  }, [voiceRequest, disabled]);
   const listening = dictation.mode === 'live' || dictation.mode === 'record';
   const transcribing = dictation.mode === 'transcribing';
   const ownInput = useRef<TextInput>(null);
@@ -111,7 +128,7 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, i
           return;
         }
       }
-      const options: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.85, allowsMultipleSelection: !camera, selectionLimit: 6 };
+      const options: ImagePicker.ImagePickerOptions = { mediaTypes: camera ? ['images'] : ['images', 'videos'], quality: 0.85, allowsMultipleSelection: !camera, selectionLimit: 6 };
       const result = camera ? await ImagePicker.launchCameraAsync(options) : await ImagePicker.launchImageLibraryAsync(options);
       if (result.canceled) return;
       setPhotos((current) => [...current, ...result.assets.map(toPhoto)].slice(0, 6));
@@ -125,7 +142,7 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, i
     try {
       const result = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
       if (result.canceled) return;
-      const files = result.assets.map((a) => ({ uri: a.uri, name: a.name || `file-${Date.now()}`, mime: a.mimeType || 'application/octet-stream' }));
+      const files = result.assets.map((a) => ({ uri: a.uri, name: a.name || `file-${Date.now()}`, mime: a.mimeType || 'application/octet-stream' })).map(rememberAttachment);
       setPhotos((current) => [...current, ...files].slice(0, 6));
       haptic.tap();
     } catch (error: any) {
@@ -265,7 +282,7 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, i
                   <Image source={{ uri: photo.uri }} style={StyleSheet.absoluteFill} contentFit="cover" />
                 ) : (
                   <View style={styles.fileTile}>
-                    <SymbolView name={{ ios: 'doc', android: 'description', web: 'description' }} size={20} tintColor={Colors.textSecondary} />
+                    <SymbolView name={{ ios: photo.mime.startsWith('video/') ? 'play.rectangle' : 'doc', android: 'description', web: 'description' }} size={20} tintColor={Colors.textSecondary} />
                     <T v="tiny" color={Colors.textSecondary} numberOfLines={2} style={{ textAlign: 'center' }}>{photo.name}</T>
                   </View>
                 )}
@@ -424,7 +441,7 @@ function AttachMenu({ anchor, onClose, onLatest, onCamera, onLibrary, onFiles, g
   const items: { label: string; icon: SFSymbol; android: string; onPress: () => void; thumb?: string | null }[] = [
     { label: 'Последнее фото', icon: 'photo.badge.arrow.down', android: 'photo', onPress: onLatest, thumb },
     { label: 'Камера', icon: 'camera', android: 'photo_camera', onPress: onCamera },
-    { label: 'Фото', icon: 'photo.on.rectangle', android: 'photo_library', onPress: onLibrary },
+    { label: 'Фото и видео', icon: 'photo.on.rectangle', android: 'photo_library', onPress: onLibrary },
     { label: 'Файлы', icon: 'paperclip', android: 'attach_file', onPress: onFiles },
   ];
 

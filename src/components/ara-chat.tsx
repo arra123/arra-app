@@ -72,7 +72,7 @@ function switchTo(next: string) {
  * по центру название, справа капсула «новый чат · ⋯» (стиль, модель, удаление),
  * лента и поле ввода.
  */
-export function AraChat({ id, autoFocus = false }: { id: string; autoFocus?: boolean }) {
+export function AraChat({ id, autoFocus = false, voiceRequest }: { id: string; autoFocus?: boolean; voiceRequest?: string }) {
   const chat = useChat(id);
   const state = useAra();
   const [sidebar, setSidebar] = useState(false);
@@ -210,6 +210,7 @@ export function AraChat({ id, autoFocus = false }: { id: string; autoFocus?: boo
           <Composer
             inputRef={inputRef}
             autoFocus={autoFocus}
+            voiceRequest={voiceRequest}
             placeholder={busy ? 'Arra отвечает…' : 'Спроси Arra…'}
             onSend={send}
             onHeight={onHeight}

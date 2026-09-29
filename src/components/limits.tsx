@@ -1,3 +1,4 @@
+import { SymbolView } from 'expo-symbols';
 import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -154,13 +155,17 @@ function LimitRow({ title, limit }: { title: string; limit: Limit }) {
   return (
     <>
       <Press onPress={() => setOpen(true)} feedback="select" scaleTo={0.99} style={styles.row} accessibilityLabel={`Лимиты ${title}`}>
-        <T v="subhead" weight="600" style={styles.rowTitle} numberOfLines={1}>{title}</T>
-        <View style={{ flex: 1, gap: 2 }}>
+        <View style={styles.serviceIcon}><SymbolView name={title === 'Claude' ? 'sparkles' : 'terminal'} size={22} tintColor={Colors.text} /></View>
+        <View style={{ flex: 1, gap: 6 }}>
+          <T v="headline" weight="600" numberOfLines={1}>{title}</T>
+        <View style={{ gap: 6 }}>
           <Meters limit={limit} v="footnote" />
           {limit.credit?.limit ? (
             <T v="tiny" color={Colors.textTertiary}>облако ${Math.round(limit.credit.left)} из ${Math.round(limit.credit.limit)}</T>
           ) : null}
         </View>
+        </View>
+        <Ring percent={limitLeft(limit.week ?? limit.session ?? 0)} size={46} stroke={4} color={limitColor(limitLeft(limit.week ?? limit.session ?? 0))} />
       </Press>
       {open ? <LimitSheet title={title} limit={limit} onClose={() => setOpen(false)} /> : null}
     </>
@@ -193,10 +198,11 @@ const styles = StyleSheet.create({
   meter: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   meters: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
   inline: { alignSelf: 'flex-start' },
-  section: { marginTop: 26, paddingHorizontal: ScreenPadding + 4, gap: 2 },
+  section: { marginTop: 26, paddingHorizontal: ScreenPadding + 4, gap: 12 },
   sectionCompact: { marginTop: 18, paddingHorizontal: 20, paddingBottom: 10 },
   caps: { textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4 },
-  row: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 7 },
+  serviceIcon: { width: 42, height: 42, borderRadius: 21, backgroundColor: Colors.separator, alignItems: 'center', justifyContent: 'center' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, backgroundColor: Colors.card, borderRadius: 20 },
   rowTitle: { width: 118 },
   sheet: {
     position: 'absolute',

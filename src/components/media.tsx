@@ -102,10 +102,10 @@ export function LocalImage({ uri, size = 120 }: { uri: string; size?: number }) 
 }
 
 /** Видео из переписки: грузится с компьютера и играет прямо в ленте. */
-export function RemoteVideo({ path, scope }: { path: string; scope: FileScope }) {
+export function RemoteVideo({ path, scope, size }: { path: string; scope: FileScope; size?: number }) {
   const { file, error, retry } = useRemoteFile(path, scope);
   const { width } = useWindowDimensions();
-  const w = Math.min(width - 64, 360);
+  const w = size || Math.min(width - 64, 360);
   if (error) return <Failed error={error} onRetry={retry} name={baseName(path)} />;
   return (
     <View style={[styles.video, { width: w, height: w * 0.5625 }]}>
@@ -265,3 +265,20 @@ const styles = StyleSheet.create({
   viewerBackdrop: { backgroundColor: '#000' },
   viewerClose: { position: 'absolute', right: 16 },
 });
+
+/** Компактное видео в отправленном сообщении; просмотр по нажатию. */
+export function LocalVideo({ uri, size = 104 }: { uri: string; size?: number }) {
+  const [open, setOpen] = useState(false);
+  return <>
+    <Press onPress={() => setOpen(true)} accessibilityLabel="Открыть прикреплённое видео" style={[styles.thumb, { width: size, height: size }]}>
+      <SymbolView name="play.circle.fill" size={32} tintColor={Colors.text} />
+      <T v="caption">Видео</T>
+    </Press>
+    <Modal visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
+      <View style={{ flex: 1, backgroundColor: '#000', paddingTop: 60, paddingBottom: 40 }}>
+        <View style={{ flex: 1 }}><VideoPlayerView uri={uri} /></View>
+        <Press onPress={() => setOpen(false)} accessibilityLabel="Закрыть видео" style={{ padding: 20, alignItems: 'center' }}><T>Закрыть</T></Press>
+      </View>
+    </Modal>
+  </>;
+}

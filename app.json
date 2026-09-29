@@ -6,7 +6,10 @@
     "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": ["arra", "aura"],
+    "scheme": [
+      "arra",
+      "aura"
+    ],
     "userInterfaceStyle": "dark",
     "runtimeVersion": {
       "policy": "appVersion"
@@ -106,7 +109,7 @@
     },
     "updates": {
       "url": "https://u.expo.dev/804ef682-ea7e-4d3f-9994-d578dd0e4c79",
-      "enabled": true,
+      "enabled": false,
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 10000
     },

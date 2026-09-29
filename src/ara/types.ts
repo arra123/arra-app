@@ -72,7 +72,7 @@ export type StepItem = { icon?: string; text: string };
 
 export type TranscriptMessage =
   /** ts — секунды unix */
-  | { role: 'user'; text: string; images?: string[]; ts?: number }
+  | { role: 'user'; text: string; images?: string[]; videos?: string[]; ts?: number }
   /** took — сколько секунд агент думал над ответом */
   | { role: 'assistant'; text: string; images?: string[]; videos?: string[]; sites?: string[]; ts?: number; took?: number }
   | { role: 'steps'; items: StepItem[]; more?: number; ts?: number };

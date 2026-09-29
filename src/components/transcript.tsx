@@ -13,9 +13,9 @@ import Animated, {
 
 import { messageTime, stepIcon, tookLabel } from '@/ara/format';
 import type { FileScope, PlanItem, StepItem, TranscriptMessage } from '@/ara/types';
-import { localPhotoUri } from '@/ara/upload';
+import { isVideoAttachment, localPhotoUri } from '@/ara/upload';
 import { Markdown } from '@/components/markdown';
-import { LocalImage, RemoteImage, RemoteVideo } from '@/components/media';
+import { LocalImage, LocalVideo, RemoteImage, RemoteVideo } from '@/components/media';
 import { Chip, Press, T } from '@/components/ui';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 
@@ -160,10 +160,11 @@ function MediaRow({ children }: { children: ReactNode }) {
   return <View style={styles.media}>{children}</View>;
 }
 
-export function UserBubble({ text, images = [], localImages = [], scope, pending, progress = 1, time }: {
+export function UserBubble({ text, images = [], videos = [], localImages = [], scope, pending, progress = 1, time }: {
   text: string;
   images?: string[];
   localImages?: string[];
+  videos?: string[];
   scope: FileScope;
   pending?: boolean;
   /** Тонкая полоса под фото; без крутилки и служебной надписи. */
@@ -171,7 +172,8 @@ export function UserBubble({ text, images = [], localImages = [], scope, pending
   /** «12:40» под пузырём */
   time?: string;
 }) {
-  const count = localImages.length || images.length;
+  const attachments = [...images, ...videos];
+  const count = localImages.length || attachments.length;
   const tile = count === 1 ? 112 : count === 2 ? 104 : 82;
   const columns = Math.min(3, count);
   const mediaWidth = columns ? columns * tile + (columns - 1) * 5 : 0;
@@ -182,8 +184,9 @@ export function UserBubble({ text, images = [], localImages = [], scope, pending
         <View style={[styles.userBubble, count > 0 && styles.userBubbleWithMedia]}>
           {count ? (
             <View style={[styles.userMedia, { width: mediaWidth }]}>
-              {localImages.length ? localImages.map((uri) => <LocalImage key={uri} uri={uri} size={tile} />) : images.map((p) => {
+              {localImages.length ? localImages.map((uri) => isVideoAttachment(uri) ? <LocalVideo key={uri} uri={uri} size={tile} /> : <LocalImage key={uri} uri={uri} size={tile} />) : attachments.map((p) => {
                 const local = localPhotoUri(p);
+                if (isVideoAttachment(p)) return local ? <LocalVideo key={p} uri={local} size={tile} /> : <RemoteVideo key={p} path={p} scope={scope} size={tile} />;
                 return local ? <LocalImage key={p} uri={local} size={tile} /> : <RemoteImage key={p} path={p} scope={scope} size={tile} square />;
               })}
             </View>
@@ -238,7 +241,7 @@ export const TranscriptRow = memo(function TranscriptRow({ message, scope, anima
   return (
     <Animated.View entering={entering} style={styles.row}>
       {message.role === 'user' ? (
-        <UserBubble text={message.text} images={message.images} scope={scope} time={messageTime(message.ts)} />
+        <UserBubble text={message.text} images={message.images} videos={message.videos} scope={scope} time={messageTime(message.ts)} />
       ) : message.role === 'assistant' ? (
         <AssistantMessage
           text={message.text}

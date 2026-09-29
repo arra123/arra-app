@@ -34,6 +34,9 @@ const CLAUDE_MODELS = [
 ];
 
 const CODEX_MODELS = [
+  { value: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', hint: 'доступна в Codex' },
+  { value: 'gpt-6-sol', label: 'GPT-6 Sol', hint: 'код и задачи' },
+  { value: 'gpt-6-luna', label: 'GPT-6 Luna', hint: 'быстрые задачи' },
   { value: 'gpt-6-astra', label: 'GPT-6 Astra', hint: 'новейшая' },
   { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', hint: 'сложные задачи' },
   { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', hint: 'баланс' },

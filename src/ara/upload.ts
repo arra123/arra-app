@@ -4,6 +4,14 @@ import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
 import { API_URL, getToken } from '@/lib/api';
 
 export type LocalPhoto = { uri: string; name: string; mime: string };
+const attachmentMime = new Map<string, string>();
+export function rememberAttachment(file: LocalPhoto) {
+  attachmentMime.set(file.uri, file.mime);
+  return file;
+}
+export function isVideoAttachment(path: string) {
+  return attachmentMime.get(path)?.startsWith('video/') || /\.(mp4|mov|m4v|webm)(?:[?#]|$)/i.test(path);
+}
 
 // Пока приложение открыто, сохраняем связь между путём на компьютере и
 // оригиналом на телефоне. Тогда отправленное фото не превращается в пустую
@@ -82,8 +90,9 @@ export async function uploadPhoto(photo: LocalPhoto, target: { agentKey: string 
   const query = 'agentKey' in target
     ? `agentKey=${encodeURIComponent(target.agentKey)}`
     : `device=${encodeURIComponent(target.device)}`;
-  const res = await upload<{ path: string }>(`/ara/upload?${query}`, photo.uri, photo.name, photo.mime, 180_000);
+  const res = await upload<{ path: string }>(`/ara/upload?${query}`, photo.uri, photo.name, photo.mime, photo.mime.startsWith('video/') ? 600_000 : 180_000);
   localPhotoByPath.set(res.path, photo.uri);
+  attachmentMime.set(res.path, photo.mime);
   return res.path;
 }
 

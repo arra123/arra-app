@@ -2,14 +2,13 @@ import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
-import ReanimatedDrawerLayout, { DrawerKeyboardDismissMode, DrawerState, DrawerType, type DrawerLayoutMethods } from 'react-native-gesture-handler/ReanimatedDrawerLayout';
+import ReanimatedDrawerLayout, { DrawerKeyboardDismissMode, DrawerType, type DrawerLayoutMethods } from 'react-native-gesture-handler/ReanimatedDrawerLayout';
 import Animated, { interpolate, useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chats, useChats, type Chat } from '@/ara/chats';
 import type { Limits } from '@/ara/types';
 import { AraMascot } from '@/components/ara-mascot';
-import { LimitsSection } from '@/components/limits';
 import { Press, T } from '@/components/ui';
 import { Colors } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
@@ -34,12 +33,11 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
   const { width: screenW } = useWindowDimensions();
   const width = Math.min(370, Math.round(screenW * 0.86));
   const drawer = useRef<DrawerLayoutMethods>(null);
-  const slide = useRef(0);
   const list = useChats();
 
   useEffect(() => {
-    if (open) drawer.current?.openDrawer({ animationSpeed: 1.25 });
-    else drawer.current?.closeDrawer({ animationSpeed: 1.25 });
+    if (open) drawer.current?.openDrawer({ animationSpeed: 1 });
+    else drawer.current?.closeDrawer({ animationSpeed: 1 });
   }, [open]);
 
   const items = useMemo(() => list
@@ -69,7 +67,7 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
         </View>
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: insets.bottom + 104 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="none" indicatorStyle="white">
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="none" indicatorStyle="white">
         <T v="headline" weight="700" style={styles.section}>Недавнее</T>
         {items.length ? items.map((chat) => {
           const active = chat.id === currentId;
@@ -86,7 +84,11 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
             </Pressable>
           );
         }) : <T v="subhead" color={Colors.textSecondary} style={styles.empty}>Диалогов пока нет</T>}
-        <LimitsSection limits={limits || null} compact />
+        <Press onPress={go(() => router.push('/subscriptions'))} style={styles.subscriptions} accessibilityLabel="Открыть подписки">
+          <SymbolView name="chart.pie" size={22} tintColor={Colors.text} />
+          <T v="body" weight="600">Подписки</T>
+          <SymbolView name="chevron.right" size={14} tintColor={Colors.textSecondary} />
+        </Press>
       </ScrollView>
 
       <View style={[styles.bottom, { paddingBottom: Math.max(insets.bottom, 8) }]} pointerEvents="box-none">
@@ -105,13 +107,7 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
   return (
     <ReanimatedDrawerLayout ref={drawer} drawerWidth={width} drawerType={DrawerType.BACK}
       keyboardDismissMode={DrawerKeyboardDismissMode.NONE} drawerBackgroundColor={Colors.background}
-      overlayColor="rgba(0,0,0,0.12)" edgeWidth={40} minSwipeDistance={2} animationSpeed={1.25}
-      onDrawerSlide={(position) => { slide.current = position; }}
-      onDrawerStateChanged={(state, willShow) => {
-        if (state === DrawerState.SETTLING && !willShow && !open && slide.current > 0.14) {
-          requestAnimationFrame(() => drawer.current?.openDrawer({ animationSpeed: 1.25 }));
-        }
-      }}
+      overlayColor="rgba(0,0,0,0.12)" edgeWidth={40} minSwipeDistance={12} animationSpeed={1}
       onDrawerOpen={() => { haptic.select(); onOpen(); }}
       onDrawerClose={() => { if (open) haptic.select(); onClose(); }}
       renderNavigationView={() => navigation}>
@@ -135,7 +131,8 @@ const styles = StyleSheet.create({
   chatPressed: { backgroundColor: Colors.card },
   dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.link },
   empty: { paddingHorizontal: 20, paddingTop: 6 },
-  bottom: { position: 'absolute', left: 14, right: 14, bottom: 0, flexDirection: 'row', gap: 8, paddingHorizontal: 5, paddingTop: 5, borderRadius: 29, backgroundColor: Colors.card },
+  subscriptions: { margin: 16, padding: 16, borderRadius: 16, backgroundColor: Colors.card, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  bottom: { marginHorizontal: 14, marginBottom: 8, flexDirection: 'row', gap: 8, paddingHorizontal: 5, paddingTop: 5, borderRadius: 29, backgroundColor: Colors.card },
   modeButton: { flex: 1, height: 48, borderRadius: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
   modeActive: { backgroundColor: Colors.text },
 });

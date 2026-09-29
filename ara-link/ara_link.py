@@ -185,8 +185,8 @@ class AraLink:
             return 124, "", f"{os.path.basename(argv[0])}: не ответил за {int(timeout)} с"
         return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
-    async def run_json(self, argv: list[str], stdin: str | None = None, timeout: float = 30) -> Any:
-        code, out, err = await self.run(argv, stdin, timeout)
+    async def run_json(self, argv: list[str], stdin: str | None = None, timeout: float = 30, env=None) -> Any:
+        code, out, err = await self.run(argv, stdin, timeout, env=env)
         if code != 0:
             raise RuntimeError((err or out).strip()[-300:] or f"{os.path.basename(argv[0])}: код {code}")
         text = out.strip()
@@ -217,7 +217,7 @@ class AraLink:
     # ---------- снимок ----------
 
     async def snapshot(self) -> dict:
-        data = await self.run_json([self.script("sessions")], timeout=20)
+        data = await self.run_json([self.script("sessions")], timeout=20, env=graphical_env())
         live = data.get("live") or []
         for agent in live:
             agent.setdefault("device", self.device)
@@ -351,7 +351,7 @@ class AraLink:
 
     # ---------- команды ----------
 
-    async def type_into(self, agent: dict, text: str) -> None:
+    async def type_into(self, agent: dict, text: str) -> dict:
         term = str(agent.get("term"))
         if self.remote(agent.get("device")):
             result = await self.run_json([self.script("pc"), "send", term], stdin=text, timeout=30)
@@ -359,6 +359,7 @@ class AraLink:
             result = await self.run_json([self.script("send"), term, text], timeout=30)
         if isinstance(result, dict) and result.get("ok") is False:
             raise RuntimeError(result.get("error") or "Терминал не принял текст")
+        return result if isinstance(result, dict) else {}
 
     async def confirm_submission(self, agent: dict) -> None:
         """Контрольный Enter после длинной вставки.
@@ -388,8 +389,9 @@ class AraLink:
             text = (text + "\n\n" if text else "") + "\n".join(images)
         if not text:
             raise RuntimeError("Пустое сообщение")
-        await self.type_into(agent, text)
-        await self.confirm_submission(agent)
+        delivery = await self.type_into(agent, text)
+        if delivery.get("how") == "desktop":
+            await self.confirm_submission(agent)
         self.wake.set()
         return {}
 
