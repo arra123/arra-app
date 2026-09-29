@@ -68,7 +68,8 @@ multipart `file` → `{path}` — путь на компьютере; потом
   В `ara.transcript.data.question` — неотвеченный вопрос агента:
   `{id, answerVia?, questions: [{question, header, multi, options: [{label, description}]}]}`.
   Без `answerVia` (Claude `AskUserQuestion`) телефон отвечает клавишами `ara.key`;
-  `answerVia: "message"` (Codex) — обычным `ara.send`. Подробности — HANDOFF, «Сборка 114».
+  `answerVia: "message"` (Codex) — обычным `ara.send`. Подробности — HANDOFF,
+  «Дополнение к сборке 113».
 
 ## Push
 
