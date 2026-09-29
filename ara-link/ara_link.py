@@ -363,6 +363,24 @@ class AraLink:
         os.kill(int(term), 15)
         return {}
 
+    async def cmd_key(self, msg: dict) -> dict:
+        """Нажать клавиши в терминале агента: ответ на вопрос с вариантами."""
+        agent = msg.get("agent") or {}
+        term = str(agent.get("term") or "")
+        keys = [k for k in (msg.get("keys") or []) if isinstance(k, str)][:8]
+        if not term.isdigit() or not keys:
+            raise RuntimeError("Нечего нажимать")
+        for key in keys:
+            if self.remote(agent.get("device")):
+                argv = [self.script("pc"), "key", term, key]
+            else:
+                argv = [self.script("bridge"), "--terminal-action", "send-key", term, key]
+            code, out, err = await self.run(argv, timeout=15)
+            if code != 0:
+                raise RuntimeError((err or out).strip()[-300:] or "Терминал не принял клавишу")
+            await asyncio.sleep(0.15)
+        return {}
+
     async def cmd_model(self, msg: dict) -> dict:
         model = str(msg.get("model") or "")
         if not MODEL_RE.match(model):
@@ -635,6 +653,8 @@ class AraLink:
             self.spawn(self.reply(msg, self.cmd_model))
         elif kind == "ara.close":
             self.spawn(self.reply(msg, self.cmd_close))
+        elif kind == "ara.key":
+            self.spawn(self.reply(msg, self.cmd_key))
         elif kind == "ara.launch":
             self.spawn(self.reply(msg, self.cmd_launch))
         elif kind == "ara.upload":

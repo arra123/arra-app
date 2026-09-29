@@ -350,6 +350,7 @@ export function createHub(deps = {}) {
       case 'ara.send':
       case 'ara.stop':
       case 'ara.close':
+      case 'ara.key':
       case 'ara.model': {
         if (!item || item.term == null) {
           emit(socket, { type: 'ara.result', reqId: entry.reqId, ok: false, error: 'Агент уже закрыт' });
@@ -361,6 +362,11 @@ export function createHub(deps = {}) {
           payload.images = Array.isArray(msg.images) ? msg.images.filter((p) => typeof p === 'string').slice(0, 10) : [];
         }
         if (msg.type === 'ara.model') payload.model = text(msg.model, 80);
+        // a key press in the agent's terminal: a digit of an answer, then Enter
+        if (msg.type === 'ara.key') {
+          payload.keys = (Array.isArray(msg.keys) ? msg.keys : [])
+            .filter((k) => typeof k === 'string' && /^([0-9]|enter|escape|up|down|space|tab)$/.test(k)).slice(0, 8);
+        }
         forward(u, userId, u.merged.hostOf.get(key), payload, entry);
         return;
       }
