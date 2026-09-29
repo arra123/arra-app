@@ -64,6 +64,7 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
       idle: num(raw.idle) ?? 0,
       task: str(raw.task, 400),
       transcript: str(raw.transcript, 600),
+      iconName: /^[\w.-]{1,80}\.png$/.test(String(raw.iconName || '')) ? raw.iconName : null,
       model: str(raw.model, 80),
     });
   }
@@ -82,6 +83,7 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
       title: str(raw.title, 200),
       mtime: num(raw.mtime),
       transcript: str(raw.transcript, 600),
+      iconName: /^[\w.-]{1,80}\.png$/.test(String(raw.iconName || '')) ? raw.iconName : null,
     });
   }
   return { device, live, recent, pcOnline: !!msg?.pcOnline, limits: limitsOf(msg?.limits) };

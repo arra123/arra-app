@@ -41,6 +41,8 @@ log = logging.getLogger("ara-link")
 CONFIG_PATH = Path(os.environ.get("ARA_LINK_CONFIG", "~/.config/ara-link/config.json")).expanduser()
 
 # Пути от $HOME. Любой можно переопределить в конфиге ("scripts": {...}).
+ICON_DIR = "~/.local/share/notch-island/project-icons"
+
 SCRIPTS = {
     "sessions": "~/.config/quickshell/ara/scripts/ara-sessions",
     "transcript": "~/.config/quickshell/ara/scripts/ara-transcript",
@@ -225,6 +227,12 @@ class AraLink:
             self.limits_at = time.monotonic()
             with contextlib.suppress(Exception):
                 self.limits = await self.run_json([self.script("limits")], timeout=20)
+        # project icons: the phone loads them from the server by name
+        for item in live + (data.get("recent") or []):
+            icon = str(item.get("icon") or "")
+            if icon.startswith(str(Path(ICON_DIR).expanduser())) and icon.endswith(".png"):
+                item["iconName"] = Path(icon).name
+                self.spawn(self.push_icon(icon))
         return {
             "type": "ara.snapshot",
             "device": self.device,
@@ -233,6 +241,32 @@ class AraLink:
             "pcOnline": bool(data.get("pcOnline")) or self.device == "pc",
             "limits": getattr(self, "limits", None),
         }
+
+    async def push_icon(self, path: str) -> None:
+        """Send a project icon to the server once per change (PUT /ara/icon/<name>)."""
+        try:
+            stamp = os.path.getmtime(path)
+        except OSError:
+            return
+        sent = getattr(self, "icons_sent", None)
+        if sent is None:
+            sent = self.icons_sent = {}
+        if sent.get(path) == stamp:
+            return
+        sent[path] = stamp
+
+        def put() -> None:
+            import urllib.request
+            data = Path(path).read_bytes()
+            url = f"{self.api}/ara/icon/{urllib.parse.quote(Path(path).name)}?token={urllib.parse.quote(self.cfg['token'])}"
+            req = urllib.request.Request(url, data=data, method="PUT", headers={"content-type": "image/png"})
+            urllib.request.urlopen(req, timeout=20).read()
+
+        try:
+            await asyncio.to_thread(put)
+        except Exception as error:  # noqa: BLE001
+            sent.pop(path, None)
+            log.debug("иконка %s: %s", path, error)
 
     async def snapshot_loop(self) -> None:
         failures = 0

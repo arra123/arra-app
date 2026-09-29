@@ -1,4 +1,5 @@
-import { basename } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 
 import { TooLarge, mimeFor, sendBlob } from '../ara/blobs.js';
 import { blobs, hub } from '../ara/instance.js';
@@ -14,6 +15,31 @@ export default async function araRoutes(app) {
   const sweep = setInterval(() => blobs.sweep().catch(() => {}), 3600_000);
   sweep.unref();
   app.addHook('onClose', async () => clearInterval(sweep));
+
+  // Иконки проектов: компьютер кладёт PNG (ключ устройства), телефон показывает
+  const iconDir = join(process.env.UPLOAD_DIR || join(process.cwd(), 'uploads'), 'project-icons');
+  app.addContentTypeParser('image/png', { parseAs: 'buffer' }, (_request, body, done) => done(null, body));
+  const iconName = (n) => (/^[\w.-]{1,80}\.png$/.test(n) ? n : null);
+  app.put('/ara/icon/:name', async (request, reply) => {
+    const device = await deviceByToken(String(request.query?.token || request.headers['x-device-token'] || ''));
+    const name = iconName(String(request.params.name || ''));
+    if (!device || !name) return reply.code(401).send({ error: 'Нужен ключ устройства' });
+    const body = request.body;
+    if (!Buffer.isBuffer(body) || body.length > 200_000) return reply.code(400).send({ error: 'Нужен PNG до 200 КБ' });
+    await mkdir(iconDir, { recursive: true });
+    await writeFile(join(iconDir, name), body);
+    return { ok: true };
+  });
+  app.get('/ara/icon/:name', async (request, reply) => {
+    const name = iconName(String(request.params.name || ''));
+    if (!name) return reply.code(404).send();
+    try {
+      const data = await readFile(join(iconDir, name));
+      return reply.header('content-type', 'image/png').header('cache-control', 'public, max-age=3600').send(data);
+    } catch {
+      return reply.code(404).send();
+    }
+  });
 
   // Фото с телефона → файл на компьютере агента. Отвечает путём на компьютере.
   // query: agentKey (агент, которому пишем) или device (laptop | pc, для чата с Арой и запуска).
