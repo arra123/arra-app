@@ -51,6 +51,7 @@ iPhone ──/client?token=<JWT>──▶ сервер (server/src/ara/hub.js) �
 | `ara.unsubscribe` | — | — |
 | `ara.send` | `reqId`, `agentKey`, `text`, `images?` | `ara.result` |
 | `ara.stop` | `reqId`, `agentKey` | `ara.result` |
+| `ara.key` | `reqId`, `agentKey`, `keys[]` — до 8 из `0-9`, `enter`, `escape`, `up`, `down`, `space`, `tab` | `ara.result` |
 | `ara.model` | `reqId`, `agentKey`, `model` | `ara.result` |
 | `ara.launch` | `reqId`, `device`, `agent`, `dir`, `task`, `model?` | `ara.result` |
 | `ara.ask` | `reqId`, `chatId`, `prompt`, `history`, `style`, `model` | поток `ara.ask.*` |
@@ -64,6 +65,10 @@ multipart `file` → `{path}` — путь на компьютере; потом
 - `ara.state` — `{agents[], recent[], devices: {laptop:{online,via}, pc:{online,via}}, at}`.
   У агента: `key, device, agent, project, cwd, ws, term, title, busy, state, task, transcript, model, since` (мс, с какого момента в текущем состоянии).
 - `ara.transcript`, `ara.result`, `ara.ask.*` — см. выше.
+  В `ara.transcript.data.question` — неотвеченный вопрос агента:
+  `{id, answerVia?, questions: [{question, header, multi, options: [{label, description}]}]}`.
+  Без `answerVia` (Claude `AskUserQuestion`) телефон отвечает клавишами `ara.key`;
+  `answerVia: "message"` (Codex) — обычным `ara.send`. Подробности — HANDOFF, «Сборка 114».
 
 ## Push
 

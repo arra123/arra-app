@@ -29,8 +29,11 @@ export type MenuItem = {
   subtitle?: string;
 };
 
-/** Раздел меню: просто пункты или пункты с маленьким заголовком («Модель»). */
-export type MenuSection = MenuItem[] | { title?: string; items: MenuItem[] };
+/**
+ * Раздел меню: просто пункты или пункты с маленьким заголовком («Модель»).
+ * submenu — на iPhone отдельное вложенное меню (строка «Модель · Opus ›»).
+ */
+export type MenuSection = MenuItem[] | { title?: string; items: MenuItem[]; submenu?: boolean; subtitle?: string; icon?: SFSymbol };
 
 type Anchor = { x: number; y: number; width: number; height: number };
 export type MenuAnchor = Anchor;
@@ -174,7 +177,9 @@ function NativeMenuTrigger({ sections, children, align = 'right', style, label }
   const actions: MenuAction[] = list.map((section, si) => ({
     id: `section-${si}`,
     title: titleOf(section) || '',
-    displayInline: true,
+    ...(!Array.isArray(section) && section.submenu
+      ? { subtitle: section.subtitle, image: section.icon, displayInline: false }
+      : { displayInline: true }),
     subactions: itemsOf(section).map((item, ii) => {
       const id = `${si}:${ii}`;
       byId.set(id, item);

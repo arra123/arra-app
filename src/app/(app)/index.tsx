@@ -15,9 +15,9 @@ import { pins, usePins } from '@/ara/pins';
 import type { Agent, DeviceId, RecentSession } from '@/ara/types';
 import { ChatList, openNewChat } from '@/components/chat-list';
 import { LimitsSection } from '@/components/limits';
-import { GlassMenu, MenuTrigger, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
+import { GlassMenu, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
 import { Segmented } from '@/components/segmented';
-import { DeskBadge, Glass, IconButton, Press, ProjectIcon, StatusDot, T } from '@/components/ui';
+import { DeskBadge, IconButton, Press, ProjectIcon, StatusDot, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -50,11 +50,6 @@ export default function Home() {
     ara.refresh();
     setTimeout(() => setRefreshing(false), 700);
   };
-
-  const plusMenu: MenuSection[] = [[
-    { label: 'Новый Claude', icon: 'asterisk', onPress: () => router.push({ pathname: '/new', params: { agent: 'claude' } }) },
-    { label: 'Новый Codex', icon: 'chevron.left.forwardslash.chevron.right', onPress: () => router.push({ pathname: '/new', params: { agent: 'codex' } }) },
-  ]];
 
   return (
     <View style={styles.root}>
@@ -143,11 +138,8 @@ export default function Home() {
         {tab === 'talk' ? (
           <IconButton icon="square.and.pencil" label="Новый диалог" onPress={openNewChat} />
         ) : (
-          <MenuTrigger label="Новый агент" sections={plusMenu}>
-            <Glass radius={20} style={styles.plus}>
-              <SymbolView name="square.and.pencil" size={18} tintColor={Colors.text} weight="semibold" />
-            </Glass>
-          </MenuTrigger>
+          // Выбор Claude / Codex — в листе нового агента, с их значками
+          <IconButton icon="square.and.pencil" label="Новый агент" onPress={() => router.push('/new')} />
         )}
       </View>
     </View>
@@ -332,7 +324,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(10,10,12,0.72)',
   },
   segmented: { flex: 1 },
-  plus: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   banner: {
     flexDirection: 'row',
     alignItems: 'center',

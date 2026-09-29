@@ -1,3 +1,4 @@
+import { SymbolView } from 'expo-symbols';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, {
@@ -13,6 +14,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import { allAnswered, answersByMessage, answersOnTap, type Selections } from '@/ara/questions';
 import type { AgentQuestion, SubAgent } from '@/ara/types';
 import { AraMascot } from '@/components/ara-mascot';
 import { Press, T } from '@/components/ui';
@@ -31,68 +33,222 @@ function Num({ n }: { n: number }) {
 
 // ---------- нужно от тебя ----------
 
-/** Что агент просит у пользователя; тап — к полю ввода. */
-export function NeedsCard({ needs, onPress }: { needs: string[]; onPress: () => void }) {
+/**
+ * Что агент просит у пользователя. Свёрнуто — одна строка: число пунктов и
+ * первый пункт; по нажатию раскрывается весь список, «Свернуть» — обратно.
+ * Состояние раскрытия держит экран агента.
+ */
+export function NeedsCard({ needs, open, onToggle, onReply }: {
+  needs: string[];
+  open: boolean;
+  onToggle: () => void;
+  onReply: () => void;
+}) {
   return (
-    <Animated.View entering={FadeInDown.duration(220)} exiting={FadeOut.duration(150)} layout={layout}>
-      <Press onPress={onPress} scaleTo={0.99} feedback="select" style={styles.card} accessibilityLabel={`Нужно от тебя: ${needs.join('; ')}`}>
-        <T v="caption" weight="700" color={Colors.waiting} style={styles.caps}>Нужно от тебя</T>
-        {needs.map((need, i) => (
-          <View key={i} style={styles.needRow}>
-            <Num n={i + 1} />
-            <T v="subhead" style={{ flex: 1 }}>{need}</T>
-          </View>
-        ))}
+    <Animated.View entering={FadeInDown.duration(220)} exiting={FadeOut.duration(150)} layout={layout} style={[styles.card, styles.needs]}>
+      <Press
+        onPress={onToggle}
+        scaleTo={0.99}
+        feedback="select"
+        style={styles.needsHead}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={`Нужно от тебя: ${needs.length} ${pointsWord(needs.length)}. ${open ? 'Свернуть' : needs[0]}`}>
+        <Num n={needs.length} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <T v="caption" weight="700" color={Colors.waiting} style={styles.caps}>Нужно от тебя</T>
+          {open ? null : <T v="footnote" numberOfLines={1}>{needs[0]}</T>}
+        </View>
+        <Chevron open={open} />
       </Press>
+      {open ? (
+        <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)} style={styles.needsList}>
+          {needs.map((need, i) => (
+            <View key={i} style={styles.needRow}>
+              <T v="footnote" weight="700" color={Colors.waiting} style={styles.needNum}>{i + 1}</T>
+              <T v="subhead" selectable style={{ flex: 1 }}>{need}</T>
+            </View>
+          ))}
+          <View style={styles.needsActions}>
+            <Press onPress={onReply} feedback="tap" style={styles.pill} accessibilityRole="button" accessibilityLabel="Ответить агенту">
+              <SymbolView name="arrowshape.turn.up.left" size={13} tintColor={Colors.onAccent} weight="semibold" />
+              <T v="footnote" weight="700" color={Colors.onAccent}>Ответить</T>
+            </Press>
+            <Press onPress={onToggle} feedback="select" style={styles.pillGhost} accessibilityRole="button" accessibilityLabel="Свернуть список">
+              <T v="footnote" weight="600" color={Colors.textSecondary}>Свернуть</T>
+            </Press>
+          </View>
+        </Animated.View>
+      ) : null}
+    </Animated.View>
+  );
+}
+
+function pointsWord(n: number) {
+  if (n % 10 === 1 && n % 100 !== 11) return 'пункт';
+  if ([2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100)) return 'пункта';
+  return 'пунктов';
+}
+
+function Chevron({ open }: { open: boolean }) {
+  const style = useAnimatedStyle(() => ({ transform: [{ rotate: withTiming(open ? '180deg' : '0deg', { duration: 200 }) }] }));
+  return (
+    <Animated.View style={[styles.chevron, style]}>
+      <SymbolView name="chevron.down" size={12} tintColor={Colors.textSecondary} weight="semibold" />
     </Animated.View>
   );
 }
 
 // ---------- вопрос с вариантами ----------
 
-/** Вопрос агента: варианты крупными строками, тап — ответ в терминал. */
-export function QuestionCard({ question, onAnswer }: { question: AgentQuestion; onAnswer: (index: number) => Promise<unknown> }) {
-  const q = question.questions[0];
-  const [sent, setSent] = useState<number | null>(null);
+export type AnswerStatus = { state: 'idle' } | { state: 'sending' } | { state: 'sent'; at: number } | { state: 'error'; message: string };
 
-  // Новый вопрос — снова можно отвечать
-  useEffect(() => setSent(null), [question.id]);
+/**
+ * Вопросы агента по порядку: заголовок, текст, варианты (один или несколько),
+ * «Свой ответ» — ставит курсор в поле чата. Одиночный вопрос с одним выбором
+ * отвечается нажатием; иначе — кнопкой «Ответить», когда выбрано всё.
+ * Выбор и статус отправки держит экран агента: при ошибке сети они не теряются.
+ */
+export function QuestionCard({ question, picked, onPick, onSubmit, onReopen, onOwnAnswer, status, open, onToggle, now }: {
+  question: AgentQuestion;
+  picked: Selections;
+  onPick: (questionIndex: number, option: number) => void;
+  onSubmit: () => void;
+  /** Ответ ушёл, а вопрос так и висит — снова показать варианты */
+  onReopen: () => void;
+  onOwnAnswer: () => void;
+  status: AnswerStatus;
+  open: boolean;
+  onToggle: () => void;
+  now: number;
+}) {
+  const list = question.questions;
+  const tap = answersOnTap(question);
+  const busy = status.state === 'sending';
+  const sent = status.state === 'sent';
+  const ready = allAnswered(question, picked);
+  const total = list.length;
+  const answered = list.filter((_, i) => (picked[i]?.length ?? 0) > 0).length;
 
-  if (!q) return null;
-
-  async function choose(index: number) {
-    if (sent !== null) return;
-    setSent(index);
-    try {
-      await onAnswer(index);
-    } catch {
-      setSent(null);
-    }
+  if (sent) {
+    const long = now - status.at > 20_000;
+    return (
+      <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} layout={layout} style={[styles.card, styles.sentRow]}>
+        <SymbolView name="checkmark.circle.fill" size={16} tintColor={Colors.success} />
+        <T v="footnote" color={Colors.textSecondary} style={{ flex: 1 }} accessibilityLiveRegion="polite">
+          {long ? 'Вопрос всё ещё открыт в терминале' : 'Ответ отправлен — жду агента'}
+        </T>
+        {long ? (
+          <Press onPress={onReopen} feedback="tap" style={styles.pillGhost} accessibilityRole="button" accessibilityLabel="Показать вопрос и ответить ещё раз">
+            <T v="footnote" weight="600">Ещё раз</T>
+          </Press>
+        ) : (
+          <ActivityIndicator size="small" color={Colors.textSecondary} />
+        )}
+      </Animated.View>
+    );
   }
 
   return (
     <Animated.View entering={FadeInDown.duration(220)} exiting={FadeOut.duration(150)} layout={layout} style={styles.card}>
-      {q.header ? <T v="caption" weight="700" color={Colors.waiting} style={styles.caps}>{q.header}</T> : null}
-      <T v="callout" weight="600">{q.question}</T>
-      <View style={styles.options}>
-        {q.options.map((option, i) => (
-          <Press
-            key={i}
-            onPress={() => choose(i + 1)}
-            disabled={sent !== null && sent !== i + 1}
-            scaleTo={0.985}
-            feedback="press"
-            style={[styles.option, i > 0 && styles.optionBorder]}
-            accessibilityLabel={`${i + 1}. ${option.label}${option.description ? `. ${option.description}` : ''}`}>
-            <Num n={i + 1} />
-            <View style={{ flex: 1, gap: 1 }}>
-              <T v="callout" weight="700">{option.label}</T>
-              {option.description ? <T v="footnote" color={Colors.textSecondary}>{option.description}</T> : null}
+      <Press
+        onPress={onToggle}
+        feedback="select"
+        scaleTo={0.99}
+        style={styles.questionHead}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        accessibilityLabel={`${total > 1 ? `Вопросов агента: ${total}` : 'Вопрос агента'}. ${open ? 'Свернуть' : 'Развернуть'}`}>
+        <SymbolView name="questionmark.bubble.fill" size={15} tintColor={Colors.waiting} />
+        <T v="caption" weight="700" color={Colors.waiting} style={[styles.caps, { flexShrink: 0 }]}>
+          {total > 1 ? `Вопросы · ${answered}/${total}` : 'Вопрос'}
+        </T>
+        {open ? <View style={{ flex: 1 }} /> : <T v="footnote" numberOfLines={1} style={{ flex: 1 }}>{list[0]?.question}</T>}
+        <Chevron open={open} />
+      </Press>
+
+      {open ? (
+        <Animated.View entering={FadeIn.duration(160)} style={styles.questions}>
+          {list.map((q, qi) => (
+            <View key={qi} style={[styles.question, qi > 0 && styles.questionBorder]}>
+              {q.header ? (
+                <T v="caption" weight="700" color={Colors.textSecondary} style={styles.caps}>
+                  {total > 1 ? `${qi + 1}. ` : ''}{q.header}{q.multi ? ' · можно несколько' : ''}
+                </T>
+              ) : null}
+              <T v="callout" weight="600" selectable>{q.question}</T>
+              {q.options.length ? (
+                <View accessibilityRole={q.multi ? undefined : 'radiogroup'}>
+                  {q.options.map((option, oi) => {
+                    const on = (picked[qi] || []).includes(oi);
+                    const icon = q.multi ? (on ? 'checkmark.square.fill' : 'square') : on ? 'checkmark.circle.fill' : 'circle';
+                    return (
+                      <Press
+                        key={oi}
+                        onPress={() => onPick(qi, oi)}
+                        disabled={busy}
+                        scaleTo={0.985}
+                        feedback="select"
+                        style={[styles.option, oi > 0 && styles.optionBorder]}
+                        accessibilityRole={q.multi ? 'checkbox' : 'radio'}
+                        accessibilityState={q.multi ? { checked: on, disabled: busy } : { selected: on, disabled: busy }}
+                        accessibilityLabel={`${option.label}${option.description ? `. ${option.description}` : ''}`}
+                        accessibilityHint={tap ? 'Ответ сразу уйдёт агенту' : undefined}>
+                        <SymbolView name={icon} size={20} tintColor={on ? Colors.waiting : Colors.textTertiary} style={{ marginTop: 1 }} />
+                        <View style={{ flex: 1, gap: 1 }}>
+                          <T v="callout" weight={on ? '700' : '600'}>{option.label}</T>
+                          {option.description ? <T v="footnote" color={Colors.textSecondary}>{option.description}</T> : null}
+                        </View>
+                        {busy && tap && on ? <ActivityIndicator size="small" color={Colors.textSecondary} /> : null}
+                      </Press>
+                    );
+                  })}
+                </View>
+              ) : null}
             </View>
-            {sent === i + 1 ? <ActivityIndicator size="small" color={Colors.textSecondary} /> : null}
+          ))}
+
+          <Press
+            onPress={onOwnAnswer}
+            disabled={busy}
+            feedback="tap"
+            style={[styles.option, styles.optionBorder]}
+            accessibilityRole="button"
+            accessibilityLabel="Свой ответ"
+            accessibilityHint="Поставит курсор в поле ввода внизу">
+            <SymbolView name="square.and.pencil" size={19} tintColor={Colors.textSecondary} style={{ marginTop: 1 }} />
+            <View style={{ flex: 1, gap: 1 }}>
+              <T v="callout" weight="600">Свой ответ</T>
+              <T v="footnote" color={Colors.textSecondary}>
+                {answersByMessage(question) ? 'Напиши в поле внизу — уйдёт сообщением' : 'Напиши в поле внизу — вопрос в терминале закроется, ответ уйдёт сообщением'}
+              </T>
+            </View>
           </Press>
-        ))}
-      </View>
+        </Animated.View>
+      ) : null}
+
+      {status.state === 'error' ? (
+        <View style={styles.errorRow} accessibilityLiveRegion="polite">
+          <SymbolView name="exclamationmark.triangle.fill" size={13} tintColor={Colors.error} />
+          <T v="footnote" color={Colors.error} style={{ flex: 1 }}>{status.message}</T>
+        </View>
+      ) : null}
+
+      {open && list.some((q) => q.options.length) && (!tap || status.state === 'error') ? (
+        <Press
+          onPress={onSubmit}
+          disabled={busy || !ready}
+          feedback="none"
+          style={styles.submit}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: busy || !ready, busy }}
+          accessibilityLabel={status.state === 'error' ? 'Отправить ответ ещё раз' : 'Ответить'}>
+          {busy ? <ActivityIndicator size="small" color={Colors.onAccent} /> : null}
+          <T v="callout" weight="700" color={Colors.onAccent}>
+            {busy ? 'Отправляю…' : status.state === 'error' ? 'Повторить' : ready ? 'Ответить' : total > 1 ? `Выбери во всех (${answered}/${total})` : 'Выбери вариант'}
+          </T>
+        </Press>
+      ) : null}
     </Animated.View>
   );
 }
@@ -175,10 +331,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  needs: { paddingVertical: 0, gap: 0 },
+  needsHead: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48, paddingVertical: 6 },
+  needsList: { gap: 10, paddingBottom: 12, paddingTop: 2 },
   needRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  options: { marginTop: 2 },
-  option: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 10 },
+  needNum: { width: 18, textAlign: 'center' },
+  needsActions: { flexDirection: 'row', gap: 8, marginTop: 2 },
+  pill: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 36, paddingHorizontal: 14, borderRadius: Radius.pill, backgroundColor: Colors.text },
+  pillGhost: { height: 36, paddingHorizontal: 14, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.cardPressed },
+  chevron: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  questionHead: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 36 },
+  questions: { gap: 0 },
+  question: { gap: 6, paddingVertical: 8 },
+  questionBorder: { borderTopWidth: 1, borderTopColor: Colors.waitingLine },
+  option: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 11, minHeight: 44 },
   optionBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.separator },
+  sentRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 48 },
+  errorRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  submit: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 44,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.text,
+  },
   strip: { gap: 6, paddingVertical: 2, alignItems: 'flex-start' },
   helper: { width: 84, alignItems: 'center', gap: 4 },
   helperText: { textAlign: 'center', minHeight: 28 },

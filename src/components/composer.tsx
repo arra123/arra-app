@@ -4,12 +4,14 @@ import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import * as DocumentPicker from 'expo-document-picker';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ActivityIndicator, Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
+import { useEffect, useRef, useState, type RefObject } from 'react';
+import { ActivityIndicator, Alert, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import Animated, {
   Easing,
   FadeIn,
+  FadeInDown,
   FadeOut,
+  LinearTransition,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -31,8 +33,6 @@ type Props = {
   /** Бросает ошибку — текст и фото остаются в поле. */
   onSend: (text: string, photos: LocalPhoto[]) => Promise<void>;
   disabled?: boolean;
-  /** Слева от кнопки отправки (выбор модели в чате с Арой). */
-  accessory?: ReactNode;
   onHeight?: (height: number) => void;
   autoFocus?: boolean;
   /** Снаружи — чтобы поставить курсор в поле (тап по карточке «нужно от тебя») */
@@ -47,7 +47,7 @@ function toPhoto(asset: ImagePicker.ImagePickerAsset): LocalPhoto {
   return { uri: asset.uri, name: asset.fileName || `photo-${Date.now()}-${++photoSeq}.${ext}`, mime };
 }
 
-export function Composer({ placeholder, onSend, disabled, accessory, onHeight, autoFocus, inputRef }: Props) {
+export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, inputRef }: Props) {
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [photos, setPhotos] = useState<LocalPhoto[]>([]);
@@ -58,7 +58,11 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
   const ownInput = useRef<TextInput>(null);
   const input = inputRef ?? ownInput;
 
+  const [focused, setFocused] = useState(false);
   const hasContent = text.trim().length > 0 || photos.length > 0;
+  // Как в ChatGPT: в фокусе (или когда текста много) поле — две строки:
+  // текст во всю ширину сверху, «+» слева и микрофон с отправкой справа снизу
+  const expanded = focused || text.includes('\n') || text.length > 26;
   const canSend = !disabled && !sending && !listening && !transcribing && hasContent;
   const plusRef = useRef<View>(null);
   const [menuAnchor, setMenuAnchor] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -176,13 +180,76 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
 
   const dictating = listening || transcribing;
 
+  // «Прикрепить недавнее фото» над полем, пока печатаешь: только свежий снимок
+  // (последние 10 минут) и только если доступ к фото уже дан — без лишних запросов
+  const [recent, setRecent] = useState<{ uri: string; id: string } | null>(null);
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  useEffect(() => {
+    if (!focused) return;
+    let alive = true;
+    (async () => {
+      try {
+        const perm = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+        if (!perm.granted) return;
+        const page = await MediaLibrary.getAssetsAsync({ first: 1, mediaType: MediaLibrary.MediaType.photo, sortBy: [[MediaLibrary.SortBy.creationTime, false]] });
+        const asset = page.assets[0];
+        if (alive) setRecent(asset && Date.now() - asset.creationTime < 10 * 60_000 ? { uri: asset.uri, id: asset.id } : null);
+      } catch {
+        /* без подсказки */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [focused]);
+  const suggestRecent = focused && !dictating && !!recent && dismissed !== recent.id && !photos.length && !text.trim();
+
+  // Одно и то же поле в обеих раскладках — фокус и текст не теряются при переходе
+  const input_el = (
+    <TextInput
+      ref={input}
+      value={text}
+      onChangeText={setText}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      placeholder={placeholder}
+      placeholderTextColor={Colors.textTertiary}
+      style={[styles.input, expanded ? styles.inputExpanded : styles.inputInline]}
+      multiline
+      // в браузере textarea по умолчанию в две строки
+      {...(Platform.OS === 'web' ? { rows: 1 } : null)}
+      autoFocus={autoFocus}
+      keyboardAppearance="dark"
+      selectionColor={Colors.text}
+      maxFontSizeMultiplier={1.4}
+      accessibilityLabel={placeholder}
+    />
+  );
+
   return (
     <View
       style={[styles.outer, { paddingBottom: Math.max(insets.bottom, 8) }]}
       onLayout={(e) => onHeight?.(e.nativeEvent.layout.height)}>
+      {suggestRecent && recent ? (
+        <Animated.View entering={FadeInDown.duration(180)} exiting={FadeOut.duration(120)}>
+          <Press
+            onPress={() => {
+              setDismissed(recent.id);
+              void attachLatest();
+            }}
+            feedback="tap"
+            scaleTo={0.98}
+            style={styles.suggest}
+            accessibilityRole="button"
+            accessibilityLabel="Прикрепить недавнее фото">
+            <Image source={{ uri: recent.uri }} style={styles.suggestThumb} contentFit="cover" />
+            <T v="callout" color={Colors.text}>Прикрепить недавнее фото</T>
+          </Press>
+        </Animated.View>
+      ) : null}
       {dictation.notice ? (
         <Animated.View entering={FadeIn.duration(150)} exiting={FadeOut.duration(120)}>
-          <Press onPress={dictation.clearNotice} feedback="none" style={styles.notice} accessibilityLabel={`Диктовка: ${dictation.notice}. Нажми, чтобы скрыть`}>
+          <Press onPress={dictation.clearNotice} feedback="none" style={styles.notice} accessibilityRole="button" accessibilityLabel={`Диктовка: ${dictation.notice}. Нажми, чтобы скрыть`}>
             <SymbolView name={{ ios: 'exclamationmark.bubble', android: 'error', web: 'error' }} size={14} tintColor={Colors.waiting} />
             <T v="caption" color={Colors.textSecondary} style={{ flex: 1 }}>{dictation.notice}</T>
             <SymbolView name={{ ios: 'xmark', android: 'close', web: 'close' }} size={11} tintColor={Colors.textTertiary} />
@@ -205,6 +272,7 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
                 <Press
                   onPress={() => setPhotos((current) => current.filter((p) => p.uri !== photo.uri))}
                   style={styles.photoRemove}
+                  accessibilityRole="button"
                   accessibilityLabel="Убрать вложение"
                   hitSlop={8}>
                   <SymbolView name={{ ios: 'xmark', android: 'close', web: 'close' }} size={9} tintColor={Colors.text} weight="bold" />
@@ -225,7 +293,7 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
               )}
             </Animated.View>
             <View style={styles.row}>
-              <Press onPress={dictation.cancel} feedback="none" style={styles.tool} accessibilityLabel="Отменить диктовку">
+              <Press onPress={dictation.cancel} feedback="none" style={styles.tool} accessibilityRole="button" accessibilityLabel="Отменить диктовку">
                 <View style={styles.greyCircle}>
                   <SymbolView name={{ ios: 'xmark', android: 'close', web: 'close' }} size={15} tintColor={Colors.text} weight="semibold" />
                 </View>
@@ -237,12 +305,12 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
                   <ScrollingWave level={dictation.level} />
                 )}
               </View>
-              <Press onPress={() => void dictation.finish()} disabled={transcribing} feedback="none" style={styles.tool} accessibilityLabel="Остановить диктовку, текст останется в поле">
+              <Press onPress={() => void dictation.finish()} disabled={transcribing} feedback="none" style={styles.tool} accessibilityRole="button" accessibilityLabel="Остановить диктовку, текст останется в поле">
                 <View style={styles.greyCircle}>
                   <SymbolView name={{ ios: 'stop.fill', android: 'stop', web: 'stop' }} size={13} tintColor={Colors.text} />
                 </View>
               </Press>
-              <Press onPress={() => void finishAndSend()} disabled={transcribing || disabled} feedback="none" style={styles.tool} accessibilityLabel="Остановить и сразу отправить">
+              <Press onPress={() => void finishAndSend()} disabled={transcribing || disabled} feedback="none" style={styles.tool} accessibilityRole="button" accessibilityLabel="Остановить и сразу отправить">
                 <View style={styles.whiteCircle}>
                   <SymbolView name={{ ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' }} size={17} tintColor={Colors.onAccent} weight="bold" />
                 </View>
@@ -250,48 +318,39 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
             </View>
           </>
         ) : (
-          <View style={styles.row}>
-            <View ref={plusRef} collapsable={false}>
-              <Press onPress={openMenu} feedback="none" style={styles.tool} accessibilityLabel="Прикрепить">
-                <SymbolView name={{ ios: 'plus', android: 'add', web: 'add' }} size={22} tintColor={Colors.text} weight="regular" />
+          // Поле ввода всегда на одном месте в дереве (иначе оно пересоздаётся и теряет фокус):
+          // в строку кнопки лежат поверх по краям, в фокусе — отдельным рядом под текстом
+          <Animated.View layout={LinearTransition.duration(180).easing(Easing.out(Easing.cubic))}>
+            {input_el}
+            <View style={expanded ? styles.row : styles.inlineButtons} pointerEvents="box-none">
+              <View ref={plusRef} collapsable={false}>
+                <Press onPress={openMenu} feedback="none" style={styles.tool} accessibilityRole="button" accessibilityLabel="Прикрепить: фото, камера, файлы">
+                  <SymbolView name={{ ios: 'plus', android: 'add', web: 'add' }} size={22} tintColor={Colors.text} weight="regular" />
+                </Press>
+              </View>
+              <View style={{ flex: 1 }} pointerEvents="none" />
+              <Press onPress={() => void dictation.start()} feedback="none" style={styles.tool} accessibilityRole="button" accessibilityLabel="Диктовка">
+                <SymbolView name={{ ios: 'mic', android: 'mic', web: 'mic' }} size={22} tintColor={Colors.text} weight="regular" />
               </Press>
+              {hasContent || sending ? (
+                <Press onPress={() => void send()} disabled={!canSend} feedback="none" style={styles.tool} accessibilityRole="button" accessibilityLabel="Отправить">
+                  <Animated.View entering={ZoomIn.duration(140)} style={[styles.whiteCircle, !canSend && { opacity: 0.45 }]}>
+                    {sending ? (
+                      <ActivityIndicator size="small" color={Colors.onAccent} />
+                    ) : (
+                      <SymbolView name={{ ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' }} size={17} tintColor={Colors.onAccent} weight="bold" />
+                    )}
+                  </Animated.View>
+                </Press>
+              ) : (
+                <Press onPress={() => void dictation.start()} feedback="none" style={styles.tool} accessibilityRole="button" accessibilityLabel="Голосом">
+                  <Animated.View entering={ZoomIn.duration(140)} style={styles.whiteCircle}>
+                    <SymbolView name={{ ios: 'waveform', android: 'graphic_eq', web: 'graphic_eq' }} size={18} tintColor={Colors.onAccent} weight="semibold" />
+                  </Animated.View>
+                </Press>
+              )}
             </View>
-            <TextInput
-              ref={input}
-              value={text}
-              onChangeText={setText}
-              placeholder={placeholder}
-              placeholderTextColor={Colors.textTertiary}
-              style={styles.input}
-              multiline
-              autoFocus={autoFocus}
-              keyboardAppearance="dark"
-              selectionColor={Colors.text}
-              maxFontSizeMultiplier={1.4}
-              accessibilityLabel={placeholder}
-            />
-            {accessory}
-            <Press onPress={() => void dictation.start()} feedback="none" style={styles.tool} accessibilityLabel="Диктовка">
-              <SymbolView name={{ ios: 'mic', android: 'mic', web: 'mic' }} size={22} tintColor={Colors.text} weight="regular" />
-            </Press>
-            {hasContent || sending ? (
-              <Press onPress={() => void send()} disabled={!canSend} feedback="none" style={styles.tool} accessibilityLabel="Отправить">
-                <Animated.View entering={ZoomIn.duration(140)} style={[styles.whiteCircle, !canSend && { opacity: 0.45 }]}>
-                  {sending ? (
-                    <ActivityIndicator size="small" color={Colors.onAccent} />
-                  ) : (
-                    <SymbolView name={{ ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' }} size={17} tintColor={Colors.onAccent} weight="bold" />
-                  )}
-                </Animated.View>
-              </Press>
-            ) : (
-              <Press onPress={() => void dictation.start()} feedback="none" style={styles.tool} accessibilityLabel="Голосом">
-                <Animated.View entering={ZoomIn.duration(140)} style={styles.whiteCircle}>
-                  <SymbolView name={{ ios: 'waveform', android: 'graphic_eq', web: 'graphic_eq' }} size={18} tintColor={Colors.onAccent} weight="semibold" />
-                </Animated.View>
-              </Press>
-            )}
-          </View>
+          </Animated.View>
         )}
       </Glass>
 
@@ -323,7 +382,9 @@ function AttachMenu({ anchor, onClose, onLatest, onCamera, onLibrary, onFiles, g
   onFiles: () => void;
   grabbing: boolean;
 }) {
-  const { height: screenH } = useWindowDimensions();
+  const { width: screenW, height: screenH } = useWindowDimensions();
+  // Широкое меню как на снимке ChatGPT: ~3/4 экрана, но не шире 300 pt
+  const menuW = Math.min(300, Math.max(250, screenW * 0.72), screenW - 24);
   const [thumb, setThumb] = useState<string | null>(null);
   const t = useSharedValue(0);
   const open = !!anchor;
@@ -373,10 +434,10 @@ function AttachMenu({ anchor, onClose, onLatest, onCamera, onLibrary, onFiles, g
       <Animated.View
         style={[
           styles.menu,
-          { left: Math.max(12, anchor.x - 4), bottom: screenH - anchor.y + 10, transformOrigin: 'left bottom' },
+          { width: menuW, left: Math.max(12, Math.min(anchor.x - 4, screenW - menuW - 12)), bottom: screenH - anchor.y + 10, transformOrigin: 'left bottom' },
           appear,
         ]}>
-        <Glass radius={28} backing style={styles.menuBox}>
+        <Glass radius={34} backing style={styles.menuBox}>
           {items.map((item) => (
             <Pressable
               key={item.label}
@@ -430,8 +491,12 @@ const styles = StyleSheet.create({
   outer: { paddingHorizontal: 12, paddingTop: 6, gap: 6 },
   capsule: { paddingHorizontal: 6, paddingVertical: 6, minHeight: 56 },
   row: { flexDirection: 'row', alignItems: 'flex-end' },
+  inlineButtons: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', alignItems: 'flex-end' },
+  inputInline: { marginLeft: 44, marginRight: 88 },
+  inputExpanded: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 6 },
+  suggest: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 10, minHeight: 44 },
+  suggestThumb: { width: 26, height: 36, borderRadius: 5, backgroundColor: Colors.card },
   input: {
-    flex: 1,
     color: Colors.text,
     fontSize: Type.body,
     lineHeight: 22,
@@ -473,15 +538,14 @@ const styles = StyleSheet.create({
   },
   menu: {
     position: 'absolute',
-    width: 270,
     shadowColor: '#000',
     shadowOpacity: 0.5,
     shadowRadius: 30,
     shadowOffset: { width: 0, height: 12 },
   },
-  menuBox: { paddingVertical: 10, paddingHorizontal: 8 },
-  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 18 },
+  menuBox: { paddingVertical: 12, paddingHorizontal: 10 },
+  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 16, paddingHorizontal: 12, paddingVertical: 10, minHeight: 64, borderRadius: 24 },
   menuIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: Colors.cardPressed, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   menuThumb: { width: 44, height: 44 },
-  menuLabel: { fontSize: 17 },
+  menuLabel: { fontSize: 19, lineHeight: 24 },
 });

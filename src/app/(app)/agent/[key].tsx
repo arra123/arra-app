@@ -1,25 +1,25 @@
-import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { confirmCloseAgent, stopAgent } from '@/ara/actions';
 import { ara } from '@/ara/client';
-import { DEVICE_META, limitFor, modelLabel, shortAgo } from '@/ara/format';
+import { limitFor, modelLabel, shortAgo } from '@/ara/format';
 import { useAgentItem, useAra, useNow, useTranscript } from '@/ara/hooks';
+import { answerMessage, answersByMessage, answersOnTap, claudeKeys, type Selections } from '@/ara/questions';
 import type { TranscriptMessage } from '@/ara/types';
 import { uploadPhoto } from '@/ara/upload';
-import { NeedsCard, QuestionCard } from '@/components/agent-cards';
+import { NeedsCard, QuestionCard, type AnswerStatus } from '@/components/agent-cards';
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { Composer } from '@/components/composer';
 import { FloatingAgent } from '@/components/floating-agent';
 import { WeekRing } from '@/components/limits';
-import { MenuTrigger, type MenuItem, type MenuSection } from '@/components/glass-menu';
+import { MenuTrigger, type MenuSection } from '@/components/glass-menu';
 import { PlanCard, TranscriptRow, UserBubble } from '@/components/transcript';
-import { Glass, Press, ProjectIcon, Spinner, T } from '@/components/ui';
+import { DeskBadge, Glass, Press, ProjectIcon, Spinner, T } from '@/components/ui';
 import { Colors, Radius } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -28,10 +28,12 @@ type Row =
   | { kind: 'pending'; key: string; text: string; images: string[] };
 
 const CLAUDE_MODELS = [
-  { value: 'opus', label: 'Opus' },
-  { value: 'sonnet', label: 'Sonnet' },
-  { value: 'haiku', label: 'Haiku' },
+  { value: 'opus', label: 'Opus', hint: 'самая умная' },
+  { value: 'sonnet', label: 'Sonnet', hint: 'баланс' },
+  { value: 'haiku', label: 'Haiku', hint: 'самая быстрая' },
 ];
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Стабильный ключ записи: роль + начало текста (+ номер повтора). */
 function messageKeys(messages: TranscriptMessage[]) {
@@ -57,6 +59,7 @@ export default function AgentScreen() {
   const [pending, setPending] = useState<{ id: string; text: string; images: string[]; at: number; index: number }[]>([]);
   const [stopping, setStopping] = useState(false);
   const inputRef = useRef<TextInput>(null);
+  const { height: screenH } = useWindowDimensions();
 
   const item = agent || recent;
   const messages = useMemo(() => transcript?.messages || [], [transcript]);
@@ -65,6 +68,26 @@ export default function AgentScreen() {
   const needs = agent ? transcript?.needs || [] : [];
   const question = agent ? transcript?.question || null : null;
   const helpers = transcript?.agents || [];
+
+  // «Нужно от тебя» свёрнуто в строку; новый список снова приходит свёрнутым
+  const needsKey = needs.join('\n');
+  const [needsOpen, setNeedsOpen] = useState(false);
+  useEffect(() => setNeedsOpen(false), [needsKey]);
+
+  // Ответ на вопрос: выбор, статус отправки и раскрытие живут здесь, а не в карточке —
+  // при сетевой ошибке ничего не теряется, повторное нажатие не шлёт ответ дважды
+  const questionId = question?.id || '';
+  const [answer, setAnswer] = useState<{ id: string; picked: Selections; status: AnswerStatus; escaped: boolean; open: boolean }>({
+    id: '', picked: [], status: { state: 'idle' }, escaped: false, open: true,
+  });
+  const current = answer.id === questionId ? answer : { id: questionId, picked: [], status: { state: 'idle' } as AnswerStatus, escaped: false, open: true };
+  const answering = useRef(false);
+  useEffect(() => {
+    if (questionId) setAnswer((a) => (a.id === questionId ? a : { id: questionId, picked: [], status: { state: 'idle' }, escaped: false, open: true }));
+  }, [questionId]);
+  const patchAnswer = (patch: Partial<typeof current>) => setAnswer((a) => ({ ...(a.id === questionId ? a : current), ...patch }));
+  const questionOpen = !!question && current.status.state !== 'sent';
+
 
   const userCount = messages.filter((m) => m.role === 'user').length;
   const visiblePending = pending.filter((p) => userCount <= p.index && now - p.at < 90_000);
@@ -80,10 +103,9 @@ export default function AgentScreen() {
   ], [messages, keys, visiblePending]);
   const isFresh = useFreshKeys(keys);
 
-  async function send(text: string, photos: { uri: string; name: string; mime: string }[]) {
+  /** Сообщение агенту с «отправляю…», пока оно не появится в переписке. */
+  async function sendMessage(text: string, paths: string[]) {
     if (!agent) throw new Error('Агент уже закрыт');
-    const paths: string[] = [];
-    for (const photo of photos) paths.push(await uploadPhoto(photo, { agentKey: agent.key }));
     const id = `${Date.now()}`;
     const at = Date.now();
     setPending((list) => {
@@ -98,16 +120,63 @@ export default function AgentScreen() {
     }
   }
 
-  async function answer(index: number) {
-    if (!agent) return;
+  /** Поле ввода. Пока открыт вопрос — это «свой ответ» на него. */
+  async function send(text: string, photos: { uri: string; name: string; mime: string }[]) {
+    if (!agent) throw new Error('Агент уже закрыт');
+    const paths: string[] = [];
+    for (const photo of photos) paths.push(await uploadPhoto(photo, { agentKey: agent.key }));
+    if (!question || !questionOpen) return sendMessage(text, paths);
+    if (answering.current) throw new Error('Ответ уже отправляется');
+    answering.current = true;
+    patchAnswer({ status: { state: 'sending' } });
     try {
-      await ara.answerQuestion(agent.key, index);
+      // В окне вопроса Claude текст ушёл бы в меню выбора — сначала закрываем его Esc
+      if (!answersByMessage(question) && !current.escaped) {
+        await ara.pressKeys(agent.key, ['escape']);
+        patchAnswer({ escaped: true });
+        await wait(700);
+      }
+      await sendMessage(answerMessage(question, current.picked, text) || text, paths);
+      patchAnswer({ status: { state: 'sent', at: Date.now() } });
+      haptic.success();
+    } catch (error: any) {
+      patchAnswer({ status: { state: 'error', message: error?.message || 'Ответ не ушёл' } });
+      throw error;
+    } finally {
+      answering.current = false;
+    }
+  }
+
+  /** Отправить выбранные варианты: Codex — сообщением, Claude — клавишами в окне вопроса. */
+  async function submitAnswer(picked = current.picked) {
+    if (!agent || !question || answering.current) return;
+    answering.current = true;
+    patchAnswer({ picked, status: { state: 'sending' } });
+    try {
+      if (answersByMessage(question)) await sendMessage(answerMessage(question, picked), []);
+      else await ara.pressKeys(agent.key, claudeKeys(question, picked));
+      patchAnswer({ picked, status: { state: 'sent', at: Date.now() } });
       haptic.success();
     } catch (error: any) {
       haptic.error();
-      Alert.alert('Ответ не ушёл', error?.message || 'Попробуй ещё раз');
-      throw error;
+      patchAnswer({ picked, status: { state: 'error', message: error?.message || 'Ответ не ушёл — попробуй ещё раз' } });
+    } finally {
+      answering.current = false;
     }
+  }
+
+  function pickOption(qi: number, oi: number) {
+    if (!question || current.status.state === 'sending') return;
+    const q = question.questions[qi];
+    const picked = question.questions.map((_, i) => [...(current.picked[i] || [])]);
+    const list = picked[qi];
+    if (q?.multi) picked[qi] = list.includes(oi) ? list.filter((n) => n !== oi) : [...list, oi];
+    else picked[qi] = [oi];
+    if (answersOnTap(question)) {
+      void submitAnswer(picked);
+      return;
+    }
+    patchAnswer({ picked, status: current.status.state === 'error' ? { state: 'idle' } : current.status });
   }
 
   async function stop() {
@@ -130,30 +199,27 @@ export default function AgentScreen() {
     }
   }
 
+  // «⋯»: только то, что имеет смысл с телефона. Модель — подменю у Claude
+  // (у Codex смена модели не поддержана), «Остановить» — пока агент работает,
+  // закрытие терминала — с подтверждением.
   const menu: MenuSection[] = [];
   if (agent?.agent === 'claude') {
-    const current = modelLabel(model).toLowerCase();
+    const currentModel = modelLabel(model);
     menu.push({
       title: 'Модель',
+      subtitle: currentModel || undefined,
+      icon: 'cpu',
+      submenu: true,
       items: CLAUDE_MODELS.map((m) => ({
         label: m.label,
-        checked: current.startsWith(m.value),
+        subtitle: m.hint,
+        checked: currentModel.toLowerCase().startsWith(m.value),
         onPress: () => changeModel(m.value),
       })),
     });
   }
-  const tools: MenuItem[] = [];
-  if (agent?.state === 'working') tools.push({ label: 'Остановить', icon: 'stop', onPress: stop });
-  if (item?.cwd) tools.push({ label: 'Скопировать путь', icon: 'doc.on.doc', onPress: () => Clipboard.setStringAsync(item.cwd).then(() => haptic.success()) });
-  if (item) {
-    tools.push({
-      label: 'Новый агент в этой папке',
-      icon: 'plus',
-      onPress: () => router.push({ pathname: '/new', params: { agent: item.agent, device: item.device, dir: item.cwd } }),
-    });
-  }
-  if (tools.length) menu.push(tools);
-  if (agent) menu.push([{ label: 'Закрыть терминал', icon: 'xmark', destructive: true, onPress: () => confirmCloseAgent(agent) }]);
+  if (agent?.state === 'working') menu.push([{ label: 'Остановить', icon: 'stop.circle', onPress: stop }]);
+  if (agent) menu.push([{ label: 'Закрыть терминал', icon: 'xmark.circle', destructive: true, onPress: () => confirmCloseAgent(agent) }]);
 
   // Статус в одном месте — в капсуле с названием: «ждёт · 3 мин» жёлтым или дуга и время работы
   const workFrom = transcript?.lastUser ? transcript.lastUser * 1000 : agent?.since;
@@ -181,15 +247,15 @@ export default function AgentScreen() {
       <View style={{ flexShrink: 1, minWidth: 0 }}>
         <T v="subhead" weight="700" numberOfLines={1}>{item?.project || (recent ? recent.title : 'Агент')}</T>
         {item ? (
+          // Статус первым и целиком («ждёт · 4 мин»), место — после него; на узком экране сокращается место
           <View style={styles.subtitle}>
-            <SymbolView name={DEVICE_META[item.device].icon} size={11} tintColor={Colors.textSecondary} accessibilityLabel={DEVICE_META[item.device].label} />
-            {agent?.ws != null ? <T v="caption" color={Colors.textSecondary}>стол {agent.ws}</T> : null}
             {shortStatus ? (
-              <Animated.View key={`${agent?.state}:${stopping}`} entering={FadeIn.duration(250)} style={styles.shortStatus}>
-                {agent?.ws != null ? <T v="caption" color={Colors.textTertiary}>·</T> : null}
+              <Animated.View key={`${agent?.state}:${stopping}`} entering={FadeIn.duration(250)} style={styles.statusPart}>
                 {shortStatus}
               </Animated.View>
             ) : null}
+            {item.device === 'pc' ? <T v="caption" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>{shortStatus ? '· ' : ''}ПК</T> : null}
+            {agent?.ws != null ? <DeskBadge ws={agent.ws} color={Colors.textSecondary} /> : null}
           </View>
         ) : (
           <T v="caption" color={Colors.textSecondary} numberOfLines={1}>ищу агента…</T>
@@ -257,14 +323,33 @@ export default function AgentScreen() {
         agent ? (
           <View onLayout={(e) => onHeight(e.nativeEvent.layout.height)}>
             {question || needs.length ? (
-              <ScrollView style={styles.cards} contentContainerStyle={styles.cardsInner} keyboardShouldPersistTaps="handled">
-                {question ? <QuestionCard question={question} onAnswer={answer} /> : null}
-                {needs.length ? <NeedsCard needs={needs} onPress={() => inputRef.current?.focus()} /> : null}
+              // Карточки не закрывают ленту: не выше ~40% экрана, дальше прокрутка
+              <ScrollView
+                style={[styles.cards, { maxHeight: Math.max(180, Math.round(screenH * 0.42)) }]}
+                contentContainerStyle={styles.cardsInner}
+                keyboardShouldPersistTaps="handled">
+                {question ? (
+                  <QuestionCard
+                    question={question}
+                    picked={current.picked}
+                    onPick={pickOption}
+                    onSubmit={() => void submitAnswer()}
+                    onReopen={() => patchAnswer({ status: { state: 'idle' }, open: true })}
+                    onOwnAnswer={() => inputRef.current?.focus()}
+                    status={current.status}
+                    open={current.open}
+                    onToggle={() => patchAnswer({ open: !current.open })}
+                    now={now}
+                  />
+                ) : null}
+                {needs.length && !questionOpen ? (
+                  <NeedsCard needs={needs} open={needsOpen} onToggle={() => setNeedsOpen((v) => !v)} onReply={() => inputRef.current?.focus()} />
+                ) : null}
               </ScrollView>
             ) : null}
             <Composer
               inputRef={inputRef}
-              placeholder={question ? 'Свой ответ…' : agent.state === 'working' ? 'Увидит после шага…' : 'Написать агенту'}
+              placeholder={questionOpen ? 'Свой ответ на вопрос…' : agent.state === 'working' ? 'Увидит после шага…' : 'Написать агенту'}
               onSend={send}
             />
           </View>
@@ -298,14 +383,15 @@ function ClosedBar({ onHeight, onNew }: { onHeight: (h: number) => void; onNew?:
 
 const styles = StyleSheet.create({
   title: { flexDirection: 'row', alignItems: 'center', gap: 9 },
-  subtitle: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 1 },
+  subtitle: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 1, minWidth: 0 },
   right: { flexDirection: 'row', alignItems: 'center', gap: 2, height: 44, paddingLeft: 9, flexShrink: 0 },
   shortStatus: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1 },
+  statusPart: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
   more: { width: 42, height: 44, alignItems: 'center', justifyContent: 'center' },
   pendingRow: { paddingHorizontal: 16, paddingVertical: 7 },
   empty: { alignItems: 'center' },
   // Непрозрачная подложка: лента не просвечивает между карточками
-  cards: { maxHeight: 320, flexGrow: 0, backgroundColor: Colors.background },
+  cards: { flexGrow: 0, backgroundColor: Colors.background },
   cardsInner: { paddingHorizontal: 10, paddingTop: 8, gap: 6 },
   closedWrap: { paddingHorizontal: 10, paddingTop: 6 },
   closed: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10 },

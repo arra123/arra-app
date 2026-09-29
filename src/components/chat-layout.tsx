@@ -24,6 +24,8 @@ type Props<T> = {
   empty?: ReactNode;
   /** Кнопка «‹» слева в шапке (на вкладке «Разговор» её нет) */
   back?: boolean;
+  /** Своя кнопка слева вместо «‹» (панель чатов у Ары) */
+  left?: ReactNode;
   /** Место над шапкой под чужую панель (шапка главного экрана) */
   headerTop?: number;
   /**
@@ -53,8 +55,12 @@ export function useFreshKeys(keys: string[]) {
  * перевёрнутая лента (новое внизу, открывается на последнем сообщении),
  * поле ввода прилипает к клавиатуре, свайп от края — назад.
  */
-export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, composer, empty, back = true, headerTop = 0, overlay }: Props<T>) {
+export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, composer, empty, back = true, left, headerTop = 0, overlay }: Props<T>) {
   const insets = useSafeAreaInsets();
+  // Капсула названия стоит ровно по центру экрана: поля с обеих сторон
+  // по самой широкой боковой кнопке, так что кнопки её не сдвигают и не перекрывают
+  const [sides, setSides] = useState({ left: 44, right: 44 });
+  const side = Math.max(sides.left, sides.right) + 8;
   const [headerHeight, setHeaderHeight] = useState(insets.top + 56);
   const composerHeight = useSharedValue(90);
   const keyboard = useReanimatedKeyboardAnimation();
@@ -108,14 +114,26 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
         pointerEvents="box-none"
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}>
         <View style={styles.headerRow} pointerEvents="box-none">
-          {back ? (
-            <Glass radius={22} backing style={styles.backButton}>
-              <IconButton icon="chevron.left" label="Назад" onPress={() => router.back()} size={44} glass={false} />
-            </Glass>
-          ) : null}
-          <Glass radius={22} backing style={styles.titleCapsule}>{title}</Glass>
+          <View style={[styles.titleSlot, { paddingHorizontal: 12 + side }]} pointerEvents="box-none">
+            <Glass radius={22} backing style={styles.titleCapsule}>{title}</Glass>
+          </View>
+          <View pointerEvents="box-none" onLayout={(e) => {
+            const width = Math.round(e.nativeEvent.layout.width);
+            setSides((s) => (s.left === width ? s : { ...s, left: width }));
+          }}>
+            {left ?? (back ? (
+              <Glass radius={22} backing style={styles.backButton}>
+                <IconButton icon="chevron.left" label="Назад" onPress={() => router.back()} size={44} glass={false} />
+              </Glass>
+            ) : null)}
+          </View>
           <View style={{ flex: 1 }} pointerEvents="none" />
-          {right}
+          <View pointerEvents="box-none" onLayout={(e) => {
+            const width = Math.round(e.nativeEvent.layout.width);
+            setSides((s) => (s.right === width ? s : { ...s, right: width }));
+          }}>
+            {right}
+          </View>
         </View>
         {below ? <Glass radius={18} backing style={styles.below}>{below}</Glass> : null}
       </View>
@@ -144,7 +162,8 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  titleCapsule: { flexShrink: 1, minWidth: 0, minHeight: 44, justifyContent: 'center', paddingLeft: 5, paddingRight: 14, paddingVertical: 4 },
+  titleSlot: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, alignItems: 'center', justifyContent: 'center' },
+  titleCapsule: { maxWidth: '100%', minHeight: 44, justifyContent: 'center', paddingLeft: 5, paddingRight: 14, paddingVertical: 4 },
   below: { marginHorizontal: 12, marginTop: 8, paddingHorizontal: ScreenPadding - 4, paddingVertical: 8, gap: 8 },
   composer: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   empty: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center' },

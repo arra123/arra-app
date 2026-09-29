@@ -48,6 +48,7 @@ class AraClient {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private lastMessageAt = 0;
+  private backgroundAt = 0;
   private appStateSub: { remove: () => void } | null = null;
 
   // ---------- жизненный цикл ----------
@@ -61,10 +62,14 @@ class AraClient {
       if (!this.token) return;
       if (next === 'background') {
         // Экран агента на заблокированном телефоне не должен глушить push про него
+        this.backgroundAt = Date.now();
         this.send({ type: 'ara.unsubscribe' });
         return;
       }
       if (next !== 'active') return;
+      // Переписка и ссылки на файлы могли устареть, пока приложение спало
+      if (this.backgroundAt && Date.now() - this.backgroundAt > 60_000) this.dropStale();
+      this.backgroundAt = 0;
       // После фона iOS мог тихо убить сокет — проверяем сразу, а не ждём пинга
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN || Date.now() - this.lastMessageAt > 30_000) {
         this.reconnectNow();
@@ -112,6 +117,8 @@ class AraClient {
     this.ws = ws;
     ws.onopen = () => {
       if (this.ws !== ws) return;
+      // Сервер мог перезапуститься: старые ссылки на файлы и чужие переписки больше не верны
+      if (this.state.loaded) this.dropStale();
       this.retry = 0;
       this.lastMessageAt = Date.now();
       this.setState({ ...this.state, connected: true });
@@ -162,6 +169,23 @@ class AraClient {
       a.reject(new Error(message));
       this.asks.delete(id);
     }
+  }
+
+  /**
+   * Забыть то, что могло устареть: переписки неоткрытых агентов (при открытии
+   * придут заново) и ссылки на файлы (сервер хранит их сутки и чистит при старте).
+   * Открытая переписка остаётся на экране, пока компьютер не пришлёт свежую.
+   */
+  private dropStale() {
+    const watching = new Set(this.watchers);
+    let changed = false;
+    for (const key of [...this.transcripts.keys()]) {
+      if (watching.has(key)) continue;
+      this.transcripts.delete(key);
+      changed = true;
+    }
+    this.files.clear();
+    if (changed) this.transcriptListeners.forEach((l) => l());
   }
 
   private send(msg: Record<string, unknown>): boolean {
@@ -299,9 +323,15 @@ class AraClient {
     return this.request({ type: 'ara.send', agentKey, text, images });
   }
 
-  /** Выбрать вариант в вопросе агента: компьютер нажимает цифру и Enter в терминале. */
-  answerQuestion(agentKey: string, optionIndex: number) {
-    return this.request({ type: 'ara.key', agentKey, keys: [String(optionIndex), 'enter'] });
+  /**
+   * Нажать клавиши в терминале агента (вопрос Claude с вариантами).
+   * Сервер принимает не больше 8 клавиш за раз — длинную серию шлём частями.
+   */
+  async pressKeys(agentKey: string, keys: string[]) {
+    for (let i = 0; i < keys.length; i += 8) {
+      if (i) await new Promise((r) => setTimeout(r, 250));
+      await this.request({ type: 'ara.key', agentKey, keys: keys.slice(i, i + 8) });
+    }
   }
 
   stopAgent(agentKey: string) {
@@ -345,6 +375,11 @@ class AraClient {
       this.asks.set(reqId, { onDelta, onAction, resolve, reject, timer: setTimeout(() => {}, 0) });
       this.armAsk(reqId);
     });
+  }
+
+  /** Ссылка не открылась (файл на сервере уже удалён) — в следующий раз запросить заново. */
+  forgetFile(path: string, scope: FileScope) {
+    this.files.delete(`${'agentKey' in scope ? scope.agentKey : scope.chatId}\n${path}`);
   }
 
   /** Картинка/видео с компьютера → ссылка на сервере (кешируется на сеанс). */

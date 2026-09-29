@@ -36,7 +36,15 @@ function useRemoteFile(path: string, scope: FileScope) {
     // scope пересоздаётся на каждом рендере — зависим от его ключа
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, scopeKey, state.attempt]);
-  return { ...state, retry: () => setState((s) => ({ ...s, attempt: s.attempt + 1 })) };
+  return {
+    ...state,
+    retry: () => setState((s) => ({ ...s, attempt: s.attempt + 1 })),
+    /** Ссылка не загрузилась: файл на сервере мог устареть — один раз просим компьютер заново. */
+    broken: () => {
+      ara.forgetFile(path, 'agentKey' in scope ? { agentKey: scopeKey } : { chatId: scopeKey });
+      setState((s) => (s.attempt < 1 ? { file: null, error: null, attempt: s.attempt + 1 } : { ...s, file: null, error: 'Не открылась' }));
+    },
+  };
 }
 
 function Failed({ error, onRetry, name }: { error: string; onRetry: () => void; name: string }) {
@@ -53,7 +61,7 @@ function Failed({ error, onRetry, name }: { error: string; onRetry: () => void; 
 
 /** Картинка из переписки: миниатюра, по нажатию — на весь экран с зумом. */
 export function RemoteImage({ path, scope, size = 180 }: { path: string; scope: FileScope; size?: number }) {
-  const { file, error, retry } = useRemoteFile(path, scope);
+  const { file, error, retry, broken } = useRemoteFile(path, scope);
   const [open, setOpen] = useState(false);
   const [ratio, setRatio] = useState(4 / 3);
   if (error) return <Failed error={error} onRetry={retry} name={baseName(path)} />;
@@ -69,6 +77,7 @@ export function RemoteImage({ path, scope, size = 180 }: { path: string; scope: 
             transition={200}
             recyclingKey={file.url}
             onLoad={(e) => e.source.width && setRatio(Math.max(0.5, Math.min(2.2, e.source.width / e.source.height)))}
+            onError={broken}
           />
         ) : (
           <ActivityIndicator color={Colors.textSecondary} />

@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
@@ -10,6 +10,7 @@ import { useAra } from '@/ara/hooks';
 import { uploadPhoto, type LocalPhoto } from '@/ara/upload';
 import { AraMascot } from '@/components/ara-mascot';
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
+import { ChatSidebar } from '@/components/chat-sidebar';
 import { Composer } from '@/components/composer';
 import { MenuTrigger, type MenuSection } from '@/components/glass-menu';
 import { LimitsInline } from '@/components/limits';
@@ -49,7 +50,7 @@ function AraAnswer({ message, chatId, onRetry }: { message: ChatMessage; chatId:
               <SymbolView name="exclamationmark.triangle" size={13} tintColor={Colors.error} />
               <T v="footnote" color={Colors.error} style={{ flex: 1 }}>{message.error}</T>
               {onRetry ? (
-                <Press onPress={onRetry} accessibilityLabel="Повторить вопрос" hitSlop={8}>
+                <Press onPress={onRetry} accessibilityRole="button" accessibilityLabel="Повторить вопрос" hitSlop={8}>
                   <T v="footnote" weight="600" color={Colors.text}>Повторить</T>
                 </Press>
               ) : null}
@@ -61,13 +62,21 @@ function AraAnswer({ message, chatId, onRetry }: { message: ChatMessage; chatId:
   );
 }
 
+/** Открыть другой диалог на том же экране (без новой анимации перехода). */
+function switchTo(next: string) {
+  chats.open(next);
+  router.setParams({ id: next });
+}
+
 /**
- * Диалог с Арой на весь экран: компактная шапка (‹, название, «⋯» со стилем,
- * моделью, новым диалогом и удалением), лента и поле ввода.
+ * Диалог с Арой на весь экран, как в ChatGPT: слева кнопка панели диалогов,
+ * по центру название, справа капсула «новый чат · ⋯» (стиль, модель, удаление),
+ * лента и поле ввода.
  */
 export function AraChat({ id }: { id: string }) {
   const chat = useChat(id);
   const state = useAra();
+  const [sidebar, setSidebar] = useState(false);
   const messages = useMemo(() => chat?.messages || [], [chat]);
   const keys = useMemo(() => messages.map((m) => m.id), [messages]);
   const isFresh = useFreshKeys(keys);
@@ -104,7 +113,7 @@ export function AraChat({ id }: { id: string }) {
 
   function startNew() {
     const next = chats.startNew();
-    if (next !== id) router.replace({ pathname: '/chat/[id]', params: { id: next } });
+    if (next !== id) switchTo(next);
   }
 
   const status = !online ? 'Компьютер не в сети — Ара не ответит' : busy ? 'печатает…' : null;
@@ -126,7 +135,6 @@ export function AraChat({ id }: { id: string }) {
         onPress: () => chats.setOptions(id, { model: m.value }),
       })),
     },
-    messages.length ? [{ label: 'Новый диалог', icon: 'square.and.pencil', onPress: startNew }] : [],
     messages.length ? [{ label: 'Удалить диалог', icon: 'trash', destructive: true, onPress: remove }] : [],
   ];
 
@@ -136,7 +144,7 @@ export function AraChat({ id }: { id: string }) {
         <AraMascot size={22} mood={busy ? 'thinking' : 'idle'} interactive />
       </View>
       <View style={{ flexShrink: 1, minWidth: 0 }}>
-        <T v="subhead" weight="700" numberOfLines={1}>{messages.length ? chat.title : 'Новый диалог'}</T>
+        <T v="subhead" weight="700" numberOfLines={1}>{messages.length ? chat.title : 'Ара'}</T>
         {status || !state.limits?.claude ? (
           <T v="caption" color={online ? Colors.textSecondary : Colors.error} numberOfLines={1}>{status || 'Ара'}</T>
         ) : (
@@ -146,48 +154,71 @@ export function AraChat({ id }: { id: string }) {
     </View>
   );
 
+  const left = (
+    <Glass radius={22} backing style={styles.more}>
+      <Press onPress={() => setSidebar(true)} feedback="tap" style={styles.more} accessibilityRole="button" accessibilityLabel="Диалоги" accessibilityHint="Список диалогов и новый чат">
+        <SymbolView name="line.3.horizontal" size={19} tintColor={Colors.text} weight="semibold" />
+      </Press>
+    </Glass>
+  );
+
   const right = (
-    <MenuTrigger label="Стиль, модель и действия" sections={menu}>
-      <Glass radius={22} backing style={styles.more}>
-        <SymbolView name="ellipsis" size={18} tintColor={Colors.text} weight="semibold" />
-      </Glass>
-    </MenuTrigger>
+    <Glass radius={22} backing style={styles.rightCapsule}>
+      <Press onPress={startNew} disabled={!messages.length} feedback="tap" style={styles.more} accessibilityRole="button" accessibilityLabel="Новый диалог">
+        <SymbolView name="square.and.pencil" size={18} tintColor={Colors.text} weight="semibold" />
+      </Press>
+      <MenuTrigger label="Стиль, модель и действия" sections={menu}>
+        <View style={styles.more}>
+          <SymbolView name="ellipsis" size={18} tintColor={Colors.text} weight="semibold" />
+        </View>
+      </MenuTrigger>
+    </Glass>
   );
 
   return (
-    <ChatLayout
-      title={title}
-      right={right}
-      data={messages}
-      keyOf={(m) => m.id}
-      renderItem={({ item, index }) => {
-        // список перевёрнут: index считается от последнего сообщения
-        const realIndex = messages.length - 1 - index;
-        return (
-          <Animated.View entering={isFresh(item.id) ? FadeInDown.duration(260) : undefined} style={styles.row}>
-            {item.role === 'user' ? (
-              <UserBubble text={item.text} images={item.localImages?.length ? [] : item.images} localImages={item.localImages} scope={{ chatId: id }} />
-            ) : (
-              <AraAnswer message={item} chatId={id} onRetry={busy ? undefined : () => retry(realIndex)} />
-            )}
+    <View style={{ flex: 1 }}>
+      <ChatLayout
+        title={title}
+        left={left}
+        right={right}
+        data={messages}
+        keyOf={(m) => m.id}
+        renderItem={({ item, index }) => {
+          // список перевёрнут: index считается от последнего сообщения
+          const realIndex = messages.length - 1 - index;
+          return (
+            <Animated.View entering={isFresh(item.id) ? FadeInDown.duration(260) : undefined} style={styles.row}>
+              {item.role === 'user' ? (
+                <UserBubble text={item.text} images={item.localImages?.length ? [] : item.images} localImages={item.localImages} scope={{ chatId: id }} />
+              ) : (
+                <AraAnswer message={item} chatId={id} onRetry={busy ? undefined : () => retry(realIndex)} />
+              )}
+            </Animated.View>
+          );
+        }}
+        empty={
+          <Animated.View key={id} entering={FadeIn.duration(300)} style={styles.empty}>
+            <AraMascot size={52} interactive mood={busy ? 'thinking' : 'idle'} />
           </Animated.View>
-        );
-      }}
-      empty={
-        <Animated.View key={id} entering={FadeIn.duration(300)} style={styles.empty}>
-          <AraMascot size={52} interactive mood={busy ? 'thinking' : 'idle'} />
-        </Animated.View>
-      }
-      composer={(onHeight) => (
-        <Composer
-          placeholder={busy ? 'Ара отвечает…' : 'Спроси Ару…'}
-          onSend={send}
-          onHeight={onHeight}
-          autoFocus={false}
-          disabled={busy}
-        />
-      )}
-    />
+        }
+        composer={(onHeight) => (
+          <Composer
+            placeholder={busy ? 'Ара отвечает…' : 'Спроси Ару…'}
+            onSend={send}
+            onHeight={onHeight}
+            autoFocus={false}
+            disabled={busy}
+          />
+        )}
+      />
+      <ChatSidebar
+        open={sidebar}
+        currentId={id}
+        onClose={() => setSidebar(false)}
+        onSelect={switchTo}
+        onNew={startNew}
+      />
+    </View>
   );
 }
 
@@ -196,6 +227,7 @@ const styles = StyleSheet.create({
   row: { paddingHorizontal: Spacing.lg, paddingVertical: 7 },
   avatar: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.cardRaised },
   more: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  rightCapsule: { flexDirection: 'row', alignItems: 'center', height: 44, paddingHorizontal: 2 },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   error: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   empty: { alignItems: 'center' },

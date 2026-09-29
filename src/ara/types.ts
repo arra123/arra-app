@@ -92,9 +92,13 @@ export type SubAgent = {
 
 export type QuestionOption = { label: string; description: string };
 
-/** Неотвеченный вопрос с вариантами (AskUserQuestion). */
+/**
+ * Неотвеченный вопрос с вариантами: AskUserQuestion у Claude (ответ — клавишами
+ * в терминале) или вопрос Codex с `answerVia: 'message'` (ответ — обычным сообщением).
+ */
 export type AgentQuestion = {
   id: string;
+  answerVia?: 'message';
   questions: { question: string; header: string; multi: boolean; options: QuestionOption[] }[];
 };
 

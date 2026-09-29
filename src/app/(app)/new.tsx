@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { SFSymbol } from 'sf-symbols-typescript';
 import { ActivityIndicator, Alert, StyleSheet, TextInput, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import Animated, { FadeIn, FadeInDown, LinearTransition } from 'react-native-reanimated';
@@ -14,14 +15,19 @@ import { AgentIcon, Press, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
-const MODELS: Record<AgentKind, { value: string; label: string }[]> = {
-  claude: [
-    { value: 'opus', label: 'Opus' },
-    { value: 'sonnet', label: 'Sonnet' },
-    { value: 'haiku', label: 'Haiku' },
-  ],
-  codex: [{ value: '', label: 'По умолчанию' }],
-};
+type Folder = { path: string; kind: 'active' | 'recent' | 'parent'; agents: number; at: number };
+
+const FOLDER_HINT: Record<Folder['kind'], string> = { active: 'сейчас работает', recent: 'недавно', parent: 'папка проектов' };
+
+/** Родительская папка, если это не корень и не домашняя. */
+function parentOf(path: string) {
+  const trimmed = path.replace(/\/+$/, '');
+  const i = trimmed.lastIndexOf('/');
+  if (i <= 0) return null;
+  const parent = trimmed.slice(0, i);
+  if (/^(\/home\/[^/]+|\/Users\/[^/]+|~|\/root)$/.test(parent)) return null;
+  return parent;
+}
 
 export default function NewAgent() {
   const params = useLocalSearchParams<{ agent?: string; device?: string; dir?: string }>();
@@ -31,27 +37,43 @@ export default function NewAgent() {
   const [device, setDevice] = useState<DeviceId>(params.device === 'pc' ? 'pc' : state.devices.laptop.online || !state.devices.pc.online ? 'laptop' : 'pc');
   const [dir, setDir] = useState(params.dir || '');
   const [custom, setCustom] = useState(false);
-  const [model, setModel] = useState(MODELS[agent][0].value);
+  const [query, setQuery] = useState('');
+  const [showAll, setShowAll] = useState(false);
   const [task, setTask] = useState('');
   const [phase, setPhase] = useState<'idle' | 'launching' | 'waiting'>('idle');
   const known = useRef<Set<string>>(new Set());
 
-  // Папки проектов: где уже работают агенты и недавние сессии этого устройства
+  // Папки этого устройства: где сейчас работают агенты, недавние сессии
+  // и папки уровнем выше (там лежат другие проекты). Модель не спрашиваем —
+  // агент стартует со своей по умолчанию, сменить можно в его меню «⋯».
   const folders = useMemo(() => {
-    const out: string[] = [];
-    for (const item of [...state.agents, ...state.recent]) {
-      if (item.device === device && item.cwd && !out.includes(item.cwd)) out.push(item.cwd);
+    const map = new Map<string, Folder>();
+    for (const a of state.agents) {
+      if (a.device !== device || !a.cwd) continue;
+      const f = map.get(a.cwd) || { path: a.cwd, kind: 'active' as const, agents: 0, at: a.since || 0 };
+      map.set(a.cwd, { ...f, kind: 'active', agents: f.agents + 1 });
     }
-    return out.slice(0, 14);
+    for (const r of state.recent) {
+      if (r.device !== device || !r.cwd || map.has(r.cwd)) continue;
+      map.set(r.cwd, { path: r.cwd, kind: 'recent', agents: 0, at: (r.mtime || 0) * 1000 });
+    }
+    const known = [...map.values()];
+    for (const f of known) {
+      const parent = parentOf(f.path);
+      if (parent && !map.has(parent)) map.set(parent, { path: parent, kind: 'parent', agents: 0, at: 0 });
+    }
+    const rank = { active: 0, recent: 1, parent: 2 };
+    return [...map.values()].sort((a, b) => rank[a.kind] - rank[b.kind] || b.at - a.at);
   }, [state.agents, state.recent, device]);
 
   useEffect(() => {
-    if (!dir && folders.length && !custom) setDir(folders[0]);
+    if (!dir && folders.length && !custom) setDir(folders[0].path);
   }, [folders, dir, custom]);
 
-  useEffect(() => {
-    setModel(MODELS[agent][0].value);
-  }, [agent]);
+  const q = query.trim().toLowerCase();
+  const typedPath = /^[~/]/.test(query.trim()) ? query.trim() : '';
+  const found = q ? folders.filter((f) => f.path.toLowerCase().includes(q)) : folders;
+  const shown = q || showAll ? found : found.slice(0, 6);
 
   // Запустили — ждём, когда новый агент появится в снимке, и открываем его
   useEffect(() => {
@@ -79,7 +101,7 @@ export default function NewAgent() {
     setPhase('launching');
     haptic.press();
     try {
-      await ara.launch({ device, agent, dir: dir.trim(), task: task.trim(), model: model || undefined });
+      await ara.launch({ device, agent, dir: dir.trim(), task: task.trim() });
       setPhase('waiting');
     } catch (error: any) {
       setPhase('idle');
@@ -150,16 +172,16 @@ export default function NewAgent() {
                   onPress={() => setAgent(k)}
                   feedback="select"
                   scaleTo={0.97}
-                  style={[styles.card, styles.agentCard, active && styles.cardActive]}
+                  style={[styles.card, styles.agentCard, active && styles.cardActive, active && { borderColor: k === 'claude' ? Colors.claude : Colors.codex }]}
                   accessibilityRole="radio"
                   accessibilityState={{ selected: active }}
-                  accessibilityLabel={AGENT_LABEL[k]}>
-                  <AgentIcon agent={k} size={36} />
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <T v="callout" weight="700">{AGENT_LABEL[k]}</T>
-                    <T v="caption" color={Colors.textSecondary}>{k === 'claude' ? 'Anthropic' : 'OpenAI'}</T>
+                  accessibilityLabel={`${AGENT_LABEL[k]}, ${k === 'claude' ? 'Anthropic' : 'OpenAI'}`}>
+                  <View style={styles.cardTop}>
+                    <AgentIcon agent={k} size={44} />
+                    <Radio active={active} />
                   </View>
-                  <Radio active={active} />
+                  <T v="headline" weight="700">{AGENT_LABEL[k]}</T>
+                  <T v="caption" color={Colors.textSecondary}>{k === 'claude' ? 'Anthropic · модель по умолчанию' : 'OpenAI · модель по умолчанию'}</T>
                 </Press>
               </Animated.View>
             );
@@ -167,38 +189,69 @@ export default function NewAgent() {
         </View>
 
         <Label>Папка</Label>
-        <Animated.View layout={LinearTransition.duration(200)} style={styles.chips}>
-          {folders.map((folder) => {
-            const active = !custom && dir === folder;
-            return (
-              <Press
-                key={folder}
-                onPress={() => {
-                  setCustom(false);
-                  setDir(folder);
-                }}
-                feedback="select"
-                style={[styles.chip, active && styles.chipActive]}
-                accessibilityLabel={`Папка ${baseName(folder)}`}
-                accessibilityState={{ selected: active }}>
-                <SymbolView name="folder" size={12} tintColor={active ? Colors.onAccent : Colors.textSecondary} />
-                <T v="footnote" weight="600" color={active ? Colors.onAccent : Colors.text} numberOfLines={1}>{baseName(folder)}</T>
-              </Press>
-            );
-          })}
-          <Press
+        <View style={styles.search}>
+          <SymbolView name="magnifyingglass" size={15} tintColor={Colors.textTertiary} />
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Найти папку или ввести путь"
+            placeholderTextColor={Colors.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardAppearance="dark"
+            clearButtonMode="while-editing"
+            returnKeyType="done"
+            style={styles.searchInput}
+            maxFontSizeMultiplier={1.4}
+            accessibilityLabel="Поиск папки"
+          />
+        </View>
+        <Animated.View layout={LinearTransition.duration(200)} style={styles.folders}>
+          {typedPath ? (
+            <FolderRow
+              icon="folder.badge.plus"
+              title={`Открыть ${shortPath(typedPath)}`}
+              hint="путь как написан"
+              active={custom && dir === typedPath}
+              onPress={() => {
+                setCustom(true);
+                setDir(typedPath);
+              }}
+            />
+          ) : null}
+          {shown.map((f) => (
+            <FolderRow
+              key={f.path}
+              icon={f.kind === 'parent' ? 'folder' : 'folder.fill'}
+              title={baseName(f.path)}
+              hint={`${shortPath(f.path)} · ${f.kind === 'active' && f.agents > 1 ? `работают ${f.agents}` : FOLDER_HINT[f.kind]}`}
+              active={!custom && dir === f.path}
+              onPress={() => {
+                setCustom(false);
+                setDir(f.path);
+              }}
+            />
+          ))}
+          {!q && !showAll && found.length > shown.length ? (
+            <Press onPress={() => setShowAll(true)} feedback="select" style={styles.folderMore} accessibilityLabel="Показать все папки">
+              <T v="footnote" color={Colors.textSecondary}>Показать все ({found.length})</T>
+            </Press>
+          ) : null}
+          {q && !found.length && !typedPath ? (
+            <T v="footnote" color={Colors.textTertiary} style={styles.folderEmpty}>Такой папки среди проектов нет — начни путь с «~/» или «/»</T>
+          ) : null}
+          <FolderRow
+            icon="character.cursor.ibeam"
+            title="Другая папка…"
+            hint="ввести полный путь"
+            active={custom && dir !== typedPath}
             onPress={() => {
               setCustom(true);
-              setDir('');
+              setDir(typedPath || '');
             }}
-            feedback="select"
-            style={[styles.chip, custom && styles.chipActive]}
-            accessibilityLabel="Другая папка">
-            <SymbolView name="folder.badge.plus" size={12} tintColor={custom ? Colors.onAccent : Colors.textSecondary} />
-            <T v="footnote" weight="600" color={custom ? Colors.onAccent : Colors.text}>Другая…</T>
-          </Press>
+          />
         </Animated.View>
-        {custom ? (
+        {custom && dir !== typedPath ? (
           <Animated.View entering={FadeIn.duration(180)}>
             <TextInput
               value={dir}
@@ -210,32 +263,9 @@ export default function NewAgent() {
               autoFocus
               keyboardAppearance="dark"
               style={styles.field}
+              accessibilityLabel="Путь к папке"
             />
           </Animated.View>
-        ) : dir ? (
-          <T v="caption" color={Colors.textTertiary} numberOfLines={1} style={styles.path}>{shortPath(dir)}</T>
-        ) : null}
-
-        {MODELS[agent].length > 1 ? (
-          <>
-            <Label>Модель</Label>
-            <View style={styles.models}>
-              {MODELS[agent].map((m) => {
-                const active = m.value === model;
-                return (
-                  <Press
-                    key={m.label}
-                    onPress={() => setModel(m.value)}
-                    feedback="select"
-                    style={[styles.model, active && styles.modelActive]}
-                    accessibilityState={{ selected: active }}
-                    accessibilityLabel={`Модель ${m.label}`}>
-                    <T v="footnote" weight="600" color={active ? Colors.onAccent : Colors.text}>{m.label}</T>
-                  </Press>
-                );
-              })}
-            </View>
-          </>
         ) : null}
 
         <Label>Задача</Label>
@@ -267,6 +297,26 @@ export default function NewAgent() {
         ) : null}
       </KeyboardAwareScrollView>
     </View>
+  );
+}
+
+function FolderRow({ icon, title, hint, active, onPress }: { icon: SFSymbol; title: string; hint: string; active: boolean; onPress: () => void }) {
+  return (
+    <Press
+      onPress={onPress}
+      feedback="select"
+      scaleTo={0.99}
+      style={[styles.folder, active && styles.folderActive]}
+      accessibilityRole="radio"
+      accessibilityState={{ selected: active }}
+      accessibilityLabel={`${title}, ${hint}`}>
+      <SymbolView name={icon} size={18} tintColor={active ? Colors.text : Colors.textSecondary} />
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <T v="callout" weight="600" numberOfLines={1}>{title}</T>
+        <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{hint}</T>
+      </View>
+      {active ? <SymbolView name="checkmark" size={14} tintColor={Colors.text} weight="bold" /> : null}
+    </Press>
   );
 }
 
@@ -303,7 +353,22 @@ const styles = StyleSheet.create({
   cardActive: { borderColor: Colors.text, backgroundColor: Colors.cardPressed },
   deviceCard: { padding: 14, gap: 6, minHeight: 118 },
   cardTop: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', height: 36, marginBottom: 4 },
-  agentCard: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 12 },
+  agentCard: { padding: 14, gap: 4, minHeight: 124 },
+  search: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    height: 40,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.cardRaised,
+  },
+  searchInput: { flex: 1, color: Colors.text, fontSize: Type.callout, height: 40 },
+  folders: { borderRadius: Radius.lg, backgroundColor: Colors.cardRaised, overflow: 'hidden' },
+  folder: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, minHeight: 52, paddingVertical: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.separator },
+  folderActive: { backgroundColor: Colors.cardPressed },
+  folderMore: { alignItems: 'center', justifyContent: 'center', minHeight: 44, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.separator },
+  folderEmpty: { paddingHorizontal: 14, paddingVertical: 12 },
   online: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   onlineDot: { width: 7, height: 7, borderRadius: 4 },
   radio: {
@@ -317,22 +382,6 @@ const styles = StyleSheet.create({
   },
   radioActive: { borderColor: Colors.text, backgroundColor: Colors.text },
   radioDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.onAccent },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    height: 34,
-    borderRadius: Radius.pill,
-    backgroundColor: Colors.cardRaised,
-    maxWidth: 220,
-  },
-  chipActive: { backgroundColor: Colors.text },
-  path: { paddingHorizontal: 4 },
-  models: { flexDirection: 'row', padding: 3, borderRadius: Radius.pill, backgroundColor: Colors.cardRaised },
-  model: { flex: 1, height: 32, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
-  modelActive: { backgroundColor: Colors.text },
   field: {
     backgroundColor: Colors.cardRaised,
     borderRadius: Radius.md,
