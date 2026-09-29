@@ -68,7 +68,7 @@ export function RemoteImage({ path, scope, size = 180, square = false }: { path:
   const width = square ? size : Math.min(size * ratio, 280);
   return (
     <>
-      <Press onPress={() => file && setOpen(true)} scaleTo={0.98} accessibilityLabel={`Картинка ${baseName(path)}`} style={[styles.thumb, { width, height: width / ratio }]}>
+      <Press onPress={() => file && setOpen(true)} scaleTo={0.98} accessibilityLabel={`Картинка ${baseName(path)}`} style={[styles.thumb, { width, height: square ? size : width / ratio }]}>
         {file ? (
           <Image
             source={{ uri: file.url, headers: ara.authHeaders() }}
@@ -242,6 +242,8 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md,
     overflow: 'hidden',
     backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.hairline,
     alignItems: 'center',
     justifyContent: 'center',
   },

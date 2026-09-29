@@ -64,18 +64,20 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
   const [headerHeight, setHeaderHeight] = useState(insets.top + 56);
   const composerHeight = useSharedValue(90);
   const keyboard = useReanimatedKeyboardAnimation();
-  const bottomInset = insets.bottom;
+  // Composer уже содержит нижний safe-area. При клавиатуре оставляем от него
+  // 12 pt видимого воздуха, остальную часть компенсируем движением контейнера.
+  const keyboardOpenOffset = Math.max(0, insets.bottom - 12);
 
   const spacer = useAnimatedStyle(() => ({
-    height: composerHeight.get() + Math.max(0, -keyboard.height.get() - bottomInset) + 8,
+    height: composerHeight.get() + Math.max(0, -keyboard.height.get() - keyboardOpenOffset) + 8,
   }));
 
   // Пустой экран поднимается вместе с клавиатурой и полем ввода, а не прячется под ними
   const emptyLift = useAnimatedStyle(() => ({
-    paddingBottom: composerHeight.get() + Math.max(0, -keyboard.height.get() - bottomInset) + 16,
+    paddingBottom: composerHeight.get() + Math.max(0, -keyboard.height.get() - keyboardOpenOffset) + 16,
   }));
 
-  const occupiedBottom = useDerivedValue(() => composerHeight.get() + Math.max(0, -keyboard.height.get() - bottomInset));
+  const occupiedBottom = useDerivedValue(() => composerHeight.get() + Math.max(0, -keyboard.height.get() - keyboardOpenOffset));
 
   const reversed = [...data].reverse();
 
@@ -142,7 +144,7 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
 
       {overlay ? overlay({ top: headerHeight, bottom: occupiedBottom }) : null}
 
-      <KeyboardStickyView offset={{ closed: 0, opened: bottomInset }} style={styles.composer}>
+      <KeyboardStickyView offset={{ closed: 0, opened: keyboardOpenOffset }} style={styles.composer}>
         {composer((h) => composerHeight.set(h))}
       </KeyboardStickyView>
     </View>

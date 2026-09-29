@@ -4,8 +4,6 @@ import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, { Easing, FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
 
 import { chats, useChats, type Chat } from '@/ara/chats';
-import { ago } from '@/ara/format';
-import { useNow } from '@/ara/hooks';
 import { Press, T } from '@/components/ui';
 import { Colors, ScreenPadding } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
@@ -22,15 +20,9 @@ export function openNewChat() {
   openChat(chats.startNew());
 }
 
-function lastLine(chat: Chat) {
-  const last = [...chat.messages].reverse().find((m) => m.text);
-  return (last?.text || '').replace(/[#*_`>]/g, '').replace(/\s+/g, ' ').trim();
-}
-
 /** Вкладка «Разговор»: список диалогов с Арой и «Новый диалог». */
 export function ChatList({ top, bottom }: { top: number; bottom: number }) {
   const list = useChats();
-  const now = useNow(30_000);
   const items = useMemo(
     () => list.filter((c) => c.messages.length).sort((a, b) => b.updatedAt - a.updatedAt),
     [list],
@@ -49,7 +41,7 @@ export function ChatList({ top, bottom }: { top: number; bottom: number }) {
       <Animated.View entering={FadeIn.duration(220)}>
         {items.length ? (
           <Animated.View layout={layout} style={styles.list}>
-            <T v="title" weight="700" style={styles.heading}>Недавние</T>
+            <T v="headline" weight="700" style={styles.heading}>Недавние</T>
             {items.map((chat, i) => (
               <Animated.View key={chat.id} layout={layout} exiting={FadeOut.duration(150)}>
                 <Press
@@ -57,14 +49,10 @@ export function ChatList({ top, bottom }: { top: number; bottom: number }) {
                   onLongPress={() => remove(chat)}
                   delayLongPress={350}
                   scaleTo={0.99}
-                  style={styles.row}
+                  style={[styles.row, i > 0 && styles.rowBorder]}
                   accessibilityLabel={chat.title}
                   accessibilityHint="Долгое нажатие — удалить">
-                  <View style={styles.rowTop}>
-                    <T v="body" weight="600" numberOfLines={1} style={{ flex: 1 }}>{chat.title}</T>
-                    <T v="caption" color={Colors.textTertiary}>{ago(chat.updatedAt, now)}</T>
-                  </View>
-                  <T v="callout" color={Colors.textSecondary} numberOfLines={1}>{lastLine(chat)}</T>
+                  <T v="body" numberOfLines={1} style={{ flex: 1 }}>{chat.title}</T>
                 </Press>
               </Animated.View>
             ))}
@@ -81,9 +69,9 @@ export function ChatList({ top, bottom }: { top: number; bottom: number }) {
 }
 
 const styles = StyleSheet.create({
-  list: { paddingTop: 18 },
-  heading: { paddingHorizontal: ScreenPadding, paddingBottom: 12 },
-  row: { marginHorizontal: 10, paddingHorizontal: 12, paddingVertical: 14, gap: 3, borderRadius: 14 },
-  rowTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  list: { paddingTop: 18, paddingHorizontal: 8 },
+  heading: { paddingHorizontal: ScreenPadding - 2, paddingBottom: 8 },
+  row: { minHeight: 50, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', borderRadius: 12 },
+  rowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.separator },
   empty: { alignItems: 'center', gap: 8, marginTop: 100 },
 });
