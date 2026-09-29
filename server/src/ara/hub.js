@@ -349,6 +349,7 @@ export function createHub(deps = {}) {
         return;
       case 'ara.send':
       case 'ara.stop':
+      case 'ara.close':
       case 'ara.model': {
         if (!item || item.term == null) {
           emit(socket, { type: 'ara.result', reqId: entry.reqId, ok: false, error: 'Агент уже закрыт' });

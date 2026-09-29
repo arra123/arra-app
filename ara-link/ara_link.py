@@ -343,6 +343,26 @@ class AraLink:
             raise RuntimeError((err or out).strip()[-300:] or "Не удалось остановить")
         return {}
 
+    async def cmd_close(self, msg: dict) -> dict:
+        """Закрыть терминал агента (окно kitty) — с телефона, по долгому нажатию."""
+        agent = msg.get("agent") or {}
+        term = str(agent.get("term") or "")
+        if not term.isdigit():
+            raise RuntimeError("Нет терминала")
+        if self.remote(agent.get("device")):
+            code, out, err = await self.run([self.script("pc"), "close", term], timeout=15)
+            if code != 0:
+                raise RuntimeError((err or out).strip()[-300:] or "ПК не закрыл терминал")
+            return {}
+        try:
+            comm = Path(f"/proc/{term}/comm").read_text().strip()
+        except OSError:
+            raise RuntimeError("Терминал уже закрыт") from None
+        if comm != "kitty":
+            raise RuntimeError("Это не терминал агента")
+        os.kill(int(term), 15)
+        return {}
+
     async def cmd_model(self, msg: dict) -> dict:
         model = str(msg.get("model") or "")
         if not MODEL_RE.match(model):
@@ -613,6 +633,8 @@ class AraLink:
             self.spawn(self.reply(msg, self.cmd_stop))
         elif kind == "ara.model":
             self.spawn(self.reply(msg, self.cmd_model))
+        elif kind == "ara.close":
+            self.spawn(self.reply(msg, self.cmd_close))
         elif kind == "ara.launch":
             self.spawn(self.reply(msg, self.cmd_launch))
         elif kind == "ara.upload":
