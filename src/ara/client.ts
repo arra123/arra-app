@@ -22,6 +22,7 @@ const EMPTY: AraState = {
   agents: [],
   recent: [],
   devices: { laptop: { online: false, via: null }, pc: { online: false, via: null } },
+  limits: null,
 };
 
 let seq = 0;
@@ -180,6 +181,7 @@ class AraClient {
           agents: msg.agents || [],
           recent: msg.recent || [],
           devices: msg.devices || EMPTY.devices,
+          limits: msg.limits || null,
         });
         return;
       case 'ara.transcript':

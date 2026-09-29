@@ -15,6 +15,7 @@ import { useAra, useNow } from '@/ara/hooks';
 import { pins, usePins } from '@/ara/pins';
 import type { Agent, DeviceId, RecentSession } from '@/ara/types';
 import { AraChat } from '@/components/ara-chat';
+import { LimitsSection } from '@/components/limits';
 import { GlassMenu, MenuTrigger, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
 import { Segmented } from '@/components/segmented';
 import { AgentIcon, DeskBadge, Glass, IconButton, Press, StatusDot, T } from '@/components/ui';
@@ -123,6 +124,8 @@ export default function Home() {
                 ) : null}
               </View>
             ) : null}
+
+            <LimitsSection limits={state.limits} />
           </Animated.View>
         </ScrollView>
       )}

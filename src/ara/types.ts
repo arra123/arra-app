@@ -35,6 +35,25 @@ export type RecentSession = {
 
 export type DevicesState = Record<DeviceId, { online: boolean; via: DeviceId | null }>;
 
+/** Лимит подписки: проценты — сколько израсходовано, *Reset — секунды unix. */
+export type Limit = {
+  session?: number;
+  sessionReset?: number;
+  week?: number;
+  weekReset?: number;
+  email?: string;
+  plan?: string;
+  /** Облачный кредит Claude в долларах */
+  credit?: { left: number; limit: number; reset: number };
+};
+
+export type Limits = {
+  claude: Limit | null;
+  codex: { laptop: Limit | null; pc: Limit | null };
+  /** секунды unix: когда сняты */
+  at: number;
+};
+
 export type AraState = {
   connected: boolean;
   /** Пришёл ли хоть один ara.state с сервера */
@@ -42,6 +61,8 @@ export type AraState = {
   agents: Agent[];
   recent: RecentSession[];
   devices: DevicesState;
+  /** Лимиты подписок Claude и Codex; null — компьютер их не прислал */
+  limits: Limits | null;
 };
 
 export type StepItem = { icon?: string; text: string };

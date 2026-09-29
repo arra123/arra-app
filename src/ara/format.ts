@@ -2,7 +2,7 @@ import type { SFSymbol } from 'sf-symbols-typescript';
 
 import { Colors } from '@/constants/theme';
 
-import type { Agent, AgentState, DeviceId, SubAgent, Transcript } from './types';
+import type { Agent, AgentKind, AgentState, DeviceId, Limit, Limits, SubAgent, Transcript } from './types';
 
 export const STATE_META: Record<AgentState, { label: string; color: string }> = {
   working: { label: 'работает', color: Colors.working },
@@ -61,6 +61,39 @@ export function tookLabel(seconds: number | null | undefined): string {
   if (s < 60) return `${s} с`;
   if (s < 3600) return `${Math.floor(s / 60)} мин ${s % 60} с`;
   return `${Math.floor(s / 3600)} ч ${Math.floor((s % 3600) / 60)} мин`;
+}
+
+const WEEKDAYS = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+
+/** Когда обновится лимит: «в 16:40», «завтра в 9:00», «в чт 21:00», «3 окт в 21:00». ts — секунды unix. */
+export function resetLabel(ts: number | null | undefined, now = Date.now()): string {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const day = new Date(d);
+  day.setHours(0, 0, 0, 0);
+  const days = Math.round((day.getTime() - today.getTime()) / 86_400_000);
+  if (days <= 0) return `в ${hm}`;
+  if (days === 1) return `завтра в ${hm}`;
+  if (days < 7) return `в ${WEEKDAYS[d.getDay()]} ${hm}`;
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} в ${hm}`;
+}
+
+/** Цвет расхода лимита: обычный, ≥80% жёлтый, ≥95% красный. */
+export function limitColor(percent: number | undefined): string {
+  if (percent == null) return Colors.textSecondary;
+  if (percent >= 95) return Colors.error;
+  if (percent >= 80) return Colors.waiting;
+  return Colors.textSecondary;
+}
+
+/** Лимит подписки для агента: Claude общий, Codex — того устройства, где агент. */
+export function limitFor(limits: Limits | null, agent: AgentKind, device: DeviceId): Limit | null {
+  if (!limits) return null;
+  if (agent === 'claude') return limits.claude;
+  return limits.codex?.[device === 'pc' ? 'pc' : 'laptop'] || null;
 }
 
 export function shortPath(path: string): string {

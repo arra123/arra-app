@@ -1,5 +1,5 @@
 import { SymbolView } from 'expo-symbols';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeOut, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,6 +9,7 @@ import { ago, mediaPaths } from '@/ara/format';
 import { useAra, useNow } from '@/ara/hooks';
 import { uploadPhoto, type LocalPhoto } from '@/ara/upload';
 import { AraMascot } from '@/components/ara-mascot';
+import { LimitsInline } from '@/components/limits';
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { Composer } from '@/components/composer';
 import { MenuTrigger, type MenuAnchor } from '@/components/glass-menu';
@@ -112,7 +113,7 @@ export function AraChat({ id, embedded = false, headerTop = 0 }: { id: string; e
   );
 
   const title = embedded ? (
-    <ChatPicker current={chat} status={status} />
+    <ChatPicker current={chat} status={status} limits={<LimitsInline title="Claude" limit={state.limits?.claude || null} v="tiny" />} />
   ) : (
     <View style={styles.title}>
       <View style={styles.avatar}>
@@ -120,7 +121,11 @@ export function AraChat({ id, embedded = false, headerTop = 0 }: { id: string; e
       </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <T v="headline" weight="700" numberOfLines={1}>{messages.length ? chat.title : 'Ара'}</T>
-        <T v="caption" color={online ? Colors.textSecondary : Colors.error} numberOfLines={1}>{status || 'на связи'}</T>
+        {status || !state.limits?.claude ? (
+          <T v="caption" color={online ? Colors.textSecondary : Colors.error} numberOfLines={1}>{status || 'на связи'}</T>
+        ) : (
+          <LimitsInline title="Claude" limit={state.limits.claude} v="tiny" />
+        )}
       </View>
     </View>
   );
@@ -197,7 +202,7 @@ const pickerEnter = () => {
 };
 
 /** Название диалога с шевроном → список прошлых диалогов и «Новый диалог». */
-function ChatPicker({ current, status }: { current: Chat; status: string | null }) {
+function ChatPicker({ current, status, limits }: { current: Chat; status: string | null; limits?: ReactNode }) {
   const ref = useRef<View>(null);
   const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
   const list = useChats();
@@ -241,6 +246,7 @@ function ChatPicker({ current, status }: { current: Chat; status: string | null 
         </View>
         {status ? <T v="caption" color={status.startsWith('Компьютер') ? Colors.error : Colors.textSecondary} numberOfLines={1}>{status}</T> : null}
       </Pressable>
+      {!status && limits ? <View style={styles.pickerLimits}>{limits}</View> : null}
       <Modal visible={!!anchor} transparent animationType="none" onRequestClose={close} statusBarTranslucent>
         <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: Colors.scrim }]} onPress={close} accessibilityLabel="Закрыть список диалогов" />
         {anchor ? (
@@ -326,6 +332,7 @@ const styles = StyleSheet.create({
   styleCompact: { width: 200 },
   picker: { paddingLeft: 4, paddingVertical: 2, alignSelf: 'flex-start', maxWidth: '100%' },
   pickerRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pickerLimits: { paddingLeft: 4, marginTop: 1 },
   sheet: {
     position: 'absolute',
     left: 12,

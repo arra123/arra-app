@@ -8,13 +8,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { confirmCloseAgent, stopAgent } from '@/ara/actions';
 import { ara } from '@/ara/client';
-import { AGENT_LABEL, DEVICE_META, modelLabel, shortPath, STATE_META, statusLine } from '@/ara/format';
-import { useAgentItem, useNow, useTranscript } from '@/ara/hooks';
+import { AGENT_LABEL, DEVICE_META, limitFor, modelLabel, shortPath, STATE_META, statusLine } from '@/ara/format';
+import { useAgentItem, useAra, useNow, useTranscript } from '@/ara/hooks';
 import type { TranscriptMessage } from '@/ara/types';
 import { uploadPhoto } from '@/ara/upload';
 import { HelpersStrip, NeedsCard, QuestionCard } from '@/components/agent-cards';
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { Composer } from '@/components/composer';
+import { LimitsInline } from '@/components/limits';
 import { MenuTrigger, type MenuSection } from '@/components/glass-menu';
 import { PlanCard, TranscriptRow, UserBubble } from '@/components/transcript';
 import { AgentIcon, DeskBadge, Glass, Press, StatusDot, T } from '@/components/ui';
@@ -48,6 +49,7 @@ export default function AgentScreen() {
   const key = String(rawKey || '');
   const { agent, recent } = useAgentItem(key);
   const transcript = useTranscript(key);
+  const { limits } = useAra();
   const now = useNow(10_000);
   // Отправленное с телефона висит «отправляю…», пока в переписке не появится
   // соответствующее по счёту сообщение пользователя (или 90 с на всякий случай)
@@ -188,6 +190,12 @@ export default function AgentScreen() {
         </T>
         {state ? <T v="caption" color={STATE_META[state].color}>{stopping ? 'останавливаю…' : ''}</T> : null}
       </Animated.View>
+      {item ? (
+        <LimitsInline
+          title={item.agent === 'claude' ? 'Claude' : `Codex ${item.device === 'pc' ? 'ПК' : 'ноутбук'}`}
+          limit={limitFor(limits, item.agent, item.device)}
+        />
+      ) : null}
       {agent ? <HelpersStrip helpers={helpers} /> : null}
       {plan.length ? <PlanCard plan={plan} /> : null}
     </>
