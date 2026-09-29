@@ -81,7 +81,7 @@ export function SplashOverlay({ ready }: { ready: boolean }) {
         </Animated.View>
       </View>
       <Animated.View style={[styles.label, label]}>
-        <T v="title" weight="700">Ара</T>
+        <T v="title" weight="700">Arra</T>
         <T v="footnote" color={Colors.textSecondary}>твои агенты рядом</T>
       </Animated.View>
     </Animated.View>

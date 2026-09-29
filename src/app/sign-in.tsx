@@ -42,7 +42,7 @@ export default function SignIn() {
     <KeyboardAvoidingView behavior="padding" style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <Animated.View entering={FadeInDown.duration(500)} style={styles.brand}>
         <AgentIcon agent="ara" size={64} />
-        <T v="largeTitle" weight="800">Ара</T>
+        <T v="largeTitle" weight="800">Arra</T>
         <T v="callout" color={Colors.textSecondary} style={{ textAlign: 'center' }}>
           Агенты на ноутбуке и ПК — у тебя в кармане
         </T>
