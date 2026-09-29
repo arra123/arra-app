@@ -191,7 +191,7 @@ test('хаб: ara.send идёт на нужный компьютер, ответ
   assert.deepEqual(phone.last('ara.result'), { type: 'ara.result', ok: false, error: 'Компьютер не ответил', reqId: 'c9' });
 });
 
-test('хаб: запуск на ПК через ноутбук и поток ответа Ары', async () => {
+test('хаб: запуск на ПК через ноутбук и поток ответа Arra', async () => {
   const { hub } = setup();
   const laptop = fakeSocket();
   const phone = fakeSocket();

@@ -68,7 +68,7 @@ function switchTo(next: string) {
 }
 
 /**
- * Диалог с Арой на весь экран, как в ChatGPT: слева кнопка панели диалогов,
+ * Диалог с Arra на весь экран, как в ChatGPT: слева кнопка панели диалогов,
  * по центру название, справа капсула «новый чат · ⋯» (стиль, модель, удаление),
  * лента и поле ввода.
  */
@@ -96,7 +96,7 @@ export function AraChat({ id }: { id: string }) {
     const question = messages[answerIndex - 1];
     const answer = messages[answerIndex];
     if (question?.role !== 'user' || !answer) return;
-    // Иначе неудавшийся вопрос попал бы в историю и Ара увидела бы его дважды
+    // Иначе неудавшийся вопрос попал бы в историю и Arra увидела бы его дважды
     chats.dropExchange(id, answer.id);
     chats.send(id, question.text, question.images || [], question.localImages || []);
   }
@@ -114,7 +114,7 @@ export function AraChat({ id }: { id: string }) {
     if (next !== id) switchTo(next);
   }
 
-  const status = !online ? 'Компьютер не в сети — Ара не ответит' : busy ? 'печатает…' : null;
+  const status = !online ? 'Компьютер не в сети — Arra не ответит' : busy ? 'печатает…' : null;
 
   const menu: MenuSection[] = [
     {
@@ -142,7 +142,7 @@ export function AraChat({ id }: { id: string }) {
         <AraMascot size={22} mood={busy ? 'thinking' : 'idle'} interactive />
       </View>
       <View style={{ flexShrink: 1, minWidth: 0 }}>
-        <T v="subhead" weight="700" numberOfLines={1}>{messages.length ? chat.title : 'Ара'}</T>
+        <T v="subhead" weight="700" numberOfLines={1}>{messages.length ? chat.title : 'Arra'}</T>
         {status ? <T v="caption" color={online ? Colors.textSecondary : Colors.error} numberOfLines={1}>{status}</T> : null}
       </View>
     </View>
@@ -170,7 +170,15 @@ export function AraChat({ id }: { id: string }) {
   );
 
   return (
-    <View style={{ flex: 1 }}>
+    <ChatSidebar
+      open={sidebar}
+      currentId={id}
+      onOpen={() => setSidebar(true)}
+      onClose={() => setSidebar(false)}
+      onSelect={switchTo}
+      onNew={startNew}
+      onWork={() => router.dismissTo('/')}
+      onTalk={() => setSidebar(false)}>
       <ChatLayout
         title={title}
         left={left}
@@ -197,7 +205,7 @@ export function AraChat({ id }: { id: string }) {
         }
         composer={(onHeight) => (
           <Composer
-            placeholder={busy ? 'Ара отвечает…' : 'Спроси Ару…'}
+            placeholder={busy ? 'Arra отвечает…' : 'Спроси Arra…'}
             onSend={send}
             onHeight={onHeight}
             autoFocus={false}
@@ -205,16 +213,7 @@ export function AraChat({ id }: { id: string }) {
           />
         )}
       />
-      <ChatSidebar
-        open={sidebar}
-        currentId={id}
-        onClose={() => setSidebar(false)}
-        onSelect={switchTo}
-        onNew={startNew}
-        onWork={() => router.dismissTo('/')}
-        onTalk={() => setSidebar(false)}
-      />
-    </View>
+    </ChatSidebar>
   );
 }
 

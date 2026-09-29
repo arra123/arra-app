@@ -42,7 +42,7 @@ export default async function araRoutes(app) {
   });
 
   // Фото с телефона → файл на компьютере агента. Отвечает путём на компьютере.
-  // query: agentKey (агент, которому пишем) или device (laptop | pc, для чата с Арой и запуска).
+  // query: agentKey (агент, которому пишем) или device (laptop | pc, для чата с Arra и запуска).
   app.post('/ara/upload', { preHandler: app.auth }, async (request, reply) => {
     const file = await request.file();
     if (!file) return reply.code(400).send({ error: 'Нужен файл' });

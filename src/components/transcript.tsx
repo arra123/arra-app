@@ -160,20 +160,6 @@ function MediaRow({ children }: { children: ReactNode }) {
   return <View style={styles.media}>{children}</View>;
 }
 
-function UserMedia({ children, count }: { children: ReactNode; count: number }) {
-  return (
-    <View style={styles.userMedia}>
-      <View style={styles.userMediaHead}>
-        <SymbolView name="photo.on.rectangle.angled" size={12} tintColor={Colors.textSecondary} />
-        <T v="tiny" weight="600" color={Colors.textSecondary}>
-          {count} {count === 1 ? 'фото' : count < 5 ? 'фото' : 'фотографий'}
-        </T>
-      </View>
-      <MediaRow>{children}</MediaRow>
-    </View>
-  );
-}
-
 export function UserBubble({ text, images = [], localImages = [], scope, pending, progress = 1, time }: {
   text: string;
   images?: string[];
@@ -185,19 +171,24 @@ export function UserBubble({ text, images = [], localImages = [], scope, pending
   /** «12:40» под пузырём */
   time?: string;
 }) {
+  const count = localImages.length || images.length;
+  const tile = count === 1 ? 112 : count === 2 ? 104 : 82;
+  const columns = Math.min(3, count);
+  const mediaWidth = columns ? columns * tile + (columns - 1) * 5 : 0;
+
   return (
-    <View style={[styles.userWrap, (localImages.length > 0 || images.length > 0) && styles.userMediaWrap]}>
-      {localImages.length ? (
-        <UserMedia count={localImages.length}>{localImages.map((uri) => <LocalImage key={uri} uri={uri} size={104} />)}</UserMedia>
-      ) : images.length ? (
-        <UserMedia count={images.length}>{images.map((p) => {
-          const local = localPhotoUri(p);
-          return local ? <LocalImage key={p} uri={local} size={104} /> : <RemoteImage key={p} path={p} scope={scope} size={104} square />;
-        })}</UserMedia>
-      ) : null}
-      {text ? (
-        <View style={styles.userBubble}>
-          <T selectable>{text}</T>
+    <View style={styles.userWrap}>
+      {count || text ? (
+        <View style={[styles.userBubble, count > 0 && styles.userBubbleWithMedia]}>
+          {count ? (
+            <View style={[styles.userMedia, { width: mediaWidth }]}>
+              {localImages.length ? localImages.map((uri) => <LocalImage key={uri} uri={uri} size={tile} />) : images.map((p) => {
+                const local = localPhotoUri(p);
+                return local ? <LocalImage key={p} uri={local} size={tile} /> : <RemoteImage key={p} path={p} scope={scope} size={tile} square />;
+              })}
+            </View>
+          ) : null}
+          {text ? <View style={count ? styles.userTextWithMedia : undefined}><T selectable>{text}</T></View> : null}
         </View>
       ) : null}
       {pending && (localImages.length > 0 || images.length > 0) && progress < 1 ? (
@@ -291,25 +282,16 @@ const styles = StyleSheet.create({
   thoughtText: { flexShrink: 1, gap: 2 },
   stepsList: { marginTop: 8, marginLeft: 6, gap: 6, borderLeftWidth: 1, borderLeftColor: Colors.separator, paddingLeft: 12 },
   stepRow: { flexDirection: 'row', gap: 8 },
-  userWrap: { alignItems: 'flex-end', alignSelf: 'flex-end', gap: 6, maxWidth: '82%' },
-  userMediaWrap: { width: '88%' },
-  userMedia: {
-    alignSelf: 'flex-end',
-    maxWidth: '100%',
-    gap: 6,
-    padding: 7,
-    borderRadius: Radius.lg,
-    borderWidth: 1,
-    borderColor: Colors.hairline,
-    backgroundColor: Colors.cardRaised,
-  },
-  userMediaHead: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 2 },
+  userWrap: { alignItems: 'flex-end', alignSelf: 'flex-end', gap: 6, maxWidth: '88%' },
+  userMedia: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 5 },
   userBubble: {
     backgroundColor: Colors.userBubble,
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 11,
   },
+  userBubbleWithMedia: { padding: 6, borderRadius: 20 },
+  userTextWithMedia: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 5 },
   uploadTrack: { width: 104, height: 2, borderRadius: 1, overflow: 'hidden', backgroundColor: Colors.separator },
   uploadFill: { height: 2, borderRadius: 1, backgroundColor: Colors.textSecondary },
   assistant: { gap: 10 },

@@ -30,7 +30,7 @@ const nextId = () => `m${Date.now().toString(36)}${(++seq).toString(36)}`;
 
 /**
  * Один WebSocket на всё приложение: состояние агентов, подписка на переписку,
- * команды с ответами по reqId и поток ответов Ары. Переподключается сам,
+ * команды с ответами по reqId и поток ответов Arra. Переподключается сам,
  * проверяет живость пингом и при возвращении приложения из фона.
  */
 class AraClient {
@@ -235,7 +235,7 @@ class AraClient {
           clearTimeout(a.timer);
           this.asks.delete(msg.reqId);
           if (msg.type === 'ara.ask.done') a.resolve();
-          else a.reject(new Error(msg.error || msg.text || 'Ара не ответила'));
+          else a.reject(new Error(msg.error || msg.text || 'Arra не ответила'));
           return;
         }
         this.armAsk(msg.reqId);
@@ -357,7 +357,7 @@ class AraClient {
     clearTimeout(a.timer);
     a.timer = setTimeout(() => {
       this.asks.delete(reqId);
-      a.reject(new Error('Ара не ответила'));
+      a.reject(new Error('Arra не ответила'));
     }, 200_000);
   }
 

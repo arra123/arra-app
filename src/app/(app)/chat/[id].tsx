@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import { chats, useChat } from '@/ara/chats';
 import { AraChat } from '@/components/ara-chat';
 
-/** Диалог с Арой на весь экран; вход — список на вкладке «Разговор». */
+/** Диалог с Arra на весь экран; вход — список на вкладке «Разговор». */
 export default function ChatScreen() {
   const { id: rawId } = useLocalSearchParams<{ id: string }>();
   const id = String(rawId || '');

@@ -44,7 +44,7 @@ function join(...parts: string[]) {
 }
 
 function deniedMic() {
-  Alert.alert('Нет доступа к микрофону', 'Разреши микрофон для «Ары» в Настройках.', [
+  Alert.alert('Нет доступа к микрофону', 'Разреши микрофон для «Arra» в Настройках.', [
     { text: 'Настройки', onPress: () => Linking.openSettings() },
     { text: 'OK', style: 'cancel' },
   ]);
@@ -186,7 +186,7 @@ export function useDictation(text: string, setText: (text: string) => void) {
       step = 'разрешения';
       const perm = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
       if (!perm.granted) {
-        setNotice('Нет доступа к распознаванию речи — пишу звук для ноутбука. Разрешить: Настройки → Ара');
+        setNotice('Нет доступа к распознаванию речи — пишу звук для ноутбука. Разрешить: Настройки → Arra');
         return false;
       }
       // Без сети — только если русский скачан на телефон, иначе через Apple
@@ -247,7 +247,7 @@ export function useDictation(text: string, setText: (text: string) => void) {
       const perm = await requestRecordingPermissionsAsync();
       if (!perm.granted) {
         deniedMic();
-        setNotice('Нет доступа к микрофону: Настройки → Ара → Микрофон');
+        setNotice('Нет доступа к микрофону: Настройки → Arra → Микрофон');
         return;
       }
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });

@@ -217,7 +217,7 @@ const LOGOS = {
   codex: require('@/assets/images/openai-mark.png'),
 };
 
-/** Бейдж агента: фирменный «спарк» Claude, узел OpenAI у Codex, маскот у Ары. */
+/** Бейдж агента: фирменный «спарк» Claude, узел OpenAI у Codex, маскот у Arra. */
 export function AgentIcon({ agent, size = 32 }: { agent: AgentKind | 'ara'; size?: number }) {
   if (agent === 'ara') {
     return (

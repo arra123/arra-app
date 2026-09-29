@@ -104,7 +104,7 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, i
       if (camera) {
         const perm = await ImagePicker.requestCameraPermissionsAsync();
         if (!perm.granted) {
-          Alert.alert('Нет доступа к камере', 'Разреши камеру для «Ары» в Настройках.', [
+          Alert.alert('Нет доступа к камере', 'Разреши камеру для «Arra» в Настройках.', [
             { text: 'Настройки', onPress: () => Linking.openSettings() },
             { text: 'OK', style: 'cancel' },
           ]);
@@ -141,7 +141,7 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, i
     try {
       const perm = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
       if (!perm.granted) {
-        Alert.alert('Нет доступа к фото', 'Разреши доступ к фото для «Ары» в Настройках.', [
+        Alert.alert('Нет доступа к фото', 'Разреши доступ к фото для «Arra» в Настройках.', [
           { text: 'Настройки', onPress: () => Linking.openSettings() },
           { text: 'OK', style: 'cancel' },
         ]);

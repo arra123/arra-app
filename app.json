@@ -17,11 +17,11 @@
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "CFBundleDisplayName": "Ара",
-        "NSCameraUsageDescription": "Ара снимает фото, чтобы отправить его агенту на компьютер.",
-        "NSMicrophoneUsageDescription": "Ара записывает голос, чтобы продиктовать сообщение агенту или Аре.",
-        "NSPhotoLibraryUsageDescription": "Ара берёт выбранные фото из галереи, чтобы отправить их агенту на компьютер.",
-        "NSSpeechRecognitionUsageDescription": "Ара распознаёт речь прямо на телефоне, чтобы надиктованный текст сразу появлялся в поле ввода."
+        "CFBundleDisplayName": "Arra",
+        "NSCameraUsageDescription": "Arra снимает фото, чтобы отправить его агенту на компьютер.",
+        "NSMicrophoneUsageDescription": "Arra записывает голос, чтобы продиктовать сообщение агенту или Arra.",
+        "NSPhotoLibraryUsageDescription": "Arra берёт выбранные фото из галереи, чтобы отправить их агенту на компьютер.",
+        "NSSpeechRecognitionUsageDescription": "Arra распознаёт речь прямо на телефоне, чтобы надиктованный текст сразу появлялся в поле ввода."
       }
     },
     "android": {
@@ -54,27 +54,27 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "Ара записывает голос, чтобы продиктовать сообщение агенту или Аре."
+          "microphonePermission": "Arra записывает голос, чтобы продиктовать сообщение агенту или Arra."
         }
       ],
       [
         "expo-speech-recognition",
         {
-          "microphonePermission": "Ара записывает голос, чтобы продиктовать сообщение агенту или Аре.",
-          "speechRecognitionPermission": "Ара распознаёт речь прямо на телефоне, чтобы надиктованный текст сразу появлялся в поле ввода."
+          "microphonePermission": "Arra записывает голос, чтобы продиктовать сообщение агенту или Arra.",
+          "speechRecognitionPermission": "Arra распознаёт речь прямо на телефоне, чтобы надиктованный текст сразу появлялся в поле ввода."
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "Ара берёт выбранные фото из галереи, чтобы отправить их агенту на компьютер.",
-          "cameraPermission": "Ара снимает фото, чтобы отправить его агенту на компьютер."
+          "photosPermission": "Arra берёт выбранные фото из галереи, чтобы отправить их агенту на компьютер.",
+          "cameraPermission": "Arra снимает фото, чтобы отправить его агенту на компьютер."
         }
       ],
       [
         "expo-media-library",
         {
-          "photosPermission": "Ара берёт последний снимок экрана или фото, чтобы одним нажатием отправить его агенту на компьютер.",
+          "photosPermission": "Arra берёт последний снимок экрана или фото, чтобы одним нажатием отправить его агенту на компьютер.",
           "savePhotosPermission": false,
           "isAccessMediaLocationEnabled": false
         }

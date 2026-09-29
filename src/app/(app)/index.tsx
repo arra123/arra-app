@@ -3,11 +3,9 @@ import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useRef, useState, type ReactNode } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { Easing, FadeIn, FadeInDown, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { scheduleOnRN } from 'react-native-worklets';
 
 import { confirmCloseAgent, stopAgent } from '@/ara/actions';
 import { ara } from '@/ara/client';
@@ -15,8 +13,8 @@ import { AGENT_LABEL, ago, DEVICE_META, STATE_META } from '@/ara/format';
 import { useAra, useNow } from '@/ara/hooks';
 import { pins, usePins } from '@/ara/pins';
 import type { Agent, DeviceId, RecentSession } from '@/ara/types';
-import { useCurrentChatId } from '@/ara/chats';
-import { ChatList, openChat, openNewChat } from '@/components/chat-list';
+import { chats, useCurrentChatId } from '@/ara/chats';
+import { openChat, openNewChat } from '@/components/chat-list';
 import { ChatSidebar } from '@/components/chat-sidebar';
 import { LimitsSection } from '@/components/limits';
 import { GlassMenu, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
@@ -24,7 +22,6 @@ import { DeskBadge, IconButton, Press, ProjectIcon, StatusDot, T } from '@/compo
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
-type Tab = 'work' | 'talk';
 const DEVICES: DeviceId[] = ['laptop', 'pc'];
 const layout = LinearTransition.duration(240).easing(Easing.out(Easing.cubic));
 
@@ -37,7 +34,6 @@ export default function Home() {
   const state = useAra();
   const pinned = usePins();
   const now = useNow(30_000);
-  const [tab, setTab] = useState<Tab>('work');
   const [sidebar, setSidebar] = useState(false);
   const currentChatId = useCurrentChatId() || '';
   const [query, setQuery] = useState('');
@@ -56,18 +52,17 @@ export default function Home() {
     setTimeout(() => setRefreshing(false), 700);
   };
 
-  const openDrawer = Gesture.Pan()
-    .activeOffsetX(12)
-    .failOffsetY([-14, 14])
-    .onEnd((e) => {
-      if (e.translationX > 48 || e.velocityX > 500) scheduleOnRN(setSidebar, true);
-    });
-
   return (
-    <View style={styles.root}>
-      {tab === 'talk' ? (
-        <ChatList top={insets.top + 64} bottom={insets.bottom + 32} />
-      ) : (
+    <ChatSidebar
+      open={sidebar}
+      currentId={currentChatId}
+      onOpen={() => setSidebar(true)}
+      onClose={() => setSidebar(false)}
+      onSelect={openChat}
+      onNew={openNewChat}
+      onWork={() => setSidebar(false)}
+      onTalk={() => openChat(chats.ensureCurrent())}>
+      <View style={styles.root}>
         <ScrollView
           contentContainerStyle={{ paddingTop: insets.top + 64, paddingBottom: insets.bottom + 32 }}
           keyboardDismissMode="on-drag"
@@ -133,32 +128,14 @@ export default function Home() {
             <LimitsSection limits={state.limits} />
           </Animated.View>
         </ScrollView>
-      )}
-
-      {/* Один спокойный заголовок; Работа / Разговоры живут в левой панели. */}
-      <View style={[styles.top, { paddingTop: insets.top + 6 }]}>
-        <IconButton icon="line.3.horizontal" label="Меню" onPress={() => setSidebar(true)} />
-        <T v="headline" weight="700" style={styles.topTitle}>{tab === 'work' ? 'Работа' : 'Разговоры'}</T>
-        {tab === 'talk' ? (
-          <IconButton icon="square.and.pencil" label="Новый диалог" onPress={openNewChat} />
-        ) : (
-          // Выбор Claude / Codex — в листе нового агента, с их значками
+        {/* Работа и диалоги переключаются только через левую панель. */}
+        <View style={[styles.top, { paddingTop: insets.top + 6 }]}>
+          <IconButton icon="line.3.horizontal" label="Меню" onPress={() => setSidebar(true)} />
+          <T v="headline" weight="700" style={styles.topTitle}>Работа</T>
           <IconButton icon="square.and.pencil" label="Новый агент" onPress={() => router.push('/new')} />
-        )}
+        </View>
       </View>
-      <GestureDetector gesture={openDrawer}>
-        <View style={styles.edgeSwipe} accessibilityElementsHidden />
-      </GestureDetector>
-      <ChatSidebar
-        open={sidebar}
-        currentId={currentChatId}
-        onClose={() => setSidebar(false)}
-        onSelect={openChat}
-        onNew={openNewChat}
-        onWork={() => setTab('work')}
-        onTalk={() => setTab('talk')}
-      />
-    </View>
+    </ChatSidebar>
   );
 }
 

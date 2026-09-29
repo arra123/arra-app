@@ -15,7 +15,7 @@ export type ChatMessage = {
   images?: string[];
   /** Те же фото на телефоне — чтобы показать без сети */
   localImages?: string[];
-  /** Что Ара сделала по ходу ответа (передала задачу агенту и т.п.) */
+  /** Что Arra сделала по ходу ответа (передала задачу агенту и т.п.) */
   actions?: string[];
   error?: string;
   streaming?: boolean;
@@ -40,11 +40,11 @@ function actionText(action: Record<string, unknown>): string {
   const text = action.text ?? action.title ?? action.summary;
   if (typeof text === 'string' && text.trim()) return text.trim();
   const kind = typeof action.kind === 'string' ? action.kind : typeof action.type === 'string' ? action.type : '';
-  return kind ? `Действие: ${kind}` : 'Ара выполнила действие';
+  return kind ? `Действие: ${kind}` : 'Arra выполнила действие';
 }
 
 /**
- * Чаты с Арой живут на телефоне (файл в документах приложения).
+ * Чаты с Arra живут на телефоне (файл в документах приложения).
  * Ответ приходит потоком с компьютера: ara.ask → ara.ask.delta → ara.ask.done.
  */
 class ChatStore {
@@ -207,7 +207,7 @@ class ChatStore {
   }
 
   /**
-   * Отправить вопрос Аре. Локальный пузырь появляется сразу, пока фото ещё
+   * Отправить вопрос Arra. Локальный пузырь появляется сразу, пока фото ещё
    * загружаются; после загрузки пути добавляются в вопрос для Claude.
    */
   async send(chatId: string, text: string, images: string[] | Promise<string[]> = [], localImages: string[] = []) {
@@ -239,7 +239,7 @@ class ChatStore {
       );
       this.updateMessage(chatId, answer.id, (m) => ({ ...m, streaming: false }));
     } catch (error: any) {
-      this.updateMessage(chatId, answer.id, (m) => ({ ...m, streaming: false, error: error?.message || 'Ара не ответила' }));
+      this.updateMessage(chatId, answer.id, (m) => ({ ...m, streaming: false, error: error?.message || 'Arra не ответила' }));
     }
     this.update(chatId, (c) => ({ ...c, updatedAt: Date.now() }));
   }

@@ -250,7 +250,7 @@ export function statusLine(agent: Agent | null, transcript: Transcript | null, n
   }
 }
 
-/** Пути к картинкам/видео в тексте (для ответов Ары). */
+/** Пути к картинкам/видео в тексте (для ответов Arra). */
 const MEDIA_RE = /(\/[^\s"'`<>()]+?\.(png|jpe?g|gif|webp|heic|mp4|mov|webm|m4v))(?=$|[\s"'`<>(),;:!?]|\.(?:\s|$))/gi;
 
 export function mediaPaths(text: string): { images: string[]; videos: string[] } {

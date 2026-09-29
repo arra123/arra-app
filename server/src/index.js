@@ -44,7 +44,7 @@ await app.register(araRoutes);
 
 try {
   await app.listen({ port: config.port, host: config.host });
-  app.log.info(`Сервер «Ары» на порту ${config.port}, схема БД: ${config.db.schema}`);
+  app.log.info(`Сервер «Arra» на порту ${config.port}, схема БД: ${config.db.schema}`);
 } catch (err) {
   app.log.error(err);
   process.exit(1);

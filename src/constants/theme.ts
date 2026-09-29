@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 
 /**
- * Палитра «Ары»: тёмная тема как у Codex / ChatGPT на iOS.
+ * Палитра «Arra»: тёмная тема как у Codex / ChatGPT на iOS.
  * Все цвета интерфейса берутся только отсюда.
  */
 export const Colors = {

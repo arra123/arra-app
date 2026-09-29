@@ -290,7 +290,7 @@ export function createHub(deps = {}) {
           return;
         }
         if (entry.kind === 'ask' && msg.type === 'ara.result') {
-          finish(id, msg.ok === false ? failMessage(entry, msg.error || 'Ара не ответила') : { type: 'ara.ask.done' });
+          finish(id, msg.ok === false ? failMessage(entry, msg.error || 'Arra не ответила') : { type: 'ara.ask.done' });
           return;
         }
         finish(id, rest);

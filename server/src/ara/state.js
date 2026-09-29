@@ -136,7 +136,7 @@ export function mergeHosts(hosts) {
   return { agents: agentList, recent: recentList, devices, hostOf, limits };
 }
 
-/** Устройство, которое выполнит команду для машины device (запуск, ответ Ары). */
+/** Устройство, которое выполнит команду для машины device (запуск, ответ Arra). */
 export function pickHostForDevice(hosts, device) {
   const online = hosts.filter((h) => h.snapshot || h.device);
   const own = online.find((h) => (h.snapshot?.device || h.device) === device);
@@ -148,7 +148,7 @@ export function pickHostForDevice(hosts, device) {
   return null;
 }
 
-/** Хост для Ары: ноутбук, если есть, иначе любой. */
+/** Хост для Arra: ноутбук, если есть, иначе любой. */
 export function pickAskHost(hosts) {
   return pickHostForDevice(hosts, 'laptop') || hosts[0]?.tokenId || null;
 }

@@ -178,7 +178,7 @@ export default function Settings() {
           </View>
           <Press
             onPress={() =>
-              Alert.alert('Выйти из аккаунта?', 'Чаты с Арой на этом телефоне удалятся.', [
+              Alert.alert('Выйти из аккаунта?', 'Чаты с Arra на этом телефоне удалятся.', [
                 { text: 'Отмена', style: 'cancel' },
                 {
                   text: 'Выйти',
@@ -199,7 +199,7 @@ export default function Settings() {
 
         <Animated.View entering={FadeIn.delay(200)}>
           <T v="caption" color={Colors.textTertiary} style={styles.version}>
-            Ара {version}{Updates.updateId ? ` · ${Updates.updateId.slice(0, 8)}` : ''}
+            Arra {version}{Updates.updateId ? ` · ${Updates.updateId.slice(0, 8)}` : ''}
           </T>
         </Animated.View>
       </ScrollView>

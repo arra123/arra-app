@@ -117,5 +117,5 @@ export type Transcript = {
 
 export type RemoteFile = { url: string; mime: string; name: string; size?: number };
 
-/** Откуда файл: переписка агента или чат с Арой (компьютер проверяет, что путь там упомянут). */
+/** Откуда файл: переписка агента или чат с Arra (компьютер проверяет, что путь там упомянут). */
 export type FileScope = { agentKey: string } | { chatId: string };

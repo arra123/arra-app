@@ -1,7 +1,7 @@
 {
   "name": "aura-server",
   "version": "1.0.0",
-  "description": "Бэкенд приложения «Ара»: вход, push, протокол ara.* между телефоном и компьютерами",
+  "description": "Бэкенд приложения «Arra»: вход, push, протокол ara.* между телефоном и компьютерами",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

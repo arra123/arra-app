@@ -156,7 +156,7 @@ function Blocks({ blocks, depth = 0 }: { blocks: Block[]; depth?: number }) {
   );
 }
 
-/** Ответ агента / Ары в Markdown. */
+/** Ответ агента / Arra в Markdown. */
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   const blocks = useMemo(() => parseMarkdown(text), [text]);
   return <View>{<Blocks blocks={blocks} />}</View>;

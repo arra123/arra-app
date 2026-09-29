@@ -3,7 +3,7 @@ import { mimeFor } from '../ara/blobs.js';
 import { blobs, hub } from '../ara/instance.js';
 
 export default async function aiRoutes(app) {
-  // Голос -> текст: диктовка в поле ввода агенту или Аре. Сначала распознаёт
+  // Голос -> текст: диктовка в поле ввода агенту или Arra. Сначала распознаёт
   // ноутбук (Handy, GigaAM — бесплатно), если его нет в сети — ProxyAPI (Whisper).
   app.post('/ai/transcribe', { preHandler: app.auth }, async (request, reply) => {
     const file = await request.file();

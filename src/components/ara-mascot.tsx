@@ -20,7 +20,7 @@ const FACE = '#f4f4f7';
 const EYE = '#16171b';
 
 /**
- * Ара — белая капсула с глазами, как на острове и в приложении на компьютере.
+ * Arra — белая капсула с глазами, как на острове и в приложении на компьютере.
  * Моргает, слегка покачивается; «думает» — глаза бегают; по нажатию радуется.
  */
 export function AraMascot({
@@ -117,7 +117,7 @@ export function AraMascot({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="Ара"
+      accessibilityLabel="Arra"
       onPress={() => {
         haptic.press();
         setJoy(true);

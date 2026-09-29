@@ -20,7 +20,7 @@ export function openNewChat() {
   openChat(chats.startNew());
 }
 
-/** Вкладка «Разговор»: список диалогов с Арой и «Новый диалог». */
+/** Вкладка «Разговор»: список диалогов с Arra и «Новый диалог». */
 export function ChatList({ top, bottom }: { top: number; bottom: number }) {
   const list = useChats();
   const items = useMemo(
