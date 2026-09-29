@@ -64,6 +64,14 @@
         }
       ],
       [
+        "expo-media-library",
+        {
+          "photosPermission": "Ара берёт последний снимок экрана или фото, чтобы одним нажатием отправить его агенту на компьютер.",
+          "savePhotosPermission": false,
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
+      [
         "expo-notifications",
         {
           "color": "#0a0a0c"

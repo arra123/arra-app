@@ -31,6 +31,7 @@ import type { AgentKind, AgentState } from '@/ara/types';
 import { STATE_META } from '@/ara/format';
 import { AraMascot } from '@/components/ara-mascot';
 import { Colors, Radius, Type } from '@/constants/theme';
+import { API_URL } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
 
 // ---------- текст ----------
@@ -153,7 +154,7 @@ export function IconButton({ icon, onPress, size = 40, color = Colors.text, labe
       scaleTo={0.9}
       style={style}>
       {glass && !background ? (
-        <Glass radius={size / 2} interactive style={[styles.center, { width: size, height: size }]}>{inner}</Glass>
+        <Glass radius={size / 2} style={[styles.center, { width: size, height: size }]}>{inner}</Glass>
       ) : (
         <View style={[styles.center, { width: size, height: size, borderRadius: size / 2, backgroundColor: background ?? 'transparent' }]}>{inner}</View>
       )}
@@ -212,6 +213,51 @@ export function AgentIcon({ agent, size = 32 }: { agent: AgentKind | 'ara'; size
   );
 }
 
+/**
+ * Иконка проекта (PNG с компьютера через сервер) со значком Claude/Codex
+ * в правом нижнем углу. Нет иконки — просто значок агента.
+ */
+export function ProjectIcon({ iconName, agent, size = 34 }: { iconName?: string | null; agent: AgentKind; size?: number }) {
+  if (!iconName) return <AgentIcon agent={agent} size={size} />;
+  const badge = Math.round(size * 0.46);
+  const logo = badge * (agent === 'claude' ? 0.66 : 0.6);
+  return (
+    <View style={{ width: size, height: size }}>
+      <Image
+        source={{ uri: `${API_URL}/ara/icon/${encodeURIComponent(iconName)}` }}
+        style={{ width: size, height: size, borderRadius: Radius.sm, backgroundColor: Colors.cardRaised }}
+        contentFit="cover"
+        cachePolicy="memory-disk"
+        transition={120}
+        accessibilityIgnoresInvertColors
+      />
+      <View style={[styles.center, styles.badge, { width: badge, height: badge, borderRadius: badge / 2, right: -badge * 0.28, bottom: -badge * 0.28 }]}>
+        <Image source={LOGOS[agent]} style={{ width: logo, height: logo }} contentFit="contain" />
+      </View>
+    </View>
+  );
+}
+
+/** Маленькая крутящаяся дуга «идёт работа». */
+export function Spinner({ size = 12, color = Colors.textSecondary }: { size?: number; color?: string }) {
+  const turn = useSharedValue(0);
+  useEffect(() => {
+    turn.set(withRepeat(withTiming(1, { duration: 900, easing: Easing.linear }), -1));
+    return () => cancelAnimation(turn);
+  }, [turn]);
+  const spin = useAnimatedStyle(() => ({ transform: [{ rotate: `${turn.get() * 360}deg` }] }));
+  const stroke = Math.max(1.5, size / 7);
+  return (
+    <Animated.View
+      accessibilityLabel="работает"
+      style={[
+        { width: size, height: size, borderRadius: size / 2, borderWidth: stroke, borderColor: color, borderTopColor: 'transparent', borderRightColor: 'transparent' },
+        spin,
+      ]}
+    />
+  );
+}
+
 /** Номер рабочего стола: маленький экранчик с цифрой, серым, без плашки. */
 export function DeskBadge({ ws, color = Colors.textTertiary }: { ws: number; color?: string }) {
   return (
@@ -243,6 +289,7 @@ export function Chip({ children, color = Colors.textSecondary, background = 'rgb
 
 const styles = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center' },
+  badge: { position: 'absolute', backgroundColor: Colors.background, borderWidth: 1.5, borderColor: Colors.background },
   glassBorder: { borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.hairline },
   desk: { alignItems: 'center' },
   deskScreen: {

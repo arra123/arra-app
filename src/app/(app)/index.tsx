@@ -1,24 +1,23 @@
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { Easing, FadeIn, FadeInDown, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { confirmCloseAgent, stopAgent } from '@/ara/actions';
-import { chats, useCurrentChatId } from '@/ara/chats';
 import { ara } from '@/ara/client';
 import { AGENT_LABEL, ago, DEVICE_META, STATE_META } from '@/ara/format';
 import { useAra, useNow } from '@/ara/hooks';
 import { pins, usePins } from '@/ara/pins';
 import type { Agent, DeviceId, RecentSession } from '@/ara/types';
-import { AraChat } from '@/components/ara-chat';
+import { ChatList, openNewChat } from '@/components/chat-list';
 import { LimitsSection } from '@/components/limits';
 import { GlassMenu, MenuTrigger, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
 import { Segmented } from '@/components/segmented';
-import { AgentIcon, DeskBadge, Glass, IconButton, Press, StatusDot, T } from '@/components/ui';
+import { DeskBadge, Glass, IconButton, Press, ProjectIcon, StatusDot, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -35,7 +34,6 @@ export default function Home() {
   const state = useAra();
   const pinned = usePins();
   const now = useNow(30_000);
-  const [barHeight, setBarHeight] = useState(insets.top + 54);
   const [tab, setTab] = useState<Tab>('work');
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -61,7 +59,7 @@ export default function Home() {
   return (
     <View style={styles.root}>
       {tab === 'talk' ? (
-        <TalkTab headerTop={Math.max(0, barHeight - insets.top - 4)} />
+        <ChatList top={insets.top + 64} bottom={insets.bottom + 32} />
       ) : (
         <ScrollView
           contentContainerStyle={{ paddingTop: insets.top + 64, paddingBottom: insets.bottom + 32 }}
@@ -130,10 +128,8 @@ export default function Home() {
         </ScrollView>
       )}
 
-      {/* Шапка: настройки · Работа/Разговор · новый. На «Разговоре» под ней стекло шапки диалога */}
-      <View
-        style={[styles.top, tab === 'talk' && styles.topClear, { paddingTop: insets.top + 6 }]}
-        onLayout={(e) => setBarHeight(e.nativeEvent.layout.height)}>
+      {/* Шапка: настройки · Работа/Разговор · новый агент или диалог */}
+      <View style={[styles.top, { paddingTop: insets.top + 6 }]}>
         <IconButton icon="gearshape" label="Настройки" onPress={() => router.push('/settings')} />
         <Segmented
           style={styles.segmented}
@@ -145,30 +141,16 @@ export default function Home() {
           ]}
         />
         {tab === 'talk' ? (
-          <IconButton icon="square.and.pencil" label="Новый диалог" onPress={() => chats.startNew()} />
+          <IconButton icon="square.and.pencil" label="Новый диалог" onPress={openNewChat} />
         ) : (
           <MenuTrigger label="Новый агент" sections={plusMenu}>
-            <Glass radius={20} interactive style={styles.plus}>
+            <Glass radius={20} style={styles.plus}>
               <SymbolView name="square.and.pencil" size={18} tintColor={Colors.text} weight="semibold" />
             </Glass>
           </MenuTrigger>
         )}
       </View>
     </View>
-  );
-}
-
-/** Вкладка «Разговор»: сразу сам диалог — последний открытый или новый пустой. */
-function TalkTab({ headerTop }: { headerTop: number }) {
-  const current = useCurrentChatId();
-  useEffect(() => {
-    if (!current) chats.ensureCurrent();
-  }, [current]);
-  if (!current) return <View style={styles.root} />;
-  return (
-    <Animated.View key="talk" entering={FadeIn.duration(220)} style={styles.root}>
-      <AraChat key={current} id={current} embedded headerTop={headerTop} />
-    </Animated.View>
   );
 }
 
@@ -280,7 +262,7 @@ function AgentRow({ agent, pinned, first, now }: { agent: Agent; pinned: boolean
           style={styles.row}
           accessibilityLabel={`${AGENT_LABEL[agent.agent]} ${agent.project}, ${meta.label}${pinned ? ', закреплён' : ''}`}
           accessibilityHint="Долгое нажатие — действия, свайп влево — закрыть">
-          <AgentIcon agent={agent.agent} size={34} />
+          <ProjectIcon iconName={agent.iconName} agent={agent.agent} size={34} />
           <View style={styles.rowText}>
             <View style={styles.rowTitle}>
               {pinned ? <SymbolView name="pin.fill" size={10} tintColor={Colors.textTertiary} /> : null}
@@ -305,7 +287,7 @@ function AgentRow({ agent, pinned, first, now }: { agent: Agent; pinned: boolean
 function RecentRow({ item, first, now }: { item: RecentSession; first: boolean; now: number }) {
   return (
     <Press onPress={() => openAgent(item.key)} scaleTo={0.985} style={[styles.row, !first && styles.rowBorder]} accessibilityLabel={item.title || item.project}>
-      <AgentIcon agent={item.agent} size={28} />
+      <ProjectIcon iconName={item.iconName} agent={item.agent} size={28} />
       <View style={styles.rowText}>
         <T v="subhead" numberOfLines={1}>{item.title || 'Без названия'}</T>
         <View style={styles.rowTitle}>
@@ -349,7 +331,6 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     backgroundColor: 'rgba(10,10,12,0.72)',
   },
-  topClear: { backgroundColor: 'transparent' },
   segmented: { flex: 1 },
   plus: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   banner: {

@@ -60,7 +60,11 @@ async function upload<T>(path: string, uri: string, name: string, mime: string, 
   } catch {
     data = null;
   }
-  if (res.status >= 400) throw new Error(data?.error || `Ошибка сервера (${res.status})`);
+  if (res.status >= 400) {
+    // Текст сервера как есть («Не распознал: …»); не JSON — хотя бы начало ответа
+    const plain = !data && res.body ? res.body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160) : '';
+    throw new Error(data?.error || data?.message || plain || `Ошибка сервера (${res.status})`);
+  }
   return data as T;
 }
 

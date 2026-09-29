@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { limitColor, resetLabel } from '@/ara/format';
 import type { Limit, Limits } from '@/ara/types';
+import { Appear } from '@/components/glass-menu';
 import { Press, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding } from '@/constants/theme';
 
@@ -69,10 +69,10 @@ function LimitSheet({ title, limit, onClose }: { title: string; limit: Limit | n
   const account = [limit?.email, limit?.plan].filter(Boolean).join(' · ');
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <Animated.View entering={FadeIn.duration(150)} exiting={FadeOut.duration(120)} style={StyleSheet.absoluteFill}>
+      <Appear from={0} style={StyleSheet.absoluteFill}>
         <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: Colors.scrim }]} onPress={onClose} accessibilityLabel="Закрыть" />
-      </Animated.View>
-      <Animated.View entering={FadeInDown.duration(220)} style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+      </Appear>
+      <Appear from={12} duration={180} style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
         <T v="headline" weight="700">{title}</T>
         {rows.map(([head, sub]) => (
           <View key={head} style={styles.sheetRow}>
@@ -81,7 +81,7 @@ function LimitSheet({ title, limit, onClose }: { title: string; limit: Limit | n
           </View>
         ))}
         {account ? <T v="footnote" color={Colors.textTertiary}>{account}</T> : null}
-      </Animated.View>
+      </Appear>
     </Modal>
   );
 }

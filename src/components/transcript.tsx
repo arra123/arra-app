@@ -33,38 +33,33 @@ function Chevron({ open }: { open: boolean }) {
 // ---------- план ----------
 
 function PlanIcon({ status }: { status: PlanItem['status'] }) {
-  if (status === 'completed') return <SymbolView name="checkmark.circle.fill" size={18} tintColor={Colors.textSecondary} />;
-  if (status === 'in_progress') return <SymbolView name="circle.inset.filled" size={18} tintColor={Colors.waiting} />;
-  return <SymbolView name="circle" size={18} tintColor={Colors.textTertiary} />;
+  if (status === 'completed') return <SymbolView name="checkmark.circle.fill" size={16} tintColor={Colors.textSecondary} />;
+  if (status === 'in_progress') return <SymbolView name="circle.inset.filled" size={16} tintColor={Colors.waiting} />;
+  return <SymbolView name="circle" size={16} tintColor={Colors.textTertiary} />;
 }
 
-/** Карточка плана: прогресс, текущий шаг, раскрывается в чек-лист. */
+/** План: по умолчанию одна тонкая строка «План ▬▬ 8/9 ›», по тапу — чек-лист. */
 export function PlanCard({ plan }: { plan: PlanItem[] }) {
   const [open, setOpen] = useState(false);
   const done = plan.filter((p) => p.status === 'completed').length;
-  const current = plan.find((p) => p.status === 'in_progress');
   const progress = plan.length ? done / plan.length : 0;
   const bar = useAnimatedStyle(() => ({ transform: [{ scaleX: withTiming(progress, { duration: 500 }) }] }));
+  const turn = useAnimatedStyle(() => ({ transform: [{ rotate: withTiming(open ? '90deg' : '0deg', { duration: 200 }) }] }));
 
   return (
-    <Animated.View layout={layout} style={styles.plan}>
+    <Animated.View layout={layout}>
       <Press feedback="select" scaleTo={0.99} onPress={() => setOpen((v) => !v)} accessibilityLabel={`План: ${done} из ${plan.length}`} style={styles.planHeader}>
-        <T v="subhead" weight="700">План</T>
+        <T v="caption" weight="600" color={Colors.textSecondary}>План</T>
         <View style={styles.progressTrack}>
           <Animated.View style={[styles.progressFill, bar]} />
         </View>
-        <T v="caption" color={Colors.textSecondary}>{done} из {plan.length}</T>
-        <Chevron open={open} />
-      </Press>
-      {!open && current ? (
-        <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(100)}>
-          <T v="footnote" color={Colors.textSecondary} numberOfLines={1} style={styles.planCurrent}>
-            сейчас: {current.text}
-          </T>
+        <T v="caption" color={Colors.textSecondary} style={{ fontVariant: ['tabular-nums'] }}>{done}/{plan.length}</T>
+        <Animated.View style={turn}>
+          <SymbolView name="chevron.right" size={10} tintColor={Colors.textTertiary} weight="semibold" />
         </Animated.View>
-      ) : null}
+      </Press>
       {open ? (
-        <Animated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(120)} style={styles.planList}>
+        <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(100)} style={styles.planList}>
           {plan.map((item, i) => (
             <View key={i} style={styles.planRow}>
               <PlanIcon status={item.status} />
@@ -239,18 +234,10 @@ export const TranscriptRow = memo(function TranscriptRow({ message, scope, anima
 
 const styles = StyleSheet.create({
   row: { paddingHorizontal: Spacing.lg, paddingVertical: 7 },
-  plan: {
-    backgroundColor: Colors.card,
-    borderRadius: Radius.md,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    overflow: 'hidden',
-  },
-  planHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  planHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 },
   progressTrack: { flex: 1, height: 3, borderRadius: 2, backgroundColor: Colors.separator, overflow: 'hidden' },
   progressFill: { height: 3, width: '100%', borderRadius: 2, backgroundColor: Colors.textSecondary, transformOrigin: 'left center' },
-  planCurrent: { marginTop: 6 },
-  planList: { marginTop: 10, gap: 9 },
+  planList: { marginTop: 8, marginBottom: 2, gap: 8 },
   planRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
   steps: { alignSelf: 'flex-start', maxWidth: '100%' },
   stepsHeader: {

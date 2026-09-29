@@ -18,6 +18,8 @@ export type Agent = {
   model: string;
   /** мс: с какого момента агент в текущем состоянии */
   since: number | null;
+  /** Иконка проекта на сервере: `${API_URL}/ara/icon/${iconName}` */
+  iconName?: string | null;
 };
 
 export type RecentSession = {
@@ -31,6 +33,7 @@ export type RecentSession = {
   /** секунды unix */
   mtime: number | null;
   transcript: string;
+  iconName?: string | null;
 };
 
 export type DevicesState = Record<DeviceId, { online: boolean; via: DeviceId | null }>;

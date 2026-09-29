@@ -5,7 +5,9 @@ import {
   useAudioRecorder,
 } from 'expo-audio';
 import { Image } from 'expo-image';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -107,6 +109,51 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
     }
   }
 
+  // Одно нажатие — самый свежий снимок экрана или фото из медиатеки, без галереи
+  const [grabbing, setGrabbing] = useState(false);
+  async function attachLatest() {
+    if (grabbing) return;
+    setGrabbing(true);
+    try {
+      const perm = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
+      if (!perm.granted) {
+        Alert.alert('Нет доступа к фото', 'Разреши доступ к фото для «Ары» в Настройках.', [
+          { text: 'Настройки', onPress: () => Linking.openSettings() },
+          { text: 'OK', style: 'cancel' },
+        ]);
+        return;
+      }
+      const page = await MediaLibrary.getAssetsAsync({
+        first: 1,
+        mediaType: MediaLibrary.MediaType.photo,
+        sortBy: [[MediaLibrary.SortBy.creationTime, false]],
+      });
+      const asset = page.assets[0];
+      if (!asset) {
+        Alert.alert('Фото нет', 'В медиатеке пока нет снимков');
+        return;
+      }
+      const info = await MediaLibrary.getAssetInfoAsync(asset);
+      let uri = info.localUri || asset.uri;
+      let name = asset.filename || `photo-${Date.now()}.jpg`;
+      let mime = /\.png$/i.test(name) ? 'image/png' : 'image/jpeg';
+      // HEIC и прочее агент не прочитает — переводим в JPEG
+      if (!/\.(png|jpe?g)$/i.test(name)) {
+        const jpeg = await manipulateAsync(uri, [], { compress: 0.85, format: SaveFormat.JPEG });
+        uri = jpeg.uri;
+        name = name.replace(/\.[^.]+$/, '') + '.jpg';
+        mime = 'image/jpeg';
+      }
+      const photo = { uri, name, mime };
+      setPhotos((current) => (current.some((p) => p.uri === uri) ? current : [...current, photo].slice(0, 6)));
+      haptic.tap();
+    } catch (error: any) {
+      Alert.alert('Не получилось взять фото', error?.message || '');
+    } finally {
+      setGrabbing(false);
+    }
+  }
+
   async function toggleDictation() {
     if (transcribing) return;
     if (!recording) {
@@ -203,6 +250,13 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
               <SymbolView name="plus" size={19} tintColor={Colors.textSecondary} weight="semibold" />
             </View>
           </MenuTrigger>
+          <Press onPress={attachLatest} feedback="none" accessibilityLabel="Прикрепить последнее фото" style={styles.tool} hitSlop={6}>
+            {grabbing ? (
+              <ActivityIndicator size="small" color={Colors.textSecondary} />
+            ) : (
+              <SymbolView name="photo.badge.arrow.down" size={19} tintColor={Colors.textSecondary} weight="regular" />
+            )}
+          </Press>
           <Press onPress={toggleDictation} feedback="none" accessibilityLabel={recording ? 'Остановить диктовку' : 'Диктовка'} style={styles.tool} hitSlop={6}>
             {transcribing ? (
               <ActivityIndicator size="small" color={Colors.textSecondary} />
@@ -212,21 +266,23 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
           </Press>
           <View style={{ flex: 1 }} />
           {accessory}
-          {sending ? (
-            <View style={[styles.send, { backgroundColor: Colors.cardPressed }]}>
-              <ActivityIndicator size="small" color={Colors.text} />
-            </View>
-          ) : (
-            <IconButton
-              icon="arrow.up"
-              label="Отправить"
-              onPress={send}
-              size={34}
-              disabled={!canSend}
-              background={canSend ? Colors.text : Colors.cardPressed}
-              color={canSend ? Colors.onAccent : Colors.textTertiary}
-            />
-          )}
+          <View style={styles.sendSlot}>
+            {sending ? (
+              <View style={[styles.send, { backgroundColor: Colors.cardPressed }]}>
+                <ActivityIndicator size="small" color={Colors.text} />
+              </View>
+            ) : (
+              <IconButton
+                icon="arrow.up"
+                label="Отправить"
+                onPress={send}
+                size={32}
+                disabled={!canSend}
+                background={canSend ? Colors.text : Colors.cardPressed}
+                color={canSend ? Colors.onAccent : Colors.textTertiary}
+              />
+            )}
+          </View>
         </View>
       </Glass>
     </View>
@@ -268,9 +324,11 @@ const styles = StyleSheet.create({
     paddingTop: 9,
     paddingBottom: 6,
   },
-  toolbar: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 2 },
+  // Все кнопки на одной линии: одна высота, центр по вертикали
+  toolbar: { flexDirection: 'row', alignItems: 'center', gap: 2, paddingHorizontal: 2, height: 36 },
   tool: { width: 38, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 17 },
-  send: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  sendSlot: { width: 38, height: 34, alignItems: 'center', justifyContent: 'center' },
+  send: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   photos: { gap: 8, paddingHorizontal: 6, paddingTop: 4, paddingBottom: 4 },
   photo: { width: 62, height: 62, borderRadius: Radius.md, overflow: 'hidden', backgroundColor: Colors.card },
   photoRemove: {

@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { confirmCloseAgent, stopAgent } from '@/ara/actions';
 import { ara } from '@/ara/client';
-import { AGENT_LABEL, DEVICE_META, limitFor, modelLabel, shortPath, STATE_META, statusLine } from '@/ara/format';
+import { DEVICE_META, limitFor, modelLabel, shortAgo, STATE_META, statusLine } from '@/ara/format';
 import { useAgentItem, useAra, useNow, useTranscript } from '@/ara/hooks';
 import type { TranscriptMessage } from '@/ara/types';
 import { uploadPhoto } from '@/ara/upload';
@@ -16,9 +16,9 @@ import { HelpersStrip, NeedsCard, QuestionCard } from '@/components/agent-cards'
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { Composer } from '@/components/composer';
 import { LimitsInline } from '@/components/limits';
-import { MenuTrigger, type MenuSection } from '@/components/glass-menu';
+import { MenuTrigger, type MenuItem, type MenuSection } from '@/components/glass-menu';
 import { PlanCard, TranscriptRow, UserBubble } from '@/components/transcript';
-import { AgentIcon, DeskBadge, Glass, Press, StatusDot, T } from '@/components/ui';
+import { Glass, Press, ProjectIcon, Spinner, StatusDot, T } from '@/components/ui';
 import { Colors, Radius } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -132,37 +132,39 @@ export default function AgentScreen() {
   const menu: MenuSection[] = [];
   if (agent?.agent === 'claude') {
     const current = modelLabel(model).toLowerCase();
-    menu.push(CLAUDE_MODELS.map((m) => ({
-      label: m.label,
-      checked: current.startsWith(m.value),
-      onPress: () => changeModel(m.value),
-    })));
+    menu.push({
+      title: 'Модель',
+      items: CLAUDE_MODELS.map((m) => ({
+        label: m.label,
+        checked: current.startsWith(m.value),
+        onPress: () => changeModel(m.value),
+      })),
+    });
   }
-  const tools: MenuSection = [];
-  if (agent?.state === 'working') tools.push({ label: 'Остановить', icon: 'stop.circle', onPress: stop });
-  if (item?.cwd) tools.push({ label: 'Скопировать путь к папке', icon: 'doc.on.doc', onPress: () => Clipboard.setStringAsync(item.cwd).then(() => haptic.success()) });
+  const tools: MenuItem[] = [];
+  if (agent?.state === 'working') tools.push({ label: 'Остановить', icon: 'stop', onPress: stop });
+  if (item?.cwd) tools.push({ label: 'Скопировать путь', icon: 'doc.on.doc', onPress: () => Clipboard.setStringAsync(item.cwd).then(() => haptic.success()) });
   if (item) {
     tools.push({
       label: 'Новый агент в этой папке',
-      icon: 'plus.bubble',
+      icon: 'plus',
       onPress: () => router.push({ pathname: '/new', params: { agent: item.agent, device: item.device, dir: item.cwd } }),
     });
   }
   if (tools.length) menu.push(tools);
-  if (agent) menu.push([{ label: 'Закрыть терминал', icon: 'xmark.circle', destructive: true, onPress: () => confirmCloseAgent(agent) }]);
+  if (agent) menu.push([{ label: 'Закрыть терминал', icon: 'xmark', destructive: true, onPress: () => confirmCloseAgent(agent) }]);
 
   const state = agent?.state;
 
   const title = (
     <View style={styles.title}>
-      {item ? <AgentIcon agent={item.agent} size={30} /> : null}
+      {item ? <ProjectIcon iconName={item.iconName} agent={item.agent} size={34} /> : null}
       <View style={{ flex: 1, minWidth: 0 }}>
         <T v="headline" weight="700" numberOfLines={1}>{item?.project || (recent ? recent.title : 'Агент')}</T>
         {item ? (
           <View style={styles.subtitle}>
             <SymbolView name={DEVICE_META[item.device].icon} size={12} tintColor={Colors.textSecondary} accessibilityLabel={DEVICE_META[item.device].label} />
-            {agent?.ws != null ? <DeskBadge ws={agent.ws} color={Colors.textSecondary} /> : null}
-            <T v="caption" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>{shortPath(item.cwd)}</T>
+            {agent?.ws != null ? <T v="caption" color={Colors.textSecondary}>стол {agent.ws}</T> : null}
           </View>
         ) : (
           <T v="caption" color={Colors.textSecondary} numberOfLines={1}>ищу агента…</T>
@@ -171,15 +173,31 @@ export default function AgentScreen() {
     </View>
   );
 
-  const right = menu.length ? (
-    <MenuTrigger label="Модель и действия" sections={menu}>
-      <Glass radius={18} interactive style={styles.modelPill}>
-        <SymbolView name="bolt.fill" size={11} tintColor={Colors.textSecondary} />
-        <T v="footnote" weight="600" numberOfLines={1} maxFontSizeMultiplier={1.2}>{modelLabel(model) || (item ? AGENT_LABEL[item.agent] : '')}</T>
-        <SymbolView name="chevron.down" size={9} tintColor={Colors.textSecondary} weight="bold" />
-      </Glass>
-    </MenuTrigger>
+  // Справа только статус коротко: сколько ждёт (жёлтым) или сколько работает (с дугой)
+  const workFrom = transcript?.lastUser ? transcript.lastUser * 1000 : agent?.since;
+  const shortStatus = !agent ? null : agent.state === 'waiting' ? (
+    <T v="footnote" weight="600" color={Colors.waiting}>{agent.since ? shortAgo(now - agent.since) : 'ждёт'}</T>
+  ) : agent.state === 'working' ? (
+    <View style={styles.shortStatus}>
+      <Spinner size={12} />
+      {workFrom ? <T v="footnote" color={Colors.textSecondary}>{shortAgo(now - workFrom)}</T> : null}
+    </View>
+  ) : agent.state === 'error' ? (
+    <T v="footnote" color={Colors.error}>прервался</T>
   ) : null;
+
+  const right = (
+    <View style={styles.right}>
+      {shortStatus}
+      {menu.length ? (
+        <MenuTrigger label="Модель и действия" sections={menu}>
+          <Glass radius={18} style={styles.more}>
+            <SymbolView name="ellipsis" size={16} tintColor={Colors.text} weight="semibold" />
+          </Glass>
+        </MenuTrigger>
+      ) : null}
+    </View>
+  );
 
   const below = (
     <>
@@ -273,7 +291,9 @@ function ClosedBar({ onHeight, onNew }: { onHeight: (h: number) => void; onNew?:
 const styles = StyleSheet.create({
   title: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   subtitle: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 1 },
-  modelPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, height: 34, maxWidth: 150 },
+  right: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  shortStatus: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  more: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   status: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dotOff: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.old },
   pendingRow: { paddingHorizontal: 16, paddingVertical: 7 },

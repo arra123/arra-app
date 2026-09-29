@@ -28,6 +28,13 @@ export function duration(ms: number): string {
   return `${Math.floor(hours / 24)} дн`;
 }
 
+/** Коротко для шапки: «40 с», «4 мин», «2 ч 5 мин». */
+export function shortAgo(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s} с`;
+  return duration(ms);
+}
+
 /** «только что», «5 мин», «3 ч», «2 дн» — для списков */
 export function ago(ms: number | null | undefined, now = Date.now()): string {
   if (!ms) return '';
