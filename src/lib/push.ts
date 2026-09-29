@@ -39,3 +39,12 @@ export function agentKeyFrom(response: Notifications.NotificationResponse | null
   const data = response?.notification.request.content.data as { type?: string; agentKey?: string } | undefined;
   return data?.type === 'ara.agent' && typeof data.agentKey === 'string' ? data.agentKey : null;
 }
+
+/** Уведомление от самого телефона (без сервера Apple): баннер «агент закончил». */
+export function localNotify(title: string, body: string, agentKey: string) {
+  if (Platform.OS === 'web') return;
+  Notifications.scheduleNotificationAsync({
+    content: { title, body, sound: 'default', data: { type: 'ara.agent', agentKey } },
+    trigger: null,
+  }).catch(() => {});
+}

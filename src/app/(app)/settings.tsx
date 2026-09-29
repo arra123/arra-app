@@ -159,7 +159,7 @@ export default function Settings() {
             <SymbolView name="bell.badge" size={20} tintColor={Colors.text} style={{ width: 30 }} />
             <View style={{ flex: 1 }}>
               <T v="callout" weight="600">Агент закончил</T>
-              <T v="caption" color={Colors.textSecondary}>Когда агент ждёт ответа или прервался</T>
+              <T v="caption" color={Colors.textSecondary}>Баннер, пока приложение открыто; когда закрыто — сообщение в Telegram</T>
             </View>
             {push === 'granted' ? (
               <SymbolView name="checkmark.circle.fill" size={20} tintColor={Colors.working} />

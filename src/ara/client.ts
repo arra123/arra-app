@@ -1,8 +1,9 @@
 import { AppState } from 'react-native';
 
 import { API_URL } from '@/lib/api';
+import { localNotify } from '@/lib/push';
 
-import type { AraState, FileScope, RemoteFile, Transcript } from './types';
+import type { Agent, AraState, FileScope, RemoteFile, Transcript } from './types';
 
 type Listener = () => void;
 type Pending = { resolve: (value: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
@@ -172,6 +173,7 @@ class AraClient {
   private handle(msg: any) {
     switch (msg?.type) {
       case 'ara.state':
+        this.notifyFinished(msg.agents || []);
         this.setState({
           connected: true,
           loaded: true,
@@ -218,6 +220,20 @@ class AraClient {
   }
 
   // ---------- состояние для React ----------
+
+  // Push с сервера пока нет (нет ключа APNs), поэтому «агент закончил»
+  // показывает сам телефон, пока приложение открыто или только что свёрнуто.
+  private notifyFinished(agents: Agent[]) {
+    if (this.state.loaded) {
+      const before = new Map(this.state.agents.map((a) => [a.key, a.state]));
+      const watching = this.watchers[this.watchers.length - 1];
+      for (const a of agents) {
+        const was = before.get(a.key);
+        if (was !== 'working' || (a.state !== 'waiting' && a.state !== 'error') || a.key === watching) continue;
+        localNotify(a.project || 'Агент', a.state === 'error' ? 'прервался' : 'закончил, ждёт ответа', a.key);
+      }
+    }
+  }
 
   private setState(next: AraState) {
     this.state = next;
