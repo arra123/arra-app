@@ -85,30 +85,61 @@ export function PlanCard({ plan }: { plan: PlanItem[] }) {
 
 // ---------- действия ----------
 
-/** «18 действий · Читает ara14.png» — раскрывается в список. */
+/** Шаг-мысль: короткий пересказ того, о чём агент сейчас думает. */
+const THOUGHT = 'psychology';
+
+/** «18 действий · Читает ara14.png» — раскрывается в список. Мысль агента видна сразу. */
 export function StepsRow({ items, more = 0 }: { items: StepItem[]; more?: number }) {
   const [open, setOpen] = useState(false);
   const total = items.length + (more || 0);
   const last = items[items.length - 1];
+  const thought = last?.icon === THOUGHT ? last : null;
   const word = total % 10 === 1 && total % 100 !== 11 ? 'действие' : [2, 3, 4].includes(total % 10) && ![12, 13, 14].includes(total % 100) ? 'действия' : 'действий';
   return (
     <Animated.View layout={layout} style={styles.steps}>
-      <Press feedback="select" scaleTo={0.98} onPress={() => setOpen((v) => !v)} style={styles.stepsHeader} accessibilityLabel={`${total} ${word}`}>
-        <SymbolView name={stepIcon(last?.icon)} size={14} tintColor={Colors.textSecondary} />
-        <T v="footnote" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>
-          {total} {word}{last ? ` · ${last.text}` : ''}
-        </T>
+      <Press
+        feedback="select"
+        scaleTo={0.98}
+        onPress={() => setOpen((v) => !v)}
+        style={[styles.stepsHeader, thought && styles.thoughtHeader]}
+        accessibilityLabel={thought ? `Думает: ${thought.text}. ${total} ${word}` : `${total} ${word}`}>
+        {thought ? (
+          <>
+            <SymbolView name="brain" size={15} tintColor={Colors.text} style={{ marginTop: 2 }} />
+            <View style={styles.thoughtText}>
+              <Animated.View key={thought.text} entering={FadeIn.duration(220)}>
+                <T v="footnote" color={Colors.text} numberOfLines={2}>{thought.text}</T>
+              </Animated.View>
+              <T v="caption" color={Colors.textTertiary}>{total} {word}</T>
+            </View>
+          </>
+        ) : (
+          <>
+            <SymbolView name={stepIcon(last?.icon)} size={14} tintColor={Colors.textSecondary} />
+            <T v="footnote" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>
+              {total} {word}{last ? ` · ${last.text}` : ''}
+            </T>
+          </>
+        )}
         <Chevron open={open} />
       </Press>
       {open ? (
         <Animated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(100)} style={styles.stepsList}>
           {more ? <T v="caption" color={Colors.textTertiary}>…и ещё {more} раньше</T> : null}
-          {items.map((item, i) => (
-            <View key={i} style={styles.stepRow}>
-              <SymbolView name={stepIcon(item.icon)} size={13} tintColor={Colors.textTertiary} style={{ marginTop: 3 }} />
-              <T v="footnote" color={Colors.textSecondary} style={{ flex: 1 }} selectable>{item.text}</T>
-            </View>
-          ))}
+          {items.map((item, i) => {
+            const isThought = item.icon === THOUGHT;
+            return (
+              <View key={i} style={styles.stepRow}>
+                <SymbolView
+                  name={isThought ? 'brain' : stepIcon(item.icon)}
+                  size={13}
+                  tintColor={isThought ? Colors.text : Colors.textTertiary}
+                  style={{ marginTop: 3 }}
+                />
+                <T v="footnote" color={isThought ? Colors.text : Colors.textSecondary} style={{ flex: 1 }} selectable>{item.text}</T>
+              </View>
+            );
+          })}
         </Animated.View>
       ) : null}
     </Animated.View>
@@ -224,6 +255,8 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.separator,
   },
+  thoughtHeader: { alignItems: 'flex-start', borderRadius: Radius.lg, paddingVertical: 9, paddingHorizontal: 12 },
+  thoughtText: { flexShrink: 1, gap: 2 },
   stepsList: { marginTop: 8, marginLeft: 6, gap: 6, borderLeftWidth: 1, borderLeftColor: Colors.separator, paddingLeft: 12 },
   stepRow: { flexDirection: 'row', gap: 8 },
   userWrap: { alignItems: 'flex-end', gap: 6, paddingLeft: 48 },

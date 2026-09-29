@@ -285,6 +285,11 @@ class AraClient {
     return this.request({ type: 'ara.stop', agentKey });
   }
 
+  /** Закрыть терминал агента на компьютере; ответ { ok: true }. */
+  closeAgent(agentKey: string) {
+    return this.request({ type: 'ara.close', agentKey });
+  }
+
   setModel(agentKey: string, model: string) {
     return this.request({ type: 'ara.model', agentKey, model });
   }

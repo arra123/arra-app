@@ -31,7 +31,7 @@ export type Chat = {
   messages: ChatMessage[];
 };
 
-type Saved = { chats: Chat[]; style: AskStyle; model: AskModel };
+type Saved = { chats: Chat[]; style: AskStyle; model: AskModel; current?: string | null };
 
 const FILE_NAME = 'ara-chats.json';
 const id = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -51,6 +51,8 @@ class ChatStore {
   private chats: Chat[] = [];
   private style: AskStyle = 'brief';
   private model: AskModel = 'sonnet';
+  /** Диалог, открытый на вкладке «Разговор» */
+  private currentId: string | null = null;
   private listeners = new Set<() => void>();
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   private loaded = false;
@@ -73,6 +75,7 @@ class ChatStore {
       }));
       this.style = saved.style || 'brief';
       this.model = saved.model || 'sonnet';
+      this.currentId = saved.current || null;
     } catch {
       this.chats = [];
     }
@@ -84,7 +87,7 @@ class ChatStore {
       try {
         const file = this.file();
         if (!file.exists) file.create();
-        file.write(JSON.stringify({ chats: this.chats, style: this.style, model: this.model } satisfies Saved));
+        file.write(JSON.stringify({ chats: this.chats, style: this.style, model: this.model, current: this.currentId } satisfies Saved));
       } catch {
         /* нет места — чаты останутся в памяти до перезапуска */
       }
@@ -126,6 +129,46 @@ class ChatStore {
     return chat.id;
   }
 
+  getCurrentId = () => {
+    this.load();
+    return this.currentId && this.chats.some((c) => c.id === this.currentId) ? this.currentId : null;
+  };
+
+  /** Текущий диалог вкладки «Разговор»: последний открытый, иначе самый свежий, иначе новый пустой. */
+  ensureCurrent(): string {
+    const current = this.getCurrentId();
+    if (current) return current;
+    const latest = [...this.chats].sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    if (latest) {
+      this.currentId = latest.id;
+      this.emit();
+      return latest.id;
+    }
+    const created = this.create();
+    this.currentId = created;
+    this.emit();
+    return created;
+  }
+
+  /** Переключиться на диалог; пустой диалог, из которого ушли, не копим. */
+  open(chatId: string) {
+    const previous = this.getCurrentId();
+    if (previous === chatId) return;
+    this.currentId = chatId;
+    const left = previous ? this.get(previous) : null;
+    if (left && !left.messages.length) this.chats = this.chats.filter((c) => c.id !== left.id);
+    this.emit();
+  }
+
+  /** Новый диалог; если текущий и так пустой — остаёмся в нём. */
+  startNew(): string {
+    const current = this.getCurrentId();
+    if (current && !this.get(current)?.messages.length) return current;
+    const created = this.create();
+    this.open(created);
+    return created;
+  }
+
   /** Убрать неудавшийся вопрос с ответом-ошибкой (перед повтором). */
   dropExchange(chatId: string, answerId: string) {
     this.update(chatId, (chat) => {
@@ -138,11 +181,13 @@ class ChatStore {
 
   remove(chatId: string) {
     this.chats = this.chats.filter((c) => c.id !== chatId);
+    if (this.currentId === chatId) this.currentId = null;
     this.emit();
   }
 
   clearAll() {
     this.chats = [];
+    this.currentId = null;
     this.emit();
   }
 
@@ -204,4 +249,9 @@ export function useChats() {
 export function useChat(chatId: string) {
   const get = useCallback(() => chats.get(chatId), [chatId]);
   return useSyncExternalStore(chats.subscribe, get);
+}
+
+/** Какой диалог открыт на вкладке «Разговор». */
+export function useCurrentChatId() {
+  return useSyncExternalStore(chats.subscribe, chats.getCurrentId);
 }

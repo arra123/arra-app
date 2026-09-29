@@ -22,6 +22,10 @@ type Props<T> = {
   /** Рисует поле ввода; onHeight — чтобы лента не пряталась под ним */
   composer: (onHeight: (h: number) => void) => ReactElement;
   empty?: ReactNode;
+  /** Кнопка «‹» слева в шапке (на вкладке «Разговор» её нет) */
+  back?: boolean;
+  /** Место над шапкой под чужую панель (шапка главного экрана) */
+  headerTop?: number;
 };
 
 /** Какие ключи появились после первой загрузки — только они въезжают анимацией. */
@@ -44,7 +48,7 @@ export function useFreshKeys(keys: string[]) {
  * перевёрнутая лента (новое внизу, открывается на последнем сообщении),
  * поле ввода прилипает к клавиатуре, свайп от края — назад.
  */
-export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, composer, empty }: Props<T>) {
+export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, composer, empty, back = true, headerTop = 0 }: Props<T>) {
   const insets = useSafeAreaInsets();
   const [headerHeight, setHeaderHeight] = useState(insets.top + 56);
   const composerHeight = useSharedValue(90);
@@ -87,9 +91,9 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
       ) : null}
 
       <View style={styles.header} onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}>
-        <Glass radius={0} style={[styles.headerGlass, { paddingTop: insets.top + 4 }]}>
+        <Glass radius={0} style={[styles.headerGlass, { paddingTop: insets.top + 4 + headerTop }]}>
           <View style={styles.headerRow}>
-            <IconButton icon="chevron.left" label="Назад" onPress={() => router.back()} size={38} />
+            {back ? <IconButton icon="chevron.left" label="Назад" onPress={() => router.back()} size={38} /> : null}
             <View style={styles.headerTitle}>{title}</View>
             {right}
           </View>

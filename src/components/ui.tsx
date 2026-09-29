@@ -1,4 +1,5 @@
 import { BlurView } from 'expo-blur';
+import { Image } from 'expo-image';
 import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, type ReactNode, type Ref } from 'react';
@@ -188,13 +189,13 @@ export function StatusDot({ state, size = 8 }: { state: AgentState; size?: numbe
   );
 }
 
-/** Бейдж Claude / Codex. */
+const LOGOS = {
+  claude: require('@/assets/images/claude-mark.png'),
+  codex: require('@/assets/images/openai-mark.png'),
+};
+
+/** Бейдж агента: фирменный «спарк» Claude, узел OpenAI у Codex, маскот у Ары. */
 export function AgentIcon({ agent, size = 32 }: { agent: AgentKind | 'ara'; size?: number }) {
-  const meta = {
-    claude: { icon: 'asterisk' as SFSymbol, color: Colors.claude, bg: 'rgba(217,119,87,0.14)' },
-    codex: { icon: 'chevron.left.forwardslash.chevron.right' as SFSymbol, color: Colors.codex, bg: 'rgba(255,255,255,0.08)' },
-    ara: { icon: 'sparkles' as SFSymbol, color: Colors.ara, bg: 'rgba(255,255,255,0.07)' },
-  }[agent];
   if (agent === 'ara') {
     return (
       <View style={[styles.center, { width: size, height: size, borderRadius: size * 0.32, backgroundColor: 'rgba(255,255,255,0.07)' }]}>
@@ -202,9 +203,26 @@ export function AgentIcon({ agent, size = 32 }: { agent: AgentKind | 'ara'; size
       </View>
     );
   }
+  const bg = agent === 'claude' ? 'rgba(217,119,87,0.14)' : 'rgba(255,255,255,0.08)';
+  const logo = size * (agent === 'claude' ? 0.6 : 0.56);
   return (
-    <View style={[styles.center, { width: size, height: size, borderRadius: size * 0.32, backgroundColor: meta.bg }]}>
-      <SymbolView name={meta.icon} size={size * 0.52} tintColor={meta.color} weight="bold" />
+    <View style={[styles.center, { width: size, height: size, borderRadius: size * 0.32, backgroundColor: bg }]}>
+      <Image source={LOGOS[agent]} style={{ width: logo, height: logo }} contentFit="contain" accessibilityIgnoresInvertColors />
+    </View>
+  );
+}
+
+/** Номер рабочего стола: маленький экранчик с цифрой, серым, без плашки. */
+export function DeskBadge({ ws, color = Colors.textTertiary }: { ws: number; color?: string }) {
+  return (
+    <View
+      style={styles.desk}
+      accessible
+      accessibilityLabel={`Рабочий стол ${ws}`}>
+      <View style={[styles.deskScreen, { borderColor: color }]}>
+        <Text style={[styles.deskNumber, { color }]} maxFontSizeMultiplier={1.2}>{ws}</Text>
+      </View>
+      <View style={[styles.deskStand, { backgroundColor: color }]} />
     </View>
   );
 }
@@ -226,6 +244,18 @@ export function Chip({ children, color = Colors.textSecondary, background = 'rgb
 const styles = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center' },
   glassBorder: { borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.hairline },
+  desk: { alignItems: 'center' },
+  deskScreen: {
+    minWidth: 17,
+    height: 13,
+    paddingHorizontal: 3,
+    borderWidth: 1.3,
+    borderRadius: 3.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deskNumber: { fontSize: 9, lineHeight: 11, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  deskStand: { width: 7, height: 1.3, borderRadius: 1, marginTop: 1.5 },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',

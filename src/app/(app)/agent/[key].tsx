@@ -6,6 +6,7 @@ import { Alert, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { confirmCloseAgent, stopAgent } from '@/ara/actions';
 import { ara } from '@/ara/client';
 import { AGENT_LABEL, DEVICE_META, modelLabel, shortPath, STATE_META, statusLine } from '@/ara/format';
 import { useAgentItem, useNow, useTranscript } from '@/ara/hooks';
@@ -15,7 +16,7 @@ import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { Composer } from '@/components/composer';
 import { MenuTrigger, type MenuSection } from '@/components/glass-menu';
 import { PlanCard, TranscriptRow, UserBubble } from '@/components/transcript';
-import { AgentIcon, Glass, Press, StatusDot, T } from '@/components/ui';
+import { AgentIcon, DeskBadge, Glass, Press, StatusDot, T } from '@/components/ui';
 import { Colors, Radius } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -92,12 +93,10 @@ export default function AgentScreen() {
   async function stop() {
     if (!agent) return;
     setStopping(true);
-    haptic.heavy();
     try {
-      await ara.stopAgent(agent.key);
-    } catch (error: any) {
+      await stopAgent(agent);
+    } catch {
       setStopping(false);
-      Alert.alert('Не остановился', error?.message || '');
     }
   }
 
@@ -121,7 +120,7 @@ export default function AgentScreen() {
     })));
   }
   const tools: MenuSection = [];
-  if (agent?.state === 'working') tools.push({ label: 'Остановить (Esc)', icon: 'stop.circle', destructive: true, onPress: stop });
+  if (agent?.state === 'working') tools.push({ label: 'Остановить', icon: 'stop.circle', onPress: stop });
   if (item?.cwd) tools.push({ label: 'Скопировать путь к папке', icon: 'doc.on.doc', onPress: () => Clipboard.setStringAsync(item.cwd).then(() => haptic.success()) });
   if (item) {
     tools.push({
@@ -131,11 +130,8 @@ export default function AgentScreen() {
     });
   }
   if (tools.length) menu.push(tools);
+  if (agent) menu.push([{ label: 'Закрыть терминал', icon: 'xmark.circle', destructive: true, onPress: () => confirmCloseAgent(agent) }]);
 
-  const device = item ? DEVICE_META[item.device].label : '';
-  const subtitle = item
-    ? [agent?.ws != null ? `${device} · стол ${agent.ws}` : device, shortPath(item.cwd)].filter(Boolean).join(' · ')
-    : '';
   const state = agent?.state;
 
   const title = (
@@ -143,7 +139,15 @@ export default function AgentScreen() {
       {item ? <AgentIcon agent={item.agent} size={30} /> : null}
       <View style={{ flex: 1, minWidth: 0 }}>
         <T v="headline" weight="700" numberOfLines={1}>{item?.project || (recent ? recent.title : 'Агент')}</T>
-        <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{subtitle || 'ищу агента…'}</T>
+        {item ? (
+          <View style={styles.subtitle}>
+            <SymbolView name={DEVICE_META[item.device].icon} size={12} tintColor={Colors.textSecondary} accessibilityLabel={DEVICE_META[item.device].label} />
+            {agent?.ws != null ? <DeskBadge ws={agent.ws} color={Colors.textSecondary} /> : null}
+            <T v="caption" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>{shortPath(item.cwd)}</T>
+          </View>
+        ) : (
+          <T v="caption" color={Colors.textSecondary} numberOfLines={1}>ищу агента…</T>
+        )}
       </View>
     </View>
   );
@@ -200,10 +204,8 @@ export default function AgentScreen() {
       composer={(onHeight) =>
         agent ? (
           <Composer
-            placeholder="Напиши агенту — уйдёт в его терминал"
+            placeholder={agent.state === 'working' ? 'Напиши — агент увидит после текущего шага' : 'Напиши агенту — уйдёт в его терминал'}
             onSend={send}
-            working={agent.state === 'working' && !stopping}
-            onStop={stop}
             onHeight={onHeight}
           />
         ) : (
@@ -236,6 +238,7 @@ function ClosedBar({ onHeight, onNew }: { onHeight: (h: number) => void; onNew?:
 
 const styles = StyleSheet.create({
   title: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  subtitle: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 1 },
   modelPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, height: 36, maxWidth: 150 },
   status: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dotOff: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.old },

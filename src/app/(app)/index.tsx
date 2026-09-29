@@ -1,20 +1,23 @@
+import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useMemo, useState, type ReactNode } from 'react';
-import { Alert, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { Easing, FadeIn, FadeInDown, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { SFSymbol } from 'sf-symbols-typescript';
 
-import { chats, useChats, type Chat } from '@/ara/chats';
+import { confirmCloseAgent, stopAgent } from '@/ara/actions';
+import { chats, useCurrentChatId } from '@/ara/chats';
 import { ara } from '@/ara/client';
 import { AGENT_LABEL, ago, DEVICE_META, STATE_META } from '@/ara/format';
 import { useAra, useNow } from '@/ara/hooks';
+import { pins, usePins } from '@/ara/pins';
 import type { Agent, DeviceId, RecentSession } from '@/ara/types';
-import { AraMascot } from '@/components/ara-mascot';
-import { MenuTrigger } from '@/components/glass-menu';
+import { AraChat } from '@/components/ara-chat';
+import { GlassMenu, MenuTrigger, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
 import { Segmented } from '@/components/segmented';
-import { AgentIcon, Chip, Glass, IconButton, Press, StatusDot, T } from '@/components/ui';
+import { AgentIcon, DeskBadge, Glass, IconButton, Press, StatusDot, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -26,30 +29,12 @@ function openAgent(key: string) {
   router.push({ pathname: '/agent/[key]', params: { key } });
 }
 
-const QUICK: { text: string; icon: SFSymbol }[] = [
-  { text: 'Что делают агенты?', icon: 'rectangle.stack' },
-  { text: 'Кто ждёт ответа?', icon: 'bell.badge' },
-  { text: 'Итоги за сегодня', icon: 'checklist' },
-  { text: 'Какие у меня серверы?', icon: 'server.rack' },
-];
-
-function quickAsk(text: string) {
-  haptic.tap();
-  const id = chats.create();
-  router.push({ pathname: '/chat/[id]', params: { id } });
-  setTimeout(() => chats.send(id, text), 250);
-}
-
-function newChat() {
-  const id = chats.create();
-  router.push({ pathname: '/chat/[id]', params: { id } });
-}
-
 export default function Home() {
   const insets = useSafeAreaInsets();
   const state = useAra();
-  const list = useChats();
+  const pinned = usePins();
   const now = useNow(30_000);
+  const [barHeight, setBarHeight] = useState(insets.top + 54);
   const [tab, setTab] = useState<Tab>('work');
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -67,30 +52,29 @@ export default function Home() {
     setTimeout(() => setRefreshing(false), 700);
   };
 
-  const plusMenu = [
-    [
-      { label: 'Новый Claude', icon: 'asterisk' as const, onPress: () => router.push({ pathname: '/new', params: { agent: 'claude' } }) },
-      { label: 'Новый Codex', icon: 'chevron.left.forwardslash.chevron.right' as const, onPress: () => router.push({ pathname: '/new', params: { agent: 'codex' } }) },
-    ],
-    [{ label: 'Новый чат с Арой', icon: 'bubble.left.and.bubble.right' as const, onPress: newChat }],
-  ];
+  const plusMenu: MenuSection[] = [[
+    { label: 'Новый Claude', icon: 'asterisk', onPress: () => router.push({ pathname: '/new', params: { agent: 'claude' } }) },
+    { label: 'Новый Codex', icon: 'chevron.left.forwardslash.chevron.right', onPress: () => router.push({ pathname: '/new', params: { agent: 'codex' } }) },
+  ]];
 
   return (
     <View style={styles.root}>
-      <ScrollView
-        contentContainerStyle={{ paddingTop: insets.top + 64, paddingBottom: insets.bottom + 32 }}
-        keyboardDismissMode="on-drag"
-        keyboardShouldPersistTaps="handled"
-        indicatorStyle="white"
-        refreshControl={tab === 'work' ? <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={Colors.textSecondary} progressViewOffset={insets.top + 56} /> : undefined}>
-        {!state.connected ? (
-          <Animated.View entering={FadeIn} exiting={FadeOut} style={styles.banner}>
-            <SymbolView name="wifi.exclamationmark" size={14} tintColor={Colors.waiting} />
-            <T v="footnote" color={Colors.textSecondary}>Нет связи с сервером — переподключаюсь…</T>
-          </Animated.View>
-        ) : null}
+      {tab === 'talk' ? (
+        <TalkTab headerTop={Math.max(0, barHeight - insets.top - 4)} />
+      ) : (
+        <ScrollView
+          contentContainerStyle={{ paddingTop: insets.top + 64, paddingBottom: insets.bottom + 32 }}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          indicatorStyle="white"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={Colors.textSecondary} progressViewOffset={insets.top + 56} />}>
+          {!state.connected ? (
+            <Animated.View entering={FadeIn} exiting={FadeOut} style={styles.banner}>
+              <SymbolView name="wifi.exclamationmark" size={14} tintColor={Colors.waiting} />
+              <T v="footnote" color={Colors.textSecondary}>Нет связи с сервером — переподключаюсь…</T>
+            </Animated.View>
+          ) : null}
 
-        {tab === 'work' ? (
           <Animated.View key="work" entering={FadeIn.duration(220)}>
             <View style={styles.search}>
               <SymbolView name="magnifyingglass" size={15} tintColor={Colors.textTertiary} />
@@ -115,7 +99,8 @@ export default function Home() {
                   key={device}
                   device={device}
                   online={state.devices[device].online}
-                  agents={agents.filter((a) => a.device === device)}
+                  agents={sortPinned(agents.filter((a) => a.device === device), pinned)}
+                  pinned={pinned}
                   loaded={state.loaded}
                   filtered={!!q}
                   now={now}
@@ -139,15 +124,13 @@ export default function Home() {
               </View>
             ) : null}
           </Animated.View>
-        ) : (
-          <Animated.View key="talk" entering={FadeIn.duration(220)}>
-            <ChatList chats={list} now={now} />
-          </Animated.View>
-        )}
-      </ScrollView>
+        </ScrollView>
+      )}
 
-      {/* Шапка: настройки · Работа/Разговор · новый */}
-      <View style={[styles.top, { paddingTop: insets.top + 6 }]}>
+      {/* Шапка: настройки · Работа/Разговор · новый. На «Разговоре» под ней стекло шапки диалога */}
+      <View
+        style={[styles.top, tab === 'talk' && styles.topClear, { paddingTop: insets.top + 6 }]}
+        onLayout={(e) => setBarHeight(e.nativeEvent.layout.height)}>
         <IconButton icon="gearshape" label="Настройки" onPress={() => router.push('/settings')} />
         <Segmented
           style={styles.segmented}
@@ -158,14 +141,37 @@ export default function Home() {
             { value: 'talk', label: 'Разговор', icon: 'bubble.left' },
           ]}
         />
-        <MenuTrigger label="Создать" sections={plusMenu}>
-          <Glass radius={20} interactive style={styles.plus}>
-            <SymbolView name="square.and.pencil" size={18} tintColor={Colors.text} weight="semibold" />
-          </Glass>
-        </MenuTrigger>
+        {tab === 'talk' ? (
+          <IconButton icon="square.and.pencil" label="Новый диалог" onPress={() => chats.startNew()} />
+        ) : (
+          <MenuTrigger label="Новый агент" sections={plusMenu}>
+            <Glass radius={20} interactive style={styles.plus}>
+              <SymbolView name="square.and.pencil" size={18} tintColor={Colors.text} weight="semibold" />
+            </Glass>
+          </MenuTrigger>
+        )}
       </View>
     </View>
   );
+}
+
+/** Вкладка «Разговор»: сразу сам диалог — последний открытый или новый пустой. */
+function TalkTab({ headerTop }: { headerTop: number }) {
+  const current = useCurrentChatId();
+  useEffect(() => {
+    if (!current) chats.ensureCurrent();
+  }, [current]);
+  if (!current) return <View style={styles.root} />;
+  return (
+    <Animated.View key="talk" entering={FadeIn.duration(220)} style={styles.root}>
+      <AraChat key={current} id={current} embedded headerTop={headerTop} />
+    </Animated.View>
+  );
+}
+
+/** Закреплённые — первыми, остальные в прежнем порядке. */
+function sortPinned(list: Agent[], pinned: string[]) {
+  return [...list].sort((a, b) => Number(pinned.includes(b.key)) - Number(pinned.includes(a.key)));
 }
 
 function SectionTitle({ title, icon, right }: { title: string; icon?: 'laptopcomputer' | 'desktopcomputer'; right?: ReactNode }) {
@@ -179,10 +185,11 @@ function SectionTitle({ title, icon, right }: { title: string; icon?: 'laptopcom
   );
 }
 
-function DeviceSection({ device, online, agents, loaded, filtered, now }: {
+function DeviceSection({ device, online, agents, pinned, loaded, filtered, now }: {
   device: DeviceId;
   online: boolean;
   agents: Agent[];
+  pinned: string[];
   loaded: boolean;
   filtered: boolean;
   now: number;
@@ -200,7 +207,7 @@ function DeviceSection({ device, online, agents, loaded, filtered, now }: {
       />
       <Animated.View layout={layout} style={styles.group}>
         {agents.length ? (
-          agents.map((agent, i) => <AgentRow key={agent.key} agent={agent} first={i === 0} now={now} />)
+          agents.map((agent, i) => <AgentRow key={agent.key} agent={agent} pinned={pinned.includes(agent.key)} first={i === 0} now={now} />)
         ) : (
           <View style={styles.emptyRow}>
             <T v="footnote" color={Colors.textTertiary}>
@@ -220,30 +227,74 @@ function agentsWord(n: number) {
   return 'агентов';
 }
 
-function AgentRow({ agent, first, now }: { agent: Agent; first: boolean; now: number }) {
+function AgentRow({ agent, pinned, first, now }: { agent: Agent; pinned: boolean; first: boolean; now: number }) {
   const meta = STATE_META[agent.state];
   const doing = agent.task || agent.title;
   const since = agent.since ? ` · ${ago(agent.since, now)}` : '';
+  const ref = useRef<View>(null);
+  const [menu, setMenu] = useState<MenuAnchor | null>(null);
+
+  const openMenu = () => {
+    haptic.press();
+    ref.current?.measureInWindow((x, y, width, height) => setMenu({ x, y, width, height }));
+  };
+
+  const sections: MenuSection[] = [
+    [
+      { label: pinned ? 'Открепить' : 'Закрепить сверху', icon: pinned ? 'pin.slash' : 'pin', onPress: () => pins.toggle(agent.key) },
+      { label: 'Скопировать путь', icon: 'doc.on.doc', onPress: () => Clipboard.setStringAsync(agent.cwd).then(() => haptic.success()) },
+      ...(agent.state === 'working' ? [{ label: 'Остановить', icon: 'stop.circle' as const, onPress: () => stopAgent(agent).catch(() => {}) }] : []),
+    ],
+    [{ label: 'Закрыть терминал', icon: 'xmark.circle', destructive: true, onPress: () => confirmCloseAgent(agent) }],
+  ];
+
   return (
-    <Animated.View entering={FadeInDown.duration(260)} exiting={FadeOut.duration(160)} layout={layout}>
-      <Press
-        onPress={() => openAgent(agent.key)}
-        scaleTo={0.985}
-        style={[styles.row, !first && styles.rowBorder]}
-        accessibilityLabel={`${AGENT_LABEL[agent.agent]} ${agent.project}, ${meta.label}`}>
-        <AgentIcon agent={agent.agent} size={34} />
-        <View style={styles.rowText}>
-          <T v="callout" weight="600" numberOfLines={1}>{agent.project}</T>
-          <T v="footnote" color={Colors.textSecondary} numberOfLines={1}>
-            <T v="footnote" color={meta.color}>{meta.label}</T>
-            {since}{doing ? ` · ${doing}` : ''}
-          </T>
-        </View>
-        <View style={styles.rowRight}>
-          <StatusDot state={agent.state} />
-          {agent.ws != null ? <Chip>{`стол ${agent.ws}`}</Chip> : null}
-        </View>
-      </Press>
+    <Animated.View entering={FadeInDown.duration(260)} exiting={FadeOut.duration(160)} layout={layout} style={!first && styles.rowBorder}>
+      <ReanimatedSwipeable
+        friction={1.6}
+        rightThreshold={44}
+        overshootRight={false}
+        renderRightActions={(_progress, _translation, methods: SwipeableMethods) => (
+          <Press
+            onPress={() => {
+              methods.close();
+              confirmCloseAgent(agent);
+            }}
+            feedback="press"
+            scaleTo={1}
+            style={styles.swipeClose}
+            accessibilityLabel="Закрыть терминал">
+            <SymbolView name="xmark" size={16} tintColor={Colors.text} weight="bold" />
+            <T v="caption" weight="700">Закрыть</T>
+          </Press>
+        )}>
+        <Press
+          ref={ref}
+          onPress={() => openAgent(agent.key)}
+          onLongPress={openMenu}
+          delayLongPress={350}
+          scaleTo={0.985}
+          style={styles.row}
+          accessibilityLabel={`${AGENT_LABEL[agent.agent]} ${agent.project}, ${meta.label}${pinned ? ', закреплён' : ''}`}
+          accessibilityHint="Долгое нажатие — действия, свайп влево — закрыть">
+          <AgentIcon agent={agent.agent} size={34} />
+          <View style={styles.rowText}>
+            <View style={styles.rowTitle}>
+              {pinned ? <SymbolView name="pin.fill" size={10} tintColor={Colors.textTertiary} /> : null}
+              <T v="callout" weight="600" numberOfLines={1} style={{ flexShrink: 1 }}>{agent.project}</T>
+            </View>
+            <T v="footnote" color={Colors.textSecondary} numberOfLines={1}>
+              <T v="footnote" color={meta.color}>{meta.label}</T>
+              {since}{doing ? ` · ${doing}` : ''}
+            </T>
+          </View>
+          <View style={styles.rowRight}>
+            <StatusDot state={agent.state} />
+            {agent.ws != null ? <DeskBadge ws={agent.ws} /> : null}
+          </View>
+        </Press>
+      </ReanimatedSwipeable>
+      <GlassMenu anchor={menu} sections={sections} onClose={() => setMenu(null)} />
     </Animated.View>
   );
 }
@@ -254,9 +305,12 @@ function RecentRow({ item, first, now }: { item: RecentSession; first: boolean; 
       <AgentIcon agent={item.agent} size={28} />
       <View style={styles.rowText}>
         <T v="subhead" numberOfLines={1}>{item.title || 'Без названия'}</T>
-        <T v="caption" color={Colors.textSecondary} numberOfLines={1}>
-          {item.project}{item.device === 'pc' ? ' · ПК' : ''}{item.mtime ? ` · ${ago(item.mtime * 1000, now)}` : ''}
-        </T>
+        <View style={styles.rowTitle}>
+          <SymbolView name={DEVICE_META[item.device].icon} size={11} tintColor={Colors.textTertiary} accessibilityLabel={DEVICE_META[item.device].label} />
+          <T v="caption" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>
+            {item.project}{item.mtime ? ` · ${ago(item.mtime * 1000, now)}` : ''}
+          </T>
+        </View>
       </View>
       <SymbolView name="chevron.right" size={12} tintColor={Colors.textTertiary} />
     </Press>
@@ -278,107 +332,8 @@ function NoComputers() {
   );
 }
 
-function ChatList({ chats: list, now }: { chats: Chat[]; now: number }) {
-  const sorted = useMemo(() => [...list].sort((a, b) => b.updatedAt - a.updatedAt), [list]);
-  return (
-    <View style={styles.section}>
-      <Animated.View entering={FadeInDown.duration(300)} style={styles.hero}>
-        <AraMascot size={76} interactive />
-        <T v="title" weight="700" style={{ marginTop: 12 }}>Привет, я Ара</T>
-        <T v="footnote" color={Colors.textSecondary} style={{ textAlign: 'center' }}>
-          Знаю твоих агентов на ноутбуке и ПК, отвечаю за секунды и передаю им задачи
-        </T>
-        <Press onPress={newChat} style={styles.askButton} feedback="press" accessibilityLabel="Новый чат с Арой">
-          <SymbolView name="square.and.pencil" size={15} tintColor={Colors.onAccent} weight="semibold" />
-          <T v="callout" weight="700" color={Colors.onAccent}>Спросить Ару</T>
-        </Press>
-      </Animated.View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickRow} style={styles.quickScroll}>
-        {QUICK.map((q, i) => (
-          <Animated.View key={q.text} entering={FadeInDown.delay(60 + i * 50).duration(240)}>
-            <Press onPress={() => quickAsk(q.text)} style={styles.quick} feedback="press" accessibilityLabel={q.text}>
-              <SymbolView name={q.icon} size={14} tintColor={Colors.textSecondary} />
-              <T v="footnote" weight="600">{q.text}</T>
-            </Press>
-          </Animated.View>
-        ))}
-      </ScrollView>
-      {sorted.length ? <SectionTitle title="Чаты" /> : null}
-      {sorted.length ? (
-        <Animated.View layout={layout} style={[styles.group, { marginTop: 12 }]}>
-          {sorted.map((chat, i) => {
-            const last = chat.messages[chat.messages.length - 1];
-            return (
-              <Animated.View key={chat.id} entering={FadeInDown.duration(220)} exiting={FadeOut.duration(160)} layout={layout}>
-                <Press
-                  onPress={() => router.push({ pathname: '/chat/[id]', params: { id: chat.id } })}
-                  onLongPress={() => {
-                    haptic.press();
-                    Alert.alert('Удалить чат?', chat.title, [
-                      { text: 'Отмена', style: 'cancel' },
-                      { text: 'Удалить', style: 'destructive', onPress: () => chats.remove(chat.id) },
-                    ]);
-                  }}
-                  scaleTo={0.985}
-                  style={[styles.row, i > 0 && styles.rowBorder]}
-                  accessibilityLabel={chat.title}
-                  accessibilityHint="Долгое нажатие — удалить">
-                  <AgentIcon agent="ara" size={30} />
-                  <View style={styles.rowText}>
-                    <T v="subhead" numberOfLines={1}>{chat.title}</T>
-                    <T v="caption" color={Colors.textSecondary} numberOfLines={1}>
-                      {ago(chat.updatedAt, now)}{last?.text ? ` · ${last.text.replace(/\s+/g, ' ')}` : ''}
-                    </T>
-                  </View>
-                </Press>
-              </Animated.View>
-            );
-          })}
-        </Animated.View>
-      ) : (
-        <T v="footnote" color={Colors.textTertiary} style={{ marginTop: 16, textAlign: 'center' }}>
-          Здесь появятся твои чаты
-        </T>
-      )}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
-  hero: {
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 24,
-    paddingHorizontal: 20,
-    borderRadius: 24,
-    backgroundColor: Colors.card,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.hairline,
-  },
-  askButton: {
-    marginTop: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 20,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: Colors.accent,
-  },
-  quickScroll: { marginHorizontal: -ScreenPadding, marginTop: 12, marginBottom: 6 },
-  quickRow: { paddingHorizontal: ScreenPadding, gap: 8 },
-  quick: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 13,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.card,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.hairline,
-  },
   top: {
     position: 'absolute',
     top: 0,
@@ -391,6 +346,7 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     backgroundColor: 'rgba(10,10,12,0.72)',
   },
+  topClear: { backgroundColor: 'transparent' },
   segmented: { flex: 1 },
   plus: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   banner: {
@@ -419,10 +375,12 @@ const styles = StyleSheet.create({
   sectionTitle: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8, paddingHorizontal: 4 },
   caps: { textTransform: 'uppercase', letterSpacing: 0.6 },
   group: { backgroundColor: Colors.card, borderRadius: Radius.lg, overflow: 'hidden' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 11, minHeight: 58 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 11, minHeight: 58, backgroundColor: Colors.card },
+  rowTitle: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  swipeClose: { width: 88, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: Colors.danger },
   rowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.separator },
   rowText: { flex: 1, minWidth: 0, gap: 1 },
-  rowRight: { alignItems: 'flex-end', gap: 6 },
+  rowRight: { alignItems: 'center', gap: 7 },
   emptyRow: { paddingHorizontal: 14, paddingVertical: 16 },
   more: { alignSelf: 'center', paddingVertical: 12, paddingHorizontal: 16 },
   noComputers: {
@@ -442,14 +400,5 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.text,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  newChat: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: Radius.lg,
-    backgroundColor: Colors.card,
   },
 });

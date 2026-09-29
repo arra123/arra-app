@@ -13,7 +13,6 @@ import Animated, {
   cancelAnimation,
   FadeIn,
   FadeOut,
-  LinearTransition,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -34,9 +33,6 @@ type Props = {
   placeholder: string;
   /** Бросает ошибку — текст и фото остаются в поле. */
   onSend: (text: string, photos: LocalPhoto[]) => Promise<void>;
-  /** Агент работает: вместо «Отправить» при пустом поле — «Остановить». */
-  working?: boolean;
-  onStop?: () => void;
   disabled?: boolean;
   /** Слева от кнопки отправки (выбор модели в чате с Арой). */
   accessory?: ReactNode;
@@ -52,7 +48,7 @@ function toPhoto(asset: ImagePicker.ImagePickerAsset): LocalPhoto {
   return { uri: asset.uri, name: asset.fileName || `photo-${Date.now()}-${++photoSeq}.${ext}`, mime };
 }
 
-export function Composer({ placeholder, onSend, working, onStop, disabled, accessory, onHeight, autoFocus }: Props) {
+export function Composer({ placeholder, onSend, disabled, accessory, onHeight, autoFocus }: Props) {
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [photos, setPhotos] = useState<LocalPhoto[]>([]);
@@ -64,7 +60,6 @@ export function Composer({ placeholder, onSend, working, onStop, disabled, acces
   const input = useRef<TextInput>(null);
 
   const canSend = !disabled && !sending && (text.trim().length > 0 || photos.length > 0);
-  const showStop = !!working && !canSend && !recording && !!onStop;
 
   async function send() {
     if (!canSend) return;
@@ -214,31 +209,21 @@ export function Composer({ placeholder, onSend, working, onStop, disabled, acces
           </Press>
           <View style={{ flex: 1 }} />
           {accessory}
-          <Animated.View layout={LinearTransition.duration(180)}>
-            {showStop ? (
-              <Animated.View key="stop" entering={ZoomIn.duration(180)} exiting={ZoomOut.duration(120)}>
-                <IconButton icon="stop.fill" label="Остановить агента" onPress={onStop} size={34} background={Colors.text} color={Colors.onAccent} />
-              </Animated.View>
-            ) : (
-              <Animated.View key="send" entering={ZoomIn.duration(180)} exiting={ZoomOut.duration(120)}>
-                {sending ? (
-                  <View style={[styles.send, { backgroundColor: Colors.cardPressed }]}>
-                    <ActivityIndicator size="small" color={Colors.text} />
-                  </View>
-                ) : (
-                  <IconButton
-                    icon="arrow.up"
-                    label="Отправить"
-                    onPress={send}
-                    size={34}
-                    disabled={!canSend}
-                    background={canSend ? Colors.text : Colors.cardPressed}
-                    color={canSend ? Colors.onAccent : Colors.textTertiary}
-                  />
-                )}
-              </Animated.View>
-            )}
-          </Animated.View>
+          {sending ? (
+            <View style={[styles.send, { backgroundColor: Colors.cardPressed }]}>
+              <ActivityIndicator size="small" color={Colors.text} />
+            </View>
+          ) : (
+            <IconButton
+              icon="arrow.up"
+              label="Отправить"
+              onPress={send}
+              size={34}
+              disabled={!canSend}
+              background={canSend ? Colors.text : Colors.cardPressed}
+              color={canSend ? Colors.onAccent : Colors.textTertiary}
+            />
+          )}
         </View>
       </Glass>
     </View>
