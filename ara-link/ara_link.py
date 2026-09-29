@@ -477,8 +477,17 @@ class AraLink:
         model = str(msg.get("model") or "")
         if not MODEL_RE.match(model):
             raise RuntimeError("Непонятная модель")
-        await self.type_into(msg.get("agent") or {}, f"/model {model}")
-        return {}
+        agent = msg.get("agent") or {}
+        delivery = await self.type_into(agent, f"/model {model}")
+        if delivery.get("model"):
+            for key, entry in self.watch.items():
+                if entry.get("term") == agent.get("term") and entry.get("device") == agent.get("device"):
+                    cached = self.transcripts.get(key)
+                    if cached:
+                        data = {**cached, "model": delivery["model"]}
+                        self.remember(key, data)
+                        await self.send({"type": "ara.transcript", "agentKey": key, "data": data})
+        return {"model": delivery.get("model") or ""}
 
     async def cmd_launch(self, msg: dict) -> dict:
         agent = "codex" if msg.get("agent") == "codex" else "claude"
