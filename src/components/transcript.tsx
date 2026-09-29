@@ -2,12 +2,12 @@ import { SymbolView } from 'expo-symbols';
 import { memo, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, {
+  Easing,
   FadeIn,
   FadeInDown,
   FadeOut,
   LinearTransition,
   useAnimatedStyle,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 
@@ -18,10 +18,11 @@ import { LocalImage, RemoteImage, RemoteVideo } from '@/components/media';
 import { Chip, Press, T } from '@/components/ui';
 import { Colors, Radius, Spacing } from '@/constants/theme';
 
-const layout = LinearTransition.springify().damping(22).stiffness(220);
+// Плавно и без отскока: пружина раскачивала край плана и шапки
+const layout = LinearTransition.duration(240).easing(Easing.out(Easing.cubic));
 
 function Chevron({ open }: { open: boolean }) {
-  const style = useAnimatedStyle(() => ({ transform: [{ rotate: withSpring(open ? '180deg' : '0deg', { damping: 18 }) }] }));
+  const style = useAnimatedStyle(() => ({ transform: [{ rotate: withTiming(open ? '180deg' : '0deg', { duration: 220 }) }] }));
   return (
     <Animated.View style={style}>
       <SymbolView name="chevron.down" size={12} tintColor={Colors.textSecondary} weight="semibold" />
@@ -178,7 +179,7 @@ export const TranscriptRow = memo(function TranscriptRow({ message, scope, anima
   scope: FileScope;
   animate: boolean;
 }) {
-  const entering = animate ? FadeInDown.duration(280).springify().damping(20) : undefined;
+  const entering = animate ? FadeInDown.duration(240).easing(Easing.out(Easing.cubic)) : undefined;
   return (
     <Animated.View entering={entering} style={styles.row}>
       {message.role === 'user' ? (

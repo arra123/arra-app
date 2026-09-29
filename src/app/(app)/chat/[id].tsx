@@ -15,7 +15,7 @@ import { Composer } from '@/components/composer';
 import { MenuTrigger } from '@/components/glass-menu';
 import { Segmented } from '@/components/segmented';
 import { AssistantMessage, UserBubble } from '@/components/transcript';
-import { AgentIcon, Chip, Press, T } from '@/components/ui';
+import { Chip, Press, T } from '@/components/ui';
 import { Colors, Spacing } from '@/constants/theme';
 
 const MODELS: { value: AskModel; label: string; hint: string }[] = [
@@ -122,11 +122,13 @@ export default function ChatScreen() {
 
   const title = (
     <View style={styles.title}>
-      <AgentIcon agent="ara" size={30} />
+      <View style={styles.avatar}>
+        <AraMascot size={26} mood={busy ? 'thinking' : 'idle'} interactive />
+      </View>
       <View style={{ flex: 1, minWidth: 0 }}>
         <T v="headline" weight="700" numberOfLines={1}>{messages.length ? chat.title : 'Ара'}</T>
         <T v="caption" color={online ? Colors.textSecondary : Colors.error} numberOfLines={1}>
-          {online ? 'Ара · быстрые ответы и задачи агентам' : 'Компьютер не в сети — Ара не ответит'}
+          {!online ? 'Компьютер не в сети — Ара не ответит' : busy ? 'печатает…' : 'на связи'}
         </T>
       </View>
     </View>
@@ -191,7 +193,7 @@ export default function ChatScreen() {
             {SUGGESTIONS.map((s, i) => (
               <Animated.View key={s.text} entering={FadeInDown.delay(80 + i * 60).duration(260)} style={styles.suggestionCell}>
                 <Press onPress={() => chats.send(id, s.text)} disabled={!online || busy} style={styles.suggestion} feedback="press" accessibilityLabel={s.text}>
-                  <SymbolView name={s.icon} size={17} tintColor={Colors.ara} />
+                  <SymbolView name={s.icon} size={17} tintColor={Colors.textSecondary} />
                   <T v="footnote" weight="600" numberOfLines={2}>{s.text}</T>
                 </Press>
               </Animated.View>
@@ -216,6 +218,7 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   title: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   row: { paddingHorizontal: Spacing.lg, paddingVertical: 7 },
+  avatar: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.07)' },
   modelButton: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, height: 34 },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   error: { flexDirection: 'row', alignItems: 'center', gap: 8 },

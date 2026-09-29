@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { SplashOverlay } from '@/components/splash-overlay';
 import { Colors } from '@/constants/theme';
 import { AuthProvider, useAuth } from '@/lib/auth';
 
@@ -20,6 +21,11 @@ const theme = {
     primary: Colors.text,
   },
 };
+
+function Splash() {
+  const { loading } = useAuth();
+  return <SplashOverlay ready={!loading} />;
+}
 
 function Gate() {
   const { user, loading } = useAuth();
@@ -63,6 +69,7 @@ export default function RootLayout() {
             <AuthProvider>
               <StatusBar style="light" />
               <Gate />
+              <Splash />
             </AuthProvider>
           </ThemeProvider>
         </SafeAreaProvider>

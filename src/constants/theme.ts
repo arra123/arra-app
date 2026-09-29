@@ -33,7 +33,7 @@ export const Colors = {
   // Агенты
   claude: '#d97757',
   codex: '#e6e6ea',
-  ara: '#b9a4ff',
+  ara: '#f2f2f5',
 
   danger: '#f87171',
   success: '#34d399',

@@ -193,7 +193,7 @@ export function AgentIcon({ agent, size = 32 }: { agent: AgentKind | 'ara'; size
   const meta = {
     claude: { icon: 'asterisk' as SFSymbol, color: Colors.claude, bg: 'rgba(217,119,87,0.14)' },
     codex: { icon: 'chevron.left.forwardslash.chevron.right' as SFSymbol, color: Colors.codex, bg: 'rgba(255,255,255,0.08)' },
-    ara: { icon: 'sparkles' as SFSymbol, color: Colors.ara, bg: 'rgba(185,164,255,0.14)' },
+    ara: { icon: 'sparkles' as SFSymbol, color: Colors.ara, bg: 'rgba(255,255,255,0.07)' },
   }[agent];
   if (agent === 'ara') {
     return (

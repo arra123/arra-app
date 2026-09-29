@@ -2,7 +2,7 @@ import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useMemo, useState, type ReactNode } from 'react';
 import { Alert, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeOut, LinearTransition } from 'react-native-reanimated';
+import Animated, { Easing, FadeIn, FadeInDown, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SFSymbol } from 'sf-symbols-typescript';
 
@@ -20,7 +20,7 @@ import { haptic } from '@/lib/haptics';
 
 type Tab = 'work' | 'talk';
 const DEVICES: DeviceId[] = ['laptop', 'pc'];
-const layout = LinearTransition.springify().damping(22).stiffness(200);
+const layout = LinearTransition.duration(240).easing(Easing.out(Easing.cubic));
 
 function openAgent(key: string) {
   router.push({ pathname: '/agent/[key]', params: { key } });
@@ -297,7 +297,7 @@ function ChatList({ chats: list, now }: { chats: Chat[]; now: number }) {
         {QUICK.map((q, i) => (
           <Animated.View key={q.text} entering={FadeInDown.delay(60 + i * 50).duration(240)}>
             <Press onPress={() => quickAsk(q.text)} style={styles.quick} feedback="press" accessibilityLabel={q.text}>
-              <SymbolView name={q.icon} size={14} tintColor={Colors.ara} />
+              <SymbolView name={q.icon} size={14} tintColor={Colors.textSecondary} />
               <T v="footnote" weight="600">{q.text}</T>
             </Press>
           </Animated.View>

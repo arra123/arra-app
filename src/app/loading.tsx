@@ -1,11 +1,12 @@
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { AraMascot } from '@/components/ara-mascot';
 import { Colors } from '@/constants/theme';
 
 export default function LoadingScreen() {
   return (
     <View style={styles.container}>
-      <ActivityIndicator color={Colors.textSecondary} />
+      <AraMascot size={110} mood="thinking" />
     </View>
   );
 }
