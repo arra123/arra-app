@@ -370,6 +370,34 @@ class AraLink:
         os.kill(int(term), 15)
         return {}
 
+    async def cmd_transcribe(self, msg: dict) -> dict:
+        """Голос с телефона → текст: Handy распознаёт файл той же моделью, что и диктовку."""
+        url = str(msg.get("url") or "")
+        if not url.startswith("/ara/blob/"):
+            raise RuntimeError("Неверная ссылка на запись")
+        model = ""
+        with contextlib.suppress(OSError):
+            model = Path("~/.config/handy-final-model").expanduser().read_text().strip()
+        with tempfile.TemporaryDirectory(prefix="ara-voice-") as tmp:
+            src = Path(tmp) / safe_name(str(msg.get("name") or "voice.m4a"))
+            wav = Path(tmp) / "voice.wav"
+            await asyncio.to_thread(self.download_blob, url, src)
+            code, _, err = await self.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(src),
+                                           "-ar", "16000", "-ac", "1", str(wav)], timeout=60)
+            if code != 0:
+                raise RuntimeError(err.strip()[-200:] or "Не удалось прочитать запись")
+            argv = [str(Path("~/.local/bin/handy").expanduser()), "-f", str(wav), "--json"]
+            if model:
+                argv += ["--model", model]
+            code, out, err = await self.run(argv, timeout=120)
+            if code != 0:
+                raise RuntimeError(err.strip()[-200:] or "Handy не распознал запись")
+            try:
+                text = json.loads(out.strip().splitlines()[-1]).get("text", "")
+            except (ValueError, IndexError):
+                text = ""
+        return {"text": text.strip()}
+
     async def cmd_key(self, msg: dict) -> dict:
         """Нажать клавиши в терминале агента: ответ на вопрос с вариантами."""
         agent = msg.get("agent") or {}
@@ -662,6 +690,8 @@ class AraLink:
             self.spawn(self.reply(msg, self.cmd_close))
         elif kind == "ara.key":
             self.spawn(self.reply(msg, self.cmd_key))
+        elif kind == "ara.transcribe":
+            self.spawn(self.reply(msg, self.cmd_transcribe))
         elif kind == "ara.launch":
             self.spawn(self.reply(msg, self.cmd_launch))
         elif kind == "ara.upload":

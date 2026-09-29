@@ -465,6 +465,19 @@ export function createHub(deps = {}) {
     });
   }
 
+  /** Голос с телефона → текст на ноутбуке (Handy, модель GigaAM): бесплатно и по-русски. */
+  function transcribe(userId, blob) {
+    const u = user(userId);
+    const target = pickHostForDevice(hostList(u), 'laptop');
+    return new Promise((resolve, reject) => {
+      forward(u, userId, target, {
+        type: 'ara.transcribe',
+        url: `/ara/blob/${blob.id}`,
+        name: blob.name,
+      }, { kind: 'upload', resolve, reject, socket: null, reqId: null });
+    });
+  }
+
   /** Ключ удалён или перевыпущен — закрыть соединения этого компьютера. */
   function disconnectToken(userId, tokenId) {
     const host = users.get(userId)?.hosts.get(tokenId);
@@ -491,6 +504,7 @@ export function createHub(deps = {}) {
     clientDisconnected,
     clientMessage,
     pendingFile,
+    transcribe,
     fileReady,
     fileFailed,
     deliverUpload,
