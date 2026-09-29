@@ -25,7 +25,7 @@ import { haptic } from '@/lib/haptics';
 
 type Row =
   | { kind: 'message'; key: string; message: TranscriptMessage }
-  | { kind: 'pending'; key: string; text: string; images: string[] };
+  | { kind: 'pending'; key: string; text: string; images: string[]; localImages: string[]; progress: number; total: number };
 
 const CLAUDE_MODELS = [
   { value: 'opus', label: 'Opus', hint: 'самая умная' },
@@ -56,7 +56,16 @@ export default function AgentScreen() {
   const now = useNow(10_000);
   // Отправленное с телефона висит «отправляю…», пока в переписке не появится
   // соответствующее по счёту сообщение пользователя (или 90 с на всякий случай)
-  const [pending, setPending] = useState<{ id: string; text: string; images: string[]; at: number; index: number }[]>([]);
+  const [pending, setPending] = useState<{
+    id: string;
+    text: string;
+    images: string[];
+    localImages: string[];
+    progress: number;
+    total: number;
+    at: number;
+    index: number;
+  }[]>([]);
   const [stopping, setStopping] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const { height: screenH } = useWindowDimensions();
@@ -99,19 +108,42 @@ export default function AgentScreen() {
   const keys = useMemo(() => messageKeys(messages), [messages]);
   const rows: Row[] = useMemo(() => [
     ...messages.map((message, i) => ({ kind: 'message' as const, key: keys[i], message })),
-    ...visiblePending.map((p) => ({ kind: 'pending' as const, key: `pending:${p.id}`, text: p.text, images: p.images })),
+    ...visiblePending.map((p) => ({
+      kind: 'pending' as const,
+      key: `pending:${p.id}`,
+      text: p.text,
+      images: p.images,
+      localImages: p.localImages,
+      progress: p.progress,
+      total: p.total,
+    })),
   ], [messages, keys, visiblePending]);
   const isFresh = useFreshKeys(keys);
 
   /** Сообщение агенту с «отправляю…», пока оно не появится в переписке. */
-  async function sendMessage(text: string, paths: string[]) {
-    if (!agent) throw new Error('Агент уже закрыт');
+  function addPending(text: string, photos: { uri: string }[]) {
     const id = `${Date.now()}`;
     const at = Date.now();
     setPending((list) => {
       const alive = list.filter((p) => userCount <= p.index && at - p.at < 90_000);
-      return [...alive, { id, text, images: paths, at, index: userCount + alive.length }];
+      return [...alive, {
+        id,
+        text,
+        images: [],
+        localImages: photos.map((photo) => photo.uri),
+        progress: 0,
+        total: photos.length,
+        at,
+        index: userCount + alive.length,
+      }];
     });
+    return id;
+  }
+
+  async function sendMessage(text: string, paths: string[], pendingId?: string) {
+    if (!agent) throw new Error('Агент уже закрыт');
+    const id = pendingId || addPending(text, []);
+    setPending((list) => list.map((p) => p.id === id ? { ...p, images: paths, progress: p.total } : p));
     try {
       await ara.sendText(agent.key, text, paths);
     } catch (error) {
@@ -123,9 +155,19 @@ export default function AgentScreen() {
   /** Поле ввода. Пока открыт вопрос — это «свой ответ» на него. */
   async function send(text: string, photos: { uri: string; name: string; mime: string }[]) {
     if (!agent) throw new Error('Агент уже закрыт');
+    const outgoing = question && questionOpen ? answerMessage(question, current.picked, text) || text : text;
+    const pendingId = addPending(outgoing, photos);
     const paths: string[] = [];
-    for (const photo of photos) paths.push(await uploadPhoto(photo, { agentKey: agent.key }));
-    if (!question || !questionOpen) return sendMessage(text, paths);
+    try {
+      for (const photo of photos) {
+        paths.push(await uploadPhoto(photo, { agentKey: agent.key }));
+        setPending((list) => list.map((p) => p.id === pendingId ? { ...p, images: [...paths], progress: paths.length } : p));
+      }
+    } catch (error) {
+      setPending((list) => list.filter((p) => p.id !== pendingId));
+      throw error;
+    }
+    if (!question || !questionOpen) return sendMessage(outgoing, paths, pendingId);
     if (answering.current) throw new Error('Ответ уже отправляется');
     answering.current = true;
     patchAnswer({ status: { state: 'sending' } });
@@ -136,10 +178,11 @@ export default function AgentScreen() {
         patchAnswer({ escaped: true });
         await wait(700);
       }
-      await sendMessage(answerMessage(question, current.picked, text) || text, paths);
+      await sendMessage(outgoing, paths, pendingId);
       patchAnswer({ status: { state: 'sent', at: Date.now() } });
       haptic.success();
     } catch (error: any) {
+      setPending((list) => list.filter((p) => p.id !== pendingId));
       patchAnswer({ status: { state: 'error', message: error?.message || 'Ответ не ушёл' } });
       throw error;
     } finally {
@@ -308,7 +351,14 @@ export default function AgentScreen() {
           <TranscriptRow message={row.message} scope={scope} animate={isFresh(row.key)} />
         ) : (
           <Animated.View entering={FadeInDown.duration(220)} exiting={FadeOut.duration(150)} style={styles.pendingRow}>
-            <UserBubble text={row.text} images={row.images} scope={scope} pending />
+            <UserBubble
+              text={row.text}
+              images={row.images}
+              localImages={row.localImages}
+              scope={scope}
+              pending
+              pendingLabel={row.total > row.progress ? `Загружаю фото ${row.progress + 1} из ${row.total}` : 'Отправляю…'}
+            />
           </Animated.View>
         )
       }

@@ -1,6 +1,6 @@
 import { SymbolView } from 'expo-symbols';
 import { memo, useState, type ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import Animated, {
   Easing,
   FadeIn,
@@ -13,6 +13,7 @@ import Animated, {
 
 import { messageTime, stepIcon, tookLabel } from '@/ara/format';
 import type { FileScope, PlanItem, StepItem, TranscriptMessage } from '@/ara/types';
+import { localPhotoUri } from '@/ara/upload';
 import { Markdown } from '@/components/markdown';
 import { LocalImage, RemoteImage, RemoteVideo } from '@/components/media';
 import { Chip, Press, T } from '@/components/ui';
@@ -89,7 +90,16 @@ export function StepsRow({ items, more = 0 }: { items: StepItem[]; more?: number
   const total = items.length + (more || 0);
   const last = items[items.length - 1];
   const thought = last?.icon === THOUGHT ? last : null;
-  const word = total % 10 === 1 && total % 100 !== 11 ? 'действие' : [2, 3, 4].includes(total % 10) && ![12, 13, 14].includes(total % 100) ? 'действия' : 'действий';
+  const grouped = items.reduce<{ icon?: string; text: string; count: number }[]>((out, item) => {
+    const text = /^(exec|wait)$/i.test(item.text.trim())
+      ? item.text.trim().toLowerCase() === 'wait' ? 'Ждёт завершения операции' : 'Работает в терминале'
+      : item.text;
+    const previous = out[out.length - 1];
+    if (previous && previous.icon === item.icon && previous.text === text) previous.count += 1;
+    else out.push({ icon: item.icon, text, count: 1 });
+    return out;
+  }, []);
+  const currentText = thought?.text || grouped[grouped.length - 1]?.text || 'Работает';
   return (
     <Animated.View layout={layout} style={styles.steps}>
       <Press
@@ -97,7 +107,7 @@ export function StepsRow({ items, more = 0 }: { items: StepItem[]; more?: number
         scaleTo={0.98}
         onPress={() => setOpen((v) => !v)}
         style={[styles.stepsHeader, thought && styles.thoughtHeader]}
-        accessibilityLabel={thought ? `Думает: ${thought.text}. ${total} ${word}` : `${total} ${word}`}>
+        accessibilityLabel={`Сейчас: ${currentText}. Подробности: ${total} шагов`}>
         {thought ? (
           <>
             <SymbolView name="brain" size={15} tintColor={Colors.text} style={{ marginTop: 2 }} />
@@ -105,14 +115,14 @@ export function StepsRow({ items, more = 0 }: { items: StepItem[]; more?: number
               <Animated.View key={thought.text} entering={FadeIn.duration(220)}>
                 <T v="footnote" color={Colors.text} numberOfLines={2}>{thought.text}</T>
               </Animated.View>
-              <T v="caption" color={Colors.textTertiary}>{total} {word}</T>
+              <T v="caption" color={Colors.textTertiary}>Сейчас · можно раскрыть подробности</T>
             </View>
           </>
         ) : (
           <>
             <SymbolView name={stepIcon(last?.icon)} size={14} tintColor={Colors.textSecondary} />
-            <T v="footnote" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>
-              {total} {word}{last ? ` · ${last.text}` : ''}
+            <T v="footnote" color={Colors.textSecondary} numberOfLines={2} style={{ flexShrink: 1 }}>
+              {currentText}
             </T>
           </>
         )}
@@ -120,8 +130,9 @@ export function StepsRow({ items, more = 0 }: { items: StepItem[]; more?: number
       </Press>
       {open ? (
         <Animated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(100)} style={styles.stepsList}>
-          {more ? <T v="caption" color={Colors.textTertiary}>…и ещё {more} раньше</T> : null}
-          {items.map((item, i) => {
+          <T v="caption" color={Colors.textTertiary}>Что уже сделано · {total} шагов</T>
+          {more ? <T v="caption" color={Colors.textTertiary}>Ещё {more} ранних шагов скрыто</T> : null}
+          {grouped.map((item, i) => {
             const isThought = item.icon === THOUGHT;
             return (
               <View key={i} style={styles.stepRow}>
@@ -131,7 +142,9 @@ export function StepsRow({ items, more = 0 }: { items: StepItem[]; more?: number
                   tintColor={isThought ? Colors.text : Colors.textTertiary}
                   style={{ marginTop: 3 }}
                 />
-                <T v="footnote" color={isThought ? Colors.text : Colors.textSecondary} style={{ flex: 1 }} selectable>{item.text}</T>
+                <T v="footnote" color={isThought ? Colors.text : Colors.textSecondary} style={{ flex: 1 }} selectable>
+                  {item.text}{item.count > 1 ? ` · ${item.count} раза` : ''}
+                </T>
               </View>
             );
           })}
@@ -147,12 +160,13 @@ function MediaRow({ children }: { children: ReactNode }) {
   return <View style={styles.media}>{children}</View>;
 }
 
-export function UserBubble({ text, images = [], localImages = [], scope, pending, time }: {
+export function UserBubble({ text, images = [], localImages = [], scope, pending, pendingLabel, time }: {
   text: string;
   images?: string[];
   localImages?: string[];
   scope: FileScope;
   pending?: boolean;
+  pendingLabel?: string;
   /** «12:40» под пузырём */
   time?: string;
 }) {
@@ -161,14 +175,22 @@ export function UserBubble({ text, images = [], localImages = [], scope, pending
       {localImages.length ? (
         <MediaRow>{localImages.map((uri) => <LocalImage key={uri} uri={uri} size={110} />)}</MediaRow>
       ) : images.length ? (
-        <MediaRow>{images.map((p) => <RemoteImage key={p} path={p} scope={scope} size={110} />)}</MediaRow>
+        <MediaRow>{images.map((p) => {
+          const local = localPhotoUri(p);
+          return local ? <LocalImage key={p} uri={local} size={110} /> : <RemoteImage key={p} path={p} scope={scope} size={110} />;
+        })}</MediaRow>
       ) : null}
       {text ? (
-        <View style={[styles.userBubble, pending && { opacity: 0.6 }]}>
+        <View style={styles.userBubble}>
           <T selectable>{text}</T>
         </View>
       ) : null}
-      {pending ? <T v="tiny" color={Colors.textTertiary}>отправляю…</T> : time ? <T v="tiny" color={Colors.textTertiary}>{time}</T> : null}
+      {pending ? (
+        <View style={styles.pendingStatus}>
+          <ActivityIndicator size="small" color={Colors.textTertiary} />
+          <T v="tiny" color={Colors.textTertiary}>{pendingLabel || 'Отправляю…'}</T>
+        </View>
+      ) : time ? <T v="tiny" color={Colors.textTertiary}>{time}</T> : null}
     </View>
   );
 }
@@ -255,7 +277,7 @@ const styles = StyleSheet.create({
   thoughtText: { flexShrink: 1, gap: 2 },
   stepsList: { marginTop: 8, marginLeft: 6, gap: 6, borderLeftWidth: 1, borderLeftColor: Colors.separator, paddingLeft: 12 },
   stepRow: { flexDirection: 'row', gap: 8 },
-  userWrap: { alignItems: 'flex-end', gap: 6, paddingLeft: 48 },
+  userWrap: { alignItems: 'flex-end', alignSelf: 'flex-end', gap: 6, maxWidth: '88%' },
   userBubble: {
     backgroundColor: Colors.userBubble,
     borderRadius: 16,
@@ -263,6 +285,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
+  pendingStatus: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingRight: 2 },
   assistant: { gap: 10 },
   time: { marginTop: -4 },
   media: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

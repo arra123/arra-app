@@ -5,6 +5,15 @@ import { API_URL, getToken } from '@/lib/api';
 
 export type LocalPhoto = { uri: string; name: string; mime: string };
 
+// Пока приложение открыто, сохраняем связь между путём на компьютере и
+// оригиналом на телефоне. Тогда отправленное фото не превращается в пустую
+// удалённую плитку в момент, когда сообщение появляется в расшифровке агента.
+const localPhotoByPath = new Map<string, string>();
+
+export function localPhotoUri(path: string) {
+  return localPhotoByPath.get(path);
+}
+
 async function viaUploadAsync(path: string, uri: string, mime: string, token: string | null) {
   const res = await uploadAsync(`${API_URL}${path}`, uri, {
     httpMethod: 'POST',
@@ -74,6 +83,7 @@ export async function uploadPhoto(photo: LocalPhoto, target: { agentKey: string 
     ? `agentKey=${encodeURIComponent(target.agentKey)}`
     : `device=${encodeURIComponent(target.device)}`;
   const res = await upload<{ path: string }>(`/ara/upload?${query}`, photo.uri, photo.name, photo.mime, 180_000);
+  localPhotoByPath.set(res.path, photo.uri);
   return res.path;
 }
 
