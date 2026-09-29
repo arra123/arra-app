@@ -102,7 +102,7 @@ export default function Settings() {
                 <SymbolView name={DEVICE_META[device].icon} size={22} tintColor={Colors.text} style={{ width: 30 }} />
                 <View style={{ flex: 1 }}>
                   <T v="callout" weight="600">{DEVICE_META[device].label}</T>
-                  <T v="caption" color={online ? Colors.working : Colors.textSecondary}>
+                  <T v="caption" color={online ? Colors.success : Colors.textSecondary}>
                     {online ? (via && via !== device ? `на связи через ${DEVICE_META[via].label.toLowerCase()}` : 'на связи') : row ? 'не в сети' : 'не подключён'}
                   </T>
                 </View>
@@ -162,7 +162,7 @@ export default function Settings() {
               <T v="caption" color={Colors.textSecondary}>Баннер, пока приложение открыто; когда закрыто — сообщение в Telegram</T>
             </View>
             {push === 'granted' ? (
-              <SymbolView name="checkmark.circle.fill" size={20} tintColor={Colors.working} />
+              <SymbolView name="checkmark.circle.fill" size={20} tintColor={Colors.success} />
             ) : (
               <Press onPress={enablePush} style={styles.smallButton} accessibilityLabel="Включить уведомления">
                 <T v="footnote" weight="600">{push === 'denied' ? 'Настройки' : 'Включить'}</T>

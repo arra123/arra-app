@@ -7,7 +7,7 @@ import {
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import Animated, {
   cancelAnimation,
@@ -38,6 +38,8 @@ type Props = {
   accessory?: ReactNode;
   onHeight?: (height: number) => void;
   autoFocus?: boolean;
+  /** Снаружи — чтобы поставить курсор в поле (тап по карточке «нужно от тебя») */
+  inputRef?: RefObject<TextInput | null>;
 };
 
 let photoSeq = 0;
@@ -48,7 +50,7 @@ function toPhoto(asset: ImagePicker.ImagePickerAsset): LocalPhoto {
   return { uri: asset.uri, name: asset.fileName || `photo-${Date.now()}-${++photoSeq}.${ext}`, mime };
 }
 
-export function Composer({ placeholder, onSend, disabled, accessory, onHeight, autoFocus }: Props) {
+export function Composer({ placeholder, onSend, disabled, accessory, onHeight, autoFocus, inputRef }: Props) {
   const insets = useSafeAreaInsets();
   const [text, setText] = useState('');
   const [photos, setPhotos] = useState<LocalPhoto[]>([]);
@@ -57,7 +59,8 @@ export function Composer({ placeholder, onSend, disabled, accessory, onHeight, a
   const [transcribing, setTranscribing] = useState(false);
   const [recordStart, setRecordStart] = useState(0);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const input = useRef<TextInput>(null);
+  const ownInput = useRef<TextInput>(null);
+  const input = inputRef ?? ownInput;
 
   const canSend = !disabled && !sending && (text.trim().length > 0 || photos.length > 0);
 

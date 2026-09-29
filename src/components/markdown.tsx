@@ -132,7 +132,7 @@ function Blocks({ blocks, depth = 0 }: { blocks: Block[]; depth?: number }) {
                         <SymbolView
                           name={item.checked ? 'checkmark.square.fill' : 'square'}
                           size={16}
-                          tintColor={item.checked ? Colors.working : Colors.textSecondary}
+                          tintColor={item.checked ? Colors.success : Colors.textSecondary}
                         />
                       ) : (
                         <T color={Colors.textSecondary} style={block.ordered ? styles.number : undefined}>

@@ -129,7 +129,7 @@ export default function NewAgent() {
                   </View>
                   <T v="headline" weight="700">{DEVICE_META[d].label}</T>
                   <View style={styles.online}>
-                    <View style={[styles.onlineDot, { backgroundColor: on ? Colors.working : Colors.old }]} />
+                    <View style={[styles.onlineDot, { backgroundColor: on ? Colors.success : Colors.old }]} />
                     <T v="caption" color={Colors.textSecondary} numberOfLines={1}>
                       {on ? (count ? `в сети · ${count} ${agentsWord(count)}` : 'в сети') : 'не в сети'}
                     </T>

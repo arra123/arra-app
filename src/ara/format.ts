@@ -2,7 +2,7 @@ import type { SFSymbol } from 'sf-symbols-typescript';
 
 import { Colors } from '@/constants/theme';
 
-import type { Agent, AgentState, DeviceId, Transcript } from './types';
+import type { Agent, AgentState, DeviceId, SubAgent, Transcript } from './types';
 
 export const STATE_META: Record<AgentState, { label: string; color: string }> = {
   working: { label: 'работает', color: Colors.working },
@@ -34,6 +34,33 @@ export function ago(ms: number | null | undefined, now = Date.now()): string {
   const diff = now - ms;
   if (diff < 60_000) return 'сейчас';
   return duration(diff);
+}
+
+const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+/** Время сообщения: «12:40», «вчера 12:40», «28 сен 12:40». ts — секунды unix. */
+export function messageTime(ts: number | null | undefined, now = Date.now()): string {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const day = new Date(d);
+  day.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - day.getTime()) / 86_400_000);
+  if (days <= 0) return hm;
+  if (days === 1) return `вчера ${hm}`;
+  const year = d.getFullYear() !== today.getFullYear() ? ` ${d.getFullYear()}` : '';
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}${year} ${hm}`;
+}
+
+/** Сколько агент думал: «14 с», «2 мин 14 с», «1 ч 5 мин». */
+export function tookLabel(seconds: number | null | undefined): string {
+  const s = Math.max(0, Math.round(seconds || 0));
+  if (!s) return '';
+  if (s < 60) return `${s} с`;
+  if (s < 3600) return `${Math.floor(s / 60)} мин ${s % 60} с`;
+  return `${Math.floor(s / 3600)} ч ${Math.floor((s % 3600) / 60)} мин`;
 }
 
 export function shortPath(path: string): string {
@@ -136,6 +163,18 @@ export function currentActivity(agent: Agent | null, transcript: Transcript | nu
   return agent?.title || agent?.task || '';
 }
 
+/**
+ * Агент числится работающим, но сам давно (~20 с) ничего не пишет, а его
+ * помощник жив — значит, агент ждёт помощника. Возвращает этого помощника.
+ */
+export function awaitedHelper(agent: Agent | null, transcript: Transcript | null, now = Date.now()): SubAgent | null {
+  if (agent?.state !== 'working') return null;
+  const helper = transcript?.agents?.find((a) => a.active);
+  if (!helper) return null;
+  const last = transcript?.last ? transcript.last * 1000 : 0;
+  return last && now - last > 20_000 ? helper : null;
+}
+
 /** Строка «Работает 4 мин · сейчас: …» / «Закончил 3 мин назад · ждёт ответа». */
 export function statusLine(agent: Agent | null, transcript: Transcript | null, now = Date.now()): string {
   if (!agent) {
@@ -147,6 +186,8 @@ export function statusLine(agent: Agent | null, transcript: Transcript | null, n
   switch (agent.state) {
     case 'working': {
       const from = lastUser || agent.since;
+      const helper = awaitedHelper(agent, transcript, now);
+      if (helper) return `Ждёт помощника · ${helper.description}`;
       const doing = currentActivity(agent, transcript);
       const head = from ? `Работает ${duration(now - from)}` : 'Работает';
       return doing ? `${head} · сейчас: ${doing}` : head;

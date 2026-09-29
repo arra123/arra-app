@@ -297,6 +297,11 @@ class AraClient {
     return this.request({ type: 'ara.send', agentKey, text, images });
   }
 
+  /** Выбрать вариант в вопросе агента: компьютер нажимает цифру и Enter в терминале. */
+  answerQuestion(agentKey: string, optionIndex: number) {
+    return this.request({ type: 'ara.key', agentKey, keys: [String(optionIndex), 'enter'] });
+  }
+
   stopAgent(agentKey: string) {
     return this.request({ type: 'ara.stop', agentKey });
   }

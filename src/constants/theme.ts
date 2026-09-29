@@ -24,9 +24,12 @@ export const Colors = {
   glassTint: 'rgba(20,21,24,0.55)',
   glassFallback: 'rgba(22,23,27,0.88)',
 
-  // Статусы агентов
-  working: '#34d399',
+  // Статусы агентов: «работает» — спокойный светло-серый, жёлтый только для «ждёт тебя»
+  working: '#c9cad2',
   waiting: '#f5c542',
+  /** Лёгкий жёлтый фон карточек «нужно от тебя» и вопроса (непрозрачный: под ним лента) */
+  waitingSoft: '#1c1911',
+  waitingLine: 'rgba(245,197,66,0.22)',
   error: '#f87171',
   old: '#6b6d76',
 
@@ -35,15 +38,18 @@ export const Colors = {
   codex: '#e6e6ea',
   ara: '#f2f2f5',
 
+  // Помощники (подагенты): цвет маскота по порядку
+  helpers: ['#b9a4ff', '#ffb38a', '#8fe3cf', '#8ab4ff', '#ff9ec7'],
+
   danger: '#f87171',
   success: '#34d399',
 } as const;
 
 export const Radius = {
   sm: 8,
-  md: 12,
-  lg: 18,
-  xl: 24,
+  md: 10,
+  lg: 14,
+  xl: 20,
   pill: 999,
 } as const;
 

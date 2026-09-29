@@ -28,6 +28,7 @@ export function AraMascot({
   mood = 'idle',
   interactive = false,
   still = false,
+  color = FACE,
   style,
 }: {
   size?: number;
@@ -35,6 +36,8 @@ export function AraMascot({
   interactive?: boolean;
   /** без покачивания и моргания — для маленьких значков в списках */
   still?: boolean;
+  /** цвет тела; по умолчанию белый, у помощников — мягкие цвета */
+  color?: string;
   style?: StyleProp<ViewStyle>;
 }) {
   const [joy, setJoy] = useState(false);
@@ -98,7 +101,7 @@ export function AraMascot({
     <Animated.View
       style={[
         styles.face,
-        { width: w, height: h, borderRadius: h * 0.46, shadowRadius: size * 0.22, shadowOpacity: still ? 0 : 0.35 },
+        { backgroundColor: color, shadowColor: color, width: w, height: h, borderRadius: h * 0.46, shadowRadius: size * 0.22, shadowOpacity: still ? 0 : 0.35 },
         body,
         style,
       ]}>

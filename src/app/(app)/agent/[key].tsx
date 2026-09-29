@@ -1,8 +1,8 @@
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -12,6 +12,7 @@ import { AGENT_LABEL, DEVICE_META, modelLabel, shortPath, STATE_META, statusLine
 import { useAgentItem, useNow, useTranscript } from '@/ara/hooks';
 import type { TranscriptMessage } from '@/ara/types';
 import { uploadPhoto } from '@/ara/upload';
+import { HelpersStrip, NeedsCard, QuestionCard } from '@/components/agent-cards';
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { Composer } from '@/components/composer';
 import { MenuTrigger, type MenuSection } from '@/components/glass-menu';
@@ -52,11 +53,15 @@ export default function AgentScreen() {
   // соответствующее по счёту сообщение пользователя (или 90 с на всякий случай)
   const [pending, setPending] = useState<{ id: string; text: string; images: string[]; at: number; index: number }[]>([]);
   const [stopping, setStopping] = useState(false);
+  const inputRef = useRef<TextInput>(null);
 
   const item = agent || recent;
   const messages = useMemo(() => transcript?.messages || [], [transcript]);
   const plan = transcript?.plan || [];
   const model = transcript?.model || agent?.model || '';
+  const needs = agent ? transcript?.needs || [] : [];
+  const question = agent ? transcript?.question || null : null;
+  const helpers = transcript?.agents || [];
 
   const userCount = messages.filter((m) => m.role === 'user').length;
   const visiblePending = pending.filter((p) => userCount <= p.index && now - p.at < 90_000);
@@ -86,6 +91,18 @@ export default function AgentScreen() {
       await ara.sendText(agent.key, text, paths);
     } catch (error) {
       setPending((list) => list.filter((p) => p.id !== id));
+      throw error;
+    }
+  }
+
+  async function answer(index: number) {
+    if (!agent) return;
+    try {
+      await ara.answerQuestion(agent.key, index);
+      haptic.success();
+    } catch (error: any) {
+      haptic.error();
+      Alert.alert('Ответ не ушёл', error?.message || 'Попробуй ещё раз');
       throw error;
     }
   }
@@ -171,6 +188,7 @@ export default function AgentScreen() {
         </T>
         {state ? <T v="caption" color={STATE_META[state].color}>{stopping ? 'останавливаю…' : ''}</T> : null}
       </Animated.View>
+      {agent ? <HelpersStrip helpers={helpers} /> : null}
       {plan.length ? <PlanCard plan={plan} /> : null}
     </>
   );
@@ -203,11 +221,19 @@ export default function AgentScreen() {
       }
       composer={(onHeight) =>
         agent ? (
-          <Composer
-            placeholder={agent.state === 'working' ? 'Напиши — агент увидит после текущего шага' : 'Напиши агенту — уйдёт в его терминал'}
-            onSend={send}
-            onHeight={onHeight}
-          />
+          <View onLayout={(e) => onHeight(e.nativeEvent.layout.height)}>
+            {question || needs.length ? (
+              <ScrollView style={styles.cards} contentContainerStyle={styles.cardsInner} keyboardShouldPersistTaps="handled">
+                {question ? <QuestionCard question={question} onAnswer={answer} /> : null}
+                {needs.length ? <NeedsCard needs={needs} onPress={() => inputRef.current?.focus()} /> : null}
+              </ScrollView>
+            ) : null}
+            <Composer
+              inputRef={inputRef}
+              placeholder={question ? 'Свой ответ…' : agent.state === 'working' ? 'Напиши — агент увидит после текущего шага' : 'Напиши агенту — уйдёт в его терминал'}
+              onSend={send}
+            />
+          </View>
         ) : (
           <ClosedBar
             onHeight={onHeight}
@@ -239,11 +265,14 @@ function ClosedBar({ onHeight, onNew }: { onHeight: (h: number) => void; onNew?:
 const styles = StyleSheet.create({
   title: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   subtitle: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 1 },
-  modelPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, height: 36, maxWidth: 150 },
+  modelPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, height: 34, maxWidth: 150 },
   status: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dotOff: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.old },
   pendingRow: { paddingHorizontal: 16, paddingVertical: 7 },
   empty: { alignItems: 'center' },
+  // Непрозрачная подложка: лента не просвечивает между карточками
+  cards: { maxHeight: 320, flexGrow: 0, backgroundColor: Colors.background },
+  cardsInner: { paddingHorizontal: 10, paddingTop: 8, gap: 6 },
   closedWrap: { paddingHorizontal: 10, paddingTop: 6 },
   closed: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10 },
   closedButton: { paddingHorizontal: 12, height: 32, borderRadius: 16, backgroundColor: Colors.text, alignItems: 'center', justifyContent: 'center' },

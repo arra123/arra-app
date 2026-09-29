@@ -11,7 +11,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { stepIcon } from '@/ara/format';
+import { messageTime, stepIcon, tookLabel } from '@/ara/format';
 import type { FileScope, PlanItem, StepItem, TranscriptMessage } from '@/ara/types';
 import { Markdown } from '@/components/markdown';
 import { LocalImage, RemoteImage, RemoteVideo } from '@/components/media';
@@ -33,7 +33,7 @@ function Chevron({ open }: { open: boolean }) {
 // ---------- план ----------
 
 function PlanIcon({ status }: { status: PlanItem['status'] }) {
-  if (status === 'completed') return <SymbolView name="checkmark.circle.fill" size={18} tintColor={Colors.working} />;
+  if (status === 'completed') return <SymbolView name="checkmark.circle.fill" size={18} tintColor={Colors.textSecondary} />;
   if (status === 'in_progress') return <SymbolView name="circle.inset.filled" size={18} tintColor={Colors.waiting} />;
   return <SymbolView name="circle" size={18} tintColor={Colors.textTertiary} />;
 }
@@ -152,12 +152,14 @@ function MediaRow({ children }: { children: ReactNode }) {
   return <View style={styles.media}>{children}</View>;
 }
 
-export function UserBubble({ text, images = [], localImages = [], scope, pending }: {
+export function UserBubble({ text, images = [], localImages = [], scope, pending, time }: {
   text: string;
   images?: string[];
   localImages?: string[];
   scope: FileScope;
   pending?: boolean;
+  /** «12:40» под пузырём */
+  time?: string;
 }) {
   return (
     <View style={styles.userWrap}>
@@ -171,7 +173,7 @@ export function UserBubble({ text, images = [], localImages = [], scope, pending
           <T selectable>{text}</T>
         </View>
       ) : null}
-      {pending ? <T v="tiny" color={Colors.textTertiary}>отправляю…</T> : null}
+      {pending ? <T v="tiny" color={Colors.textTertiary}>отправляю…</T> : time ? <T v="tiny" color={Colors.textTertiary}>{time}</T> : null}
     </View>
   );
 }
@@ -214,9 +216,20 @@ export const TranscriptRow = memo(function TranscriptRow({ message, scope, anima
   return (
     <Animated.View entering={entering} style={styles.row}>
       {message.role === 'user' ? (
-        <UserBubble text={message.text} images={message.images} scope={scope} />
+        <UserBubble text={message.text} images={message.images} scope={scope} time={messageTime(message.ts)} />
       ) : message.role === 'assistant' ? (
-        <AssistantMessage text={message.text} images={message.images} videos={message.videos} sites={message.sites} scope={scope} />
+        <AssistantMessage
+          text={message.text}
+          images={message.images}
+          videos={message.videos}
+          sites={message.sites}
+          scope={scope}
+          footer={message.ts ? (
+            <T v="tiny" color={Colors.textTertiary} style={styles.time}>
+              {[messageTime(message.ts), tookLabel(message.took)].filter(Boolean).join(' · ')}
+            </T>
+          ) : null}
+        />
       ) : (
         <StepsRow items={message.items} more={message.more} />
       )}
@@ -228,16 +241,14 @@ const styles = StyleSheet.create({
   row: { paddingHorizontal: Spacing.lg, paddingVertical: 7 },
   plan: {
     backgroundColor: Colors.card,
-    borderRadius: Radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.separator,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
+    borderRadius: Radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     overflow: 'hidden',
   },
   planHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  progressTrack: { flex: 1, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden' },
-  progressFill: { height: 5, width: '100%', borderRadius: 3, backgroundColor: Colors.working, transformOrigin: 'left center' },
+  progressTrack: { flex: 1, height: 3, borderRadius: 2, backgroundColor: Colors.separator, overflow: 'hidden' },
+  progressFill: { height: 3, width: '100%', borderRadius: 2, backgroundColor: Colors.textSecondary, transformOrigin: 'left center' },
   planCurrent: { marginTop: 6 },
   planList: { marginTop: 10, gap: 9 },
   planRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
@@ -248,26 +259,25 @@ const styles = StyleSheet.create({
     gap: 8,
     alignSelf: 'flex-start',
     maxWidth: '100%',
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: Radius.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: Radius.sm,
     backgroundColor: Colors.card,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.separator,
   },
-  thoughtHeader: { alignItems: 'flex-start', borderRadius: Radius.lg, paddingVertical: 9, paddingHorizontal: 12 },
+  thoughtHeader: { alignItems: 'flex-start', paddingVertical: 8, paddingHorizontal: 11 },
   thoughtText: { flexShrink: 1, gap: 2 },
   stepsList: { marginTop: 8, marginLeft: 6, gap: 6, borderLeftWidth: 1, borderLeftColor: Colors.separator, paddingLeft: 12 },
   stepRow: { flexDirection: 'row', gap: 8 },
   userWrap: { alignItems: 'flex-end', gap: 6, paddingLeft: 48 },
   userBubble: {
     backgroundColor: Colors.userBubble,
-    borderRadius: 20,
-    borderBottomRightRadius: 6,
+    borderRadius: 16,
+    borderBottomRightRadius: 4,
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
   assistant: { gap: 10 },
+  time: { marginTop: -4 },
   media: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   mediaBlock: { alignItems: 'flex-start' },
   sites: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
