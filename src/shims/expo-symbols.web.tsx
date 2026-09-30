@@ -17,7 +17,7 @@ const MAP: Record<string, string> = {
   'plus': 'add', 'questionmark.bubble.fill': 'contact_support', 'rectangle.portrait.and.arrow.right': 'logout',
   'square.and.pencil': 'edit_square', 'stop.circle': 'stop_circle', 'stop.fill': 'stop', 'terminal': 'terminal', 'trash': 'delete',
   'waveform': 'graphic_eq', 'wifi.exclamationmark': 'wifi_off', 'xmark': 'close', 'xmark.circle': 'cancel', 'sparkles': 'auto_awesome',
-  'camera': 'photo_camera', 'photo': 'image', 'paperclip': 'attach_file', 'square.and.arrow.up': 'ios_share',
+  'cpu': 'memory', 'pin': 'push_pin', 'pin.slash': 'keep_off', 'camera': 'photo_camera', 'photo': 'image', 'paperclip': 'attach_file', 'square.and.arrow.up': 'ios_share',
 };
 
 let fontAdded = false;
@@ -37,7 +37,9 @@ export function SymbolView({ name, size = 24, tintColor, weight, style }: {
 }) {
   addFont();
   const sf = typeof name === 'string' ? name : name.web || name.ios || name.android || '';
-  const glyph = (typeof name === 'object' && name.web) || MAP[sf] || MAP[sf.replace(/\.fill$/, '')] || sf.split('.')[0].replace(/[^a-z_]/g, '') || 'circle';
+  // an unknown name must not be printed as text (it showed «CPU» letter by
+  // letter in a menu): a neutral dot instead
+  const glyph = (typeof name === 'object' && name.web) || MAP[sf] || MAP[sf.replace(/\.fill$/, '')] || 'circle';
   const filled = /\.fill$/.test(sf) || sf.includes('.fill.');
   const heavy = weight === 'semibold' || weight === 'bold' || weight === 'heavy';
   return (
