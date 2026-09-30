@@ -29,7 +29,7 @@ const SPLASH_FROM_URL = (Platform.OS === 'web' && typeof window !== 'undefined'
 
 function Splash() {
   const { loading } = useAuth();
-  return <SplashOverlay ready={!loading} variant={SPLASH_FROM_URL ?? 'apple'} />;
+  return <SplashOverlay ready={!loading} variant={SPLASH_FROM_URL ?? 'roll'} />;
 }
 
 function Gate() {

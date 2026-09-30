@@ -28,11 +28,11 @@ const TITLE = 'Arra'.split('');
 export type SplashVariant = 'apple' | 'wave' | 'roll';
 
 /**
- * The loading screen over the app. «apple» (the default): quiet, like Apple —
- * Arra is already there (as on the system splash), breathes once and the app
- * comes through it. «wave» and «roll» are brighter variants, in «Тесты».
+ * The loading screen over the app. «roll» (the default, picked by the user on
+ * 01.10): Arra rolls in, springs and smiles. «apple» (quiet) and «wave» stay
+ * in «Тесты».
  */
-export function SplashOverlay({ ready, variant = 'apple', onDone }: { ready: boolean; variant?: SplashVariant; onDone?: () => void }) {
+export function SplashOverlay({ ready, variant = 'roll', onDone }: { ready: boolean; variant?: SplashVariant; onDone?: () => void }) {
   if (variant === 'wave') return <WaveSplash ready={ready} onDone={onDone} />;
   if (variant === 'roll') return <RollSplash ready={ready} onDone={onDone} />;
   return <AppleSplash ready={ready} onDone={onDone} />;

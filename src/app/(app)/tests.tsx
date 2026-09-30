@@ -11,9 +11,9 @@ import { Colors } from '@/constants/theme';
 type Symbol = ComponentProps<typeof SymbolView>['name'];
 
 const SPLASHES: { id: SplashVariant; title: string; sub: string; color: string; icon: Symbol }[] = [
-  { id: 'apple', title: 'Как у Apple', sub: 'сейчас основная: тихо, меньше секунды', color: '#8e8e93', icon: 'apple.logo' },
+  { id: 'apple', title: 'Как у Apple', sub: 'тихо, меньше секунды', color: '#8e8e93', icon: 'apple.logo' },
   { id: 'wave', title: 'Машет рукой', sub: '«привет!», искры, буквы по одной', color: '#0a84ff', icon: 'hand.wave' },
-  { id: 'roll', title: 'Выкатывается', sub: 'катится сбоку, пружинит, улыбается', color: '#ff9f0a', icon: 'circle.circle' },
+  { id: 'roll', title: 'Выкатывается', sub: 'основная: катится сбоку, пружинит, улыбается', color: '#ff9f0a', icon: 'circle.circle' },
 ];
 
 const WIDGETS: { id: string; title: string; sub: string; color: string; icon: Symbol }[] = [
