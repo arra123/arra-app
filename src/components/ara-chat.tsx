@@ -11,7 +11,6 @@ import { uploadPhoto, type LocalPhoto } from '@/ara/upload';
 import { AraMascot } from '@/components/ara-mascot';
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { ChatSidebar } from '@/components/chat-sidebar';
-import { ModeToggle } from '@/components/mode-toggle';
 import { Composer } from '@/components/composer';
 import { MenuTrigger, type MenuSection } from '@/components/glass-menu';
 import { AssistantMessage, UserBubble } from '@/components/transcript';
@@ -184,8 +183,7 @@ export function AraChat({ id, autoFocus = false, voiceRequest }: { id: string; a
       onWork={() => router.dismissTo('/')}
       onTalk={() => setSidebar(false)}>
       <ChatLayout
-        title={<ModeToggle value="chat" onSwitch={(mode) => { if (mode === 'work') router.dismissTo('/'); }} />}
-        bareTitle
+        title={title}
         left={left}
         right={right}
         data={messages}

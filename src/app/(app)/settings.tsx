@@ -172,7 +172,12 @@ export default function Settings() {
         </Section>
 
         <Section title="Аккаунт">
-          <View style={styles.row}>
+          <Press onPress={() => router.push('/subscriptions')} style={styles.row} accessibilityLabel="Подписки">
+            <SymbolView name="chart.pie" size={20} tintColor={Colors.text} style={{ width: 30 }} />
+            <T v="callout" style={{ flex: 1 }}>Подписки</T>
+            <SymbolView name="chevron.right" size={13} tintColor={Colors.textTertiary} />
+          </Press>
+          <View style={[styles.row, styles.rowBorder]}>
             <SymbolView name="person.crop.circle" size={22} tintColor={Colors.text} style={{ width: 30 }} />
             <T v="callout" style={{ flex: 1 }} numberOfLines={1}>{user?.name || user?.email}</T>
           </View>

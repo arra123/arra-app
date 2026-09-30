@@ -17,8 +17,7 @@ import { chats, useCurrentChatId } from '@/ara/chats';
 import { openChat, openNewChat } from '@/components/chat-list';
 import { ChatSidebar } from '@/components/chat-sidebar';
 import { GlassMenu, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
-import { ModeToggle } from '@/components/mode-toggle';
-import { DeskBadge, IconButton, Press, ProjectIcon, StatusDot, T } from '@/components/ui';
+import { IconButton, Press, ProjectIcon, StatusDot, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -139,8 +138,8 @@ export default function Home() {
         </View>
         <View style={[styles.top, { paddingTop: insets.top + 6 }]} pointerEvents="box-none">
           <IconButton icon="line.3.horizontal" label="Меню" onPress={() => setSidebar(true)} />
-          <View style={styles.topTitle} pointerEvents="box-none">
-            <ModeToggle value="work" onSwitch={(mode) => { if (mode === 'chat') openChat(chats.ensureCurrent()); }} />
+          <View style={styles.topTitle} pointerEvents="none">
+            <T v="headline" weight="700">Работа</T>
           </View>
           <IconButton icon="square.and.pencil" label="Новый агент" onPress={() => router.push('/new')} />
         </View>
@@ -209,8 +208,10 @@ function agentsWord(n: number) {
 
 function AgentRow({ agent, pinned, first, now }: { agent: Agent; pinned: boolean; first: boolean; now: number }) {
   const meta = STATE_META[agent.state];
-  const doing = agent.task || agent.title;
-  const since = agent.since ? ` · ${ago(agent.since, now)}` : '';
+  // big: what the agent is doing (the session's name); small: its state and
+  // the project; right corner: when it last did something
+  const doing = agent.title || agent.task || agent.project;
+  const since = agent.since ? ago(agent.since, now) : '';
   const ref = useRef<View>(null);
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
 
@@ -261,16 +262,13 @@ function AgentRow({ agent, pinned, first, now }: { agent: Agent; pinned: boolean
           <View style={styles.rowText}>
             <View style={styles.rowTitle}>
               {pinned ? <SymbolView name="pin.fill" size={10} tintColor={Colors.textTertiary} /> : null}
-              <T v="callout" weight="600" numberOfLines={1} style={{ flexShrink: 1 }}>{agent.project}</T>
+              <T v="callout" weight="600" numberOfLines={1} style={{ flexShrink: 1 }}>{doing}</T>
             </View>
-            <T v="footnote" color={Colors.textSecondary} numberOfLines={1}>
-              <T v="footnote" color={meta.color}>{meta.label}</T>
-              {since}{doing ? ` · ${doing}` : ''}
-            </T>
+            <T v="footnote" color={Colors.textSecondary} numberOfLines={1}>{agent.project}</T>
           </View>
           <View style={styles.rowRight}>
+            {since ? <T v="caption" color={Colors.textTertiary}>{since}</T> : null}
             <StatusDot state={agent.state} />
-            {agent.ws != null ? <DeskBadge ws={agent.ws} /> : null}
           </View>
         </Press>
       </ReanimatedSwipeable>
@@ -285,14 +283,9 @@ function RecentRow({ item, first, now }: { item: RecentSession; first: boolean; 
       <ProjectIcon iconName={item.iconName} agent={item.agent} size={28} />
       <View style={styles.rowText}>
         <T v="subhead" numberOfLines={1}>{item.title || 'Без названия'}</T>
-        <View style={styles.rowTitle}>
-          <SymbolView name={DEVICE_META[item.device].icon} size={11} tintColor={Colors.textTertiary} accessibilityLabel={DEVICE_META[item.device].label} />
-          <T v="caption" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>
-            {item.project}{item.mtime ? ` · ${ago(item.mtime * 1000, now)}` : ''}
-          </T>
-        </View>
+        <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{item.project}</T>
       </View>
-      <SymbolView name="chevron.right" size={12} tintColor={Colors.textTertiary} />
+      {item.mtime ? <T v="caption" color={Colors.textTertiary}>{ago(item.mtime * 1000, now)}</T> : null}
     </Press>
   );
 }
@@ -359,7 +352,7 @@ const styles = StyleSheet.create({
   swipeClose: { width: 88, alignItems: 'center', justifyContent: 'center', gap: 3, backgroundColor: Colors.danger },
   rowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.separator },
   rowText: { flex: 1, minWidth: 0, gap: 1 },
-  rowRight: { alignItems: 'center', gap: 7 },
+  rowRight: { alignItems: 'flex-end', gap: 6 },
   emptyRow: { paddingHorizontal: 14, paddingVertical: 16 },
   more: { alignSelf: 'center', paddingVertical: 12, paddingHorizontal: 16 },
   noComputers: {

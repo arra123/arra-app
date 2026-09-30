@@ -1,15 +1,19 @@
 import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import ReanimatedDrawerLayout, { DrawerKeyboardDismissMode, DrawerType, type DrawerLayoutMethods } from 'react-native-gesture-handler/ReanimatedDrawerLayout';
 import Animated, { interpolate, useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chats, useChats, type Chat } from '@/ara/chats';
+import { ago, DEVICE_META } from '@/ara/format';
+import { useAra, useNow } from '@/ara/hooks';
+import type { DeviceId } from '@/ara/types';
+import { Segmented } from '@/components/segmented';
 import type { Limits } from '@/ara/types';
 import { AraMascot } from '@/components/ara-mascot';
-import { Press, T } from '@/components/ui';
+import { Press, ProjectIcon, StatusDot, T } from '@/components/ui';
 import { Colors } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -35,6 +39,12 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
   const width = Math.min(370, Math.round(screenW * 0.86));
   const drawer = useRef<DrawerLayoutMethods>(null);
   const list = useChats();
+  const state = useAra();
+  const now = useNow(30_000);
+  // «Работа | Чат» lives here: the panel shows the agents or the dialogs;
+  // it opens on the side of the screen it was opened from
+  const [tab, setTab] = useState<'work' | 'chat'>(mode);
+  useEffect(() => { if (open) setTab(mode); }, [open, mode]);
 
   useEffect(() => {
     if (open) drawer.current?.openDrawer({ animationSpeed: 1 });
@@ -68,28 +78,73 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
         </View>
       </View>
 
+      <Segmented
+        options={[{ value: 'work', label: 'Работа', icon: 'terminal' }, { value: 'chat', label: 'Чат', icon: 'bubble.left' }]}
+        value={tab}
+        onChange={setTab}
+        glass={false}
+        style={styles.tabs}
+      />
+
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="none" indicatorStyle="white">
-        <T v="headline" weight="700" style={styles.section}>Недавнее</T>
-        {items.length ? items.map((chat) => {
-          const active = chat.id === currentId;
-          const streaming = chat.messages.some((message) => message.streaming);
-          return (
-            <Pressable key={chat.id} onPress={active ? onClose : go(() => onSelect(chat.id))}
-              onLongPress={chat.messages.length ? () => remove(chat) : undefined} delayLongPress={350}
-              accessibilityRole="button" accessibilityState={{ selected: active }}
-              accessibilityLabel={`${chat.messages.length ? chat.title : 'Новый диалог'}${active ? ', открыт' : ''}${streaming ? ', Arra отвечает' : ''}`}
-              accessibilityHint={chat.messages.length ? 'Долгое нажатие — удалить' : undefined}
-              style={({ pressed }) => [styles.chat, active && styles.chatActive, pressed && !active && styles.chatPressed]}>
-              <T v="body" numberOfLines={1} style={styles.chatTitle}>{chat.messages.length ? chat.title : 'Новый диалог'}</T>
-              {streaming ? <View style={styles.dot} /> : null}
-            </Pressable>
-          );
-        }) : <T v="subhead" color={Colors.textSecondary} style={styles.empty}>Диалогов пока нет</T>}
-        <Press onPress={go(() => router.push('/subscriptions'))} style={styles.subscriptions} accessibilityLabel="Открыть подписки">
-          <SymbolView name="chart.pie" size={22} tintColor={Colors.text} />
-          <T v="body" weight="600">Подписки</T>
-          <SymbolView name="chevron.right" size={14} tintColor={Colors.textSecondary} />
-        </Press>
+        {tab === 'chat' ? (
+          <>
+            <T v="headline" weight="700" style={styles.section}>Диалоги</T>
+            {items.length ? items.map((chat) => {
+              const active = chat.id === currentId && mode === 'chat';
+              const streaming = chat.messages.some((message) => message.streaming);
+              return (
+                <Pressable key={chat.id} onPress={active ? onClose : go(() => onSelect(chat.id))}
+                  onLongPress={chat.messages.length ? () => remove(chat) : undefined} delayLongPress={350}
+                  accessibilityRole="button" accessibilityState={{ selected: active }}
+                  accessibilityLabel={`${chat.messages.length ? chat.title : 'Новый диалог'}${active ? ', открыт' : ''}${streaming ? ', Arra отвечает' : ''}`}
+                  accessibilityHint={chat.messages.length ? 'Долгое нажатие — удалить' : undefined}
+                  style={({ pressed }) => [styles.chat, active && styles.chatActive, pressed && !active && styles.chatPressed]}>
+                  <T v="body" numberOfLines={1} style={styles.chatTitle}>{chat.messages.length ? chat.title : 'Новый диалог'}</T>
+                  {streaming ? <View style={styles.dot} /> : null}
+                </Pressable>
+              );
+            }) : <T v="subhead" color={Colors.textSecondary} style={styles.empty}>Диалогов пока нет</T>}
+          </>
+        ) : (
+          <>
+            {(['pc', 'laptop'] as DeviceId[]).map((device) => {
+              const agents = state.agents.filter((a) => a.device === device);
+              if (!agents.length && !state.devices[device].online) return null;
+              return (
+                <View key={device}>
+                  <T v="headline" weight="700" style={styles.section}>{DEVICE_META[device].label}</T>
+                  {agents.length ? agents.map((agent) => (
+                    <Pressable key={agent.key} onPress={go(() => router.push({ pathname: '/agent/[key]', params: { key: agent.key } }))}
+                      accessibilityRole="button" accessibilityLabel={agent.title || agent.project}
+                      style={({ pressed }) => [styles.agent, pressed && styles.chatPressed]}>
+                      <ProjectIcon iconName={agent.iconName} agent={agent.agent} size={30} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <T v="body" numberOfLines={1} style={styles.agentTitle}>{agent.title || agent.task || agent.project}</T>
+                        <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{agent.project}</T>
+                      </View>
+                      <StatusDot state={agent.state} />
+                    </Pressable>
+                  )) : <T v="subhead" color={Colors.textSecondary} style={styles.empty}>Агентов нет</T>}
+                </View>
+              );
+            })}
+            {state.recent.length ? (
+              <>
+                <T v="headline" weight="700" style={styles.section}>Недавние</T>
+                {state.recent.slice(0, 10).map((item) => (
+                  <Pressable key={item.key} onPress={go(() => router.push({ pathname: '/agent/[key]', params: { key: item.key } }))}
+                    accessibilityRole="button" accessibilityLabel={item.title || item.project}
+                    style={({ pressed }) => [styles.agent, pressed && styles.chatPressed]}>
+                    <ProjectIcon iconName={item.iconName} agent={item.agent} size={26} />
+                    <T v="subhead" numberOfLines={1} style={{ flex: 1 }}>{item.title || item.project}</T>
+                    {item.mtime ? <T v="caption" color={Colors.textTertiary}>{ago(item.mtime * 1000, now)}</T> : null}
+                  </Pressable>
+                ))}
+              </>
+            ) : null}
+          </>
+        )}
       </ScrollView>
 
       <View style={{ height: Math.max(insets.bottom, 8) }} />
@@ -117,6 +172,9 @@ const styles = StyleSheet.create({
   headActions: { flexDirection: 'row', gap: 4 },
   headButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.card },
   section: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 8 },
+  tabs: { marginHorizontal: 16, marginTop: 6 },
+  agent: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 8, paddingHorizontal: 12, minHeight: 54, borderRadius: 14 },
+  agentTitle: { fontSize: 16 },
   chat: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 8, paddingHorizontal: 12, minHeight: 48, borderRadius: 14 },
   chatTitle: { flex: 1, fontSize: 17 },
   chatActive: { backgroundColor: Colors.cardPressed },
