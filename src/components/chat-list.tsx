@@ -12,7 +12,14 @@ const layout = LinearTransition.duration(220).easing(Easing.out(Easing.cubic));
 
 export function openChat(id: string) {
   chats.open(id);
-  router.push({ pathname: '/chat/[id]', params: { id } });
+  // the chat takes the place of what was open (an agent, another chat):
+  // there is one main screen, the panel on the left switches it
+  router.replace({ pathname: '/chat/[id]', params: { id } });
+}
+
+/** An agent in place of the open screen. */
+export function openAgentScreen(key: string) {
+  router.replace({ pathname: '/agent/[key]', params: { key } });
 }
 
 /** Новый пустой диалог сразу на весь экран. */

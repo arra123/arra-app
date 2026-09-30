@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useRef, useState, type ReactNode } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -30,7 +30,8 @@ function openAgent(key: string) {
   router.push({ pathname: '/agent/[key]', params: { key } });
 }
 
-export default function Home() {
+/** The old «Работа» list page (agents are in the left panel now). */
+export function WorkList() {
   const insets = useSafeAreaInsets();
   const state = useAra();
   const pinned = usePins();
@@ -374,3 +375,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 });
+
+/** Start: straight into the conversation, like ChatGPT; agents and dialogs are in the panel on the left. */
+export default function Home() {
+  const id = chats.ensureCurrent();
+  return <Redirect href={{ pathname: '/chat/[id]', params: { id } }} />;
+}

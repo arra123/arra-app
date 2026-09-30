@@ -13,13 +13,16 @@ import { answerMessage, answersByMessage, answersOnTap, claudeKeys, type Selecti
 import type { TranscriptMessage } from '@/ara/types';
 import { uploadPhoto } from '@/ara/upload';
 import { NeedsCard, QuestionCard, type AnswerStatus } from '@/components/agent-cards';
+import { useCurrentChatId } from '@/ara/chats';
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
+import { openChat, openNewChat } from '@/components/chat-list';
+import { ChatSidebar } from '@/components/chat-sidebar';
 import { Composer } from '@/components/composer';
 import { FloatingAgent } from '@/components/floating-agent';
 import { WeekRing } from '@/components/limits';
 import { MenuTrigger, type MenuSection } from '@/components/glass-menu';
 import { PlanCard, TranscriptRow, UserBubble } from '@/components/transcript';
-import { DeskBadge, Glass, Press, ProjectIcon, Spinner, T } from '@/components/ui';
+import { Glass, Press, ProjectIcon, Spinner, T } from '@/components/ui';
 import { Colors, Radius } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -63,6 +66,8 @@ export default function AgentScreen() {
   const { agent, recent } = useAgentItem(key);
   const transcript = useTranscript(key);
   const { limits } = useAra();
+  const [sidebar, setSidebar] = useState(false);
+  const currentChatId = useCurrentChatId() || '';
   const now = useNow(10_000);
   // Отправленное с телефона сразу выглядит как обычное сообщение. Оно исчезает
   // из локальной очереди, когда появляется в переписке компьютера (или через 90 с).
@@ -317,7 +322,8 @@ export default function AgentScreen() {
     <View style={styles.title}>
       {item ? <ProjectIcon iconName={item.iconName} agent={item.agent} size={32} /> : null}
       <View style={{ flexShrink: 1, minWidth: 0 }}>
-        <T v="subhead" weight="700" numberOfLines={1}>{item?.project || (recent ? recent.title : 'Агент')}</T>
+        {/* what it is doing, like in the panel; the project is in the line below */}
+        <T v="subhead" weight="700" numberOfLines={1}>{(item && 'title' in item && item.title) || item?.project || (recent ? recent.title : 'Агент')}</T>
         {item ? (
           // Статус первым и целиком («ждёт · 4 мин»), место — после него; на узком экране сокращается место
           <View style={styles.subtitle}>
@@ -326,8 +332,7 @@ export default function AgentScreen() {
                 {shortStatus}
               </Animated.View>
             ) : null}
-            {item.device === 'pc' ? <T v="caption" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>{shortStatus ? '· ' : ''}ПК</T> : null}
-            {agent?.ws != null ? <DeskBadge ws={agent.ws} color={Colors.textSecondary} /> : null}
+            <T v="caption" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>{shortStatus ? '· ' : ''}{item.project}</T>
           </View>
         ) : (
           <T v="caption" color={Colors.textSecondary} numberOfLines={1}>ищу агента…</T>
@@ -363,9 +368,27 @@ export default function AgentScreen() {
   const scope = { agentKey: key };
   const loading = !transcript && !!item;
 
+  const left = (
+    <Glass radius={22} backing style={styles.menuButton}>
+      <Press onPress={() => setSidebar(true)} feedback="tap" style={styles.menuButton} accessibilityRole="button" accessibilityLabel="Панель: агенты и диалоги">
+        <SymbolView name="line.3.horizontal" size={19} tintColor={Colors.text} weight="semibold" />
+      </Press>
+    </Glass>
+  );
+
   return (
+    <ChatSidebar
+      open={sidebar}
+      currentId={currentChatId}
+      mode="work"
+      limits={limits}
+      onOpen={() => setSidebar(true)}
+      onClose={() => setSidebar(false)}
+      onSelect={openChat}
+      onNew={openNewChat}>
     <ChatLayout
       title={title}
+      left={left}
       right={right}
       below={below}
       overlay={({ top, bottom }) =>
@@ -442,6 +465,7 @@ export default function AgentScreen() {
         )
       }
     />
+    </ChatSidebar>
   );
 }
 
@@ -463,6 +487,7 @@ function ClosedBar({ onHeight, onNew }: { onHeight: (h: number) => void; onNew?:
 }
 
 const styles = StyleSheet.create({
+  menuButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   title: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   subtitle: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 1, minWidth: 0 },
   right: { flexDirection: 'row', alignItems: 'center', gap: 2, height: 44, paddingLeft: 9, flexShrink: 0 },

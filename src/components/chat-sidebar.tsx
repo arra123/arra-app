@@ -10,6 +10,7 @@ import { chats, useChats, type Chat } from '@/ara/chats';
 import { ago, DEVICE_META } from '@/ara/format';
 import { useAra, useNow } from '@/ara/hooks';
 import type { DeviceId } from '@/ara/types';
+import { openAgentScreen } from '@/components/chat-list';
 import { Segmented } from '@/components/segmented';
 import type { Limits } from '@/ara/types';
 import { AraMascot } from '@/components/ara-mascot';
@@ -115,7 +116,7 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
                 <View key={device}>
                   <T v="headline" weight="700" style={styles.section}>{DEVICE_META[device].label}</T>
                   {agents.length ? agents.map((agent) => (
-                    <Pressable key={agent.key} onPress={go(() => router.push({ pathname: '/agent/[key]', params: { key: agent.key } }))}
+                    <Pressable key={agent.key} onPress={go(() => openAgentScreen(agent.key))}
                       accessibilityRole="button" accessibilityLabel={agent.title || agent.project}
                       style={({ pressed }) => [styles.agent, pressed && styles.chatPressed]}>
                       <ProjectIcon iconName={agent.iconName} agent={agent.agent} size={30} />
@@ -133,7 +134,7 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
               <>
                 <T v="headline" weight="700" style={styles.section}>Недавние</T>
                 {state.recent.slice(0, 10).map((item) => (
-                  <Pressable key={item.key} onPress={go(() => router.push({ pathname: '/agent/[key]', params: { key: item.key } }))}
+                  <Pressable key={item.key} onPress={go(() => openAgentScreen(item.key))}
                     accessibilityRole="button" accessibilityLabel={item.title || item.project}
                     style={({ pressed }) => [styles.agent, pressed && styles.chatPressed]}>
                     <ProjectIcon iconName={item.iconName} agent={item.agent} size={26} />
