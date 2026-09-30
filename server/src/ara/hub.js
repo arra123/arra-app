@@ -16,7 +16,12 @@ import {
 } from './state.js';
 
 const OPEN = 1;
-const PUSH_COOLDOWN_MS = 20_000;
+// «Claude закончил» only when it really did: it worked for a while and then
+// stayed waiting (the state flickers working <-> waiting between steps, every
+// flicker was a push); and not more often than once in 2 min per agent
+const PUSH_COOLDOWN_MS = 120_000;
+const PUSH_SETTLE_MS = 25_000;
+const PUSH_MIN_WORK_MS = 15_000;
 const CLIENT_ALIVE_MS = 40_000;
 
 function emit(socket, event) {
@@ -64,6 +69,7 @@ export function createHub(deps = {}) {
         transcripts: new Map(), // key -> последняя переписка (для нового подписчика)
         watchSent: new Map(), // tokenId -> json отправленного ara.watch
         lastPush: new Map(),
+        pendingPush: new Map(), // key -> { transition, at }: waits to see the agent really stopped
       };
       users.set(userId, u);
     }
@@ -159,7 +165,20 @@ export function createHub(deps = {}) {
     if (changed.length) Promise.resolve(deps.saveStates?.(userId, changed)).catch(() => {});
     if (gone.length) Promise.resolve(deps.deleteStates?.(userId, gone)).catch(() => {});
 
-    for (const transition of transitions) maybePush(u, userId, transition);
+    for (const transition of transitions) {
+      if (transition.to === 'error' || (transition.worked ?? Infinity) >= PUSH_MIN_WORK_MS) {
+        u.pendingPush.set(transition.agent.key, { transition, at: now() });
+      }
+    }
+    for (const [key, p] of u.pendingPush) {
+      const cur = next.get(key);
+      // it went back to work (or is gone): not finished after all
+      if (!cur || cur.state !== p.transition.to) u.pendingPush.delete(key);
+      else if (now() - p.at >= PUSH_SETTLE_MS) {
+        u.pendingPush.delete(key);
+        maybePush(u, userId, p.transition);
+      }
+    }
     broadcastState(u);
     syncWatches(u);
   }

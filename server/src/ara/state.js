@@ -169,7 +169,8 @@ export function trackStates(prev, agents, now = Date.now()) {
     const since = before ? now : now - Math.max(0, agent.idle || 0) * 1000;
     next.set(agent.key, { state: agent.state, since });
     if (before?.state === 'working' && (agent.state === 'waiting' || agent.state === 'error')) {
-      transitions.push({ agent, from: before.state, to: agent.state });
+      // how long it worked: a few seconds of «working» is a flicker, not a job
+      transitions.push({ agent, from: before.state, to: agent.state, worked: now - before.since });
     }
   }
   const removed = [...prev.keys()].filter((key) => !next.has(key));

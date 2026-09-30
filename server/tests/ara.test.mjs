@@ -124,6 +124,9 @@ test('хаб: снимок → состояние телефону, push при 
   finished.live[0].state = 'waiting';
   finished.live[0].busy = false;
   await hub.deviceMessage('u1', 'L', finished);
+  assert.equal(pushes.length, 0, 'сразу не шлёт: ждёт, что агент действительно остановился');
+  advance(26_000);
+  await hub.deviceMessage('u1', 'L', finished);
   assert.equal(pushes.length, 1);
   assert.equal(pushes[0][0], 'u1');
   assert.match(pushes[0][1], /helper · ждёт ответа/);
@@ -234,7 +237,7 @@ test('хаб: без компьютера — понятная ошибка; о�
 });
 
 test('хаб: состояние офлайн-компьютера не забывается, push после возвращения', async () => {
-  const { hub, pushes } = setup();
+  const { hub, pushes, advance } = setup();
   const laptop = fakeSocket();
   hub.deviceConnected('u1', 'L', { role: 'laptop' }, laptop);
   await hub.deviceMessage('u1', 'L', laptopSnapshot());
@@ -245,8 +248,28 @@ test('хаб: состояние офлайн-компьютера не забы
   const finished = laptopSnapshot();
   finished.live[0].state = 'error';
   await hub.deviceMessage('u1', 'L', finished);
+  advance(26_000);
+  await hub.deviceMessage('u1', 'L', finished);
   assert.equal(pushes.length, 1);
   assert.match(pushes[0][1], /прервался/);
+});
+
+test('хаб: мигание «работает ↔ ждёт» и короткие шаги не шлют push', async () => {
+  const { hub, pushes, advance } = setup();
+  const laptop = fakeSocket();
+  hub.deviceConnected('u1', 'L', { role: 'laptop' }, laptop);
+  await hub.deviceMessage('u1', 'L', laptopSnapshot());
+  advance(60_000);
+  const waiting = laptopSnapshot();
+  waiting.live[0].state = 'waiting';
+  await hub.deviceMessage('u1', 'L', waiting);
+  advance(5_000);
+  await hub.deviceMessage('u1', 'L', laptopSnapshot()); // снова работает: не закончил
+  advance(5_000);
+  await hub.deviceMessage('u1', 'L', waiting); // поработал 5 с — это шаг, не работа
+  advance(30_000);
+  await hub.deviceMessage('u1', 'L', waiting);
+  assert.equal(pushes.length, 0);
 });
 
 test('хаб: ara.file и ara.upload', async () => {
@@ -342,6 +365,8 @@ test('хаб: уснувший телефон с открытым экраном
   advance(60_000); // телефон молчит минуту — iOS его усыпил
   const finished = laptopSnapshot();
   finished.live[0].state = 'waiting';
+  await hub.deviceMessage('u1', 'L', finished);
+  advance(26_000);
   await hub.deviceMessage('u1', 'L', finished);
   assert.equal(pushes.length, 1);
 });
