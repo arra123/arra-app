@@ -7,12 +7,17 @@ import { query } from '../db.js';
 import { sendPushToUser } from '../push.js';
 import { createBlobStore } from './blobs.js';
 import { createHub } from './hub.js';
+import { pushRings, rememberAgents } from './live-activity.js';
 
 export const blobs = createBlobStore({ dir: join(config.uploadDir, 'ara') });
 
 export const hub = createHub({
   blobs,
   sendPush: sendPushToUser,
+  onAgents(userId, agents) {
+    rememberAgents(userId, agents);
+    return pushRings(userId, agents);
+  },
   async loadStates(userId) {
     const { rows } = await query(
       'SELECT agent_key, state, since FROM ara_agent_states WHERE user_id = $1',

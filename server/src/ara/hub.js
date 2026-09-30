@@ -61,6 +61,7 @@ export function createHub(deps = {}) {
     let u = users.get(userId);
     if (!u) {
       u = {
+        id: userId,
         hosts: new Map(), // tokenId -> { tokenId, name, device, sockets: Set, snapshot, at }
         clients: new Map(), // socket -> { watch: key | null }
         since: new Map(), // key -> { state, since }
@@ -96,6 +97,8 @@ export function createHub(deps = {}) {
     const body = JSON.stringify(publicState(u.merged, u.since));
     if (!force && body === u.lastState) return;
     u.lastState = body;
+    // the lock screen rings (Live Activity) follow the agents too
+    if (deps.onAgents) Promise.resolve(deps.onAgents(u.id, JSON.parse(body).agents)).catch(() => {});
     const message = stateMessage(u);
     for (const socket of u.clients.keys()) emit(socket, message);
   }
