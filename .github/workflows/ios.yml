@@ -28,6 +28,7 @@ jobs:
         env:
           IOS_DIST_P12_B64: ${{ secrets.IOS_DIST_P12_B64 }}
           IOS_PROFILE_B64: ${{ secrets.IOS_PROFILE_B64 }}
+          IOS_WIDGET_PROFILE_B64: ${{ secrets.IOS_WIDGET_PROFILE_B64 }}
           ASC_KEY_P8_B64: ${{ secrets.ASC_KEY_P8_B64 }}
           IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
         run: |
@@ -36,7 +37,9 @@ jobs:
           echo "$IOS_DIST_P12_B64" | base64 --decode > credentials/dist.p12
           echo "$IOS_PROFILE_B64" | base64 --decode > credentials/profile.mobileprovision
           echo "$ASC_KEY_P8_B64" | base64 --decode > credentials/AuthKey_63Y56V3L2D.p8
-          printf '{ "ios": { "provisioningProfilePath": "credentials/profile.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } } }' "$IOS_DIST_P12_PASSWORD" > credentials.json
+          echo "$IOS_WIDGET_PROFILE_B64" | base64 --decode > credentials/widgets.mobileprovision
+          # the app and its widget extension (expo-widgets), each with its profile
+          printf '{ "ios": { "Arra": { "provisioningProfilePath": "credentials/profile.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } }, "ExpoWidgetsTarget": { "provisioningProfilePath": "credentials/widgets.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } } } }' "$IOS_DIST_P12_PASSWORD" "$IOS_DIST_P12_PASSWORD" > credentials.json
 
       - name: Install deps
         run: npm ci || npm install

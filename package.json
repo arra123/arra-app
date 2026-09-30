@@ -3,6 +3,7 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "dependencies": {
+    "@expo/ui": "^56.0.26",
     "@react-native-menu/menu": "^2.0.0",
     "expo": "~56.0.17",
     "expo-asset": "~56.0.20",
@@ -32,6 +33,7 @@
     "expo-updates": "~56.0.23",
     "expo-video": "~56.1.4",
     "expo-web-browser": "~56.0.6",
+    "expo-widgets": "^56.0.27",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.85.3",

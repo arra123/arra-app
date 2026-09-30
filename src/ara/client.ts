@@ -2,6 +2,7 @@ import { AppState } from 'react-native';
 
 import { API_URL } from '@/lib/api';
 import { localNotify } from '@/lib/push';
+import { syncWidgets } from '@/widgets/sync';
 
 // off: the server sends «agent finished» (see notifyFinished)
 const NOTIFY_ON_PHONE = false;
@@ -267,8 +268,11 @@ class AraClient {
   }
 
   private setState(next: AraState) {
+    const agentsChanged = next.agents !== this.state.agents;
     this.state = next;
     this.listeners.forEach((l) => l());
+    // the home screen widget and the lock screen rings follow the agents
+    if (agentsChanged) syncWidgets(next.agents);
   }
 
   subscribeState = (listener: Listener) => {
