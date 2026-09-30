@@ -14,6 +14,7 @@ import type { TranscriptMessage } from '@/ara/types';
 import { uploadPhoto } from '@/ara/upload';
 import { NeedsCard, QuestionCard, type AnswerStatus } from '@/components/agent-cards';
 import { useCurrentChatId } from '@/ara/chats';
+import { setOpenAgent } from '@/lib/push';
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { openChat, openNewChat } from '@/components/chat-list';
 import { ChatSidebar } from '@/components/chat-sidebar';
@@ -67,6 +68,8 @@ export default function AgentScreen() {
   const transcript = useTranscript(key);
   const { limits } = useAra();
   const [sidebar, setSidebar] = useState(false);
+  // its notifications are not shown while its chat is open
+  useEffect(() => { setOpenAgent(key); return () => setOpenAgent(null); }, [key]);
   const currentChatId = useCurrentChatId() || '';
   const now = useNow(10_000);
   // Отправленное с телефона сразу выглядит как обычное сообщение. Оно исчезает

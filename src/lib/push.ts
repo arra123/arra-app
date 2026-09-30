@@ -5,16 +5,20 @@ import { Platform } from 'react-native';
 
 import { api } from '@/lib/api';
 
-// Пока приложение открыто, уведомление всё равно показываем баннером:
-// сервер не шлёт push про агента, чей экран сейчас открыт.
+/** The agent whose screen is open now: its news are seen right there. */
+let openAgentKey: string | null = null;
+export function setOpenAgent(key: string | null) { openAgentKey = key; }
+
+// While the app is open a notification still shows as a banner, except for
+// the agent whose chat is open: that one is on the screen already (it came
+// as «Claude закончил» while you were reading its answer)
 if (Platform.OS !== 'web') {
   Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-    }),
+    handleNotification: async (notification) => {
+      const data = notification.request.content.data as { agentKey?: string } | undefined;
+      const here = !!openAgentKey && data?.agentKey === openAgentKey;
+      return { shouldShowBanner: !here, shouldShowList: !here, shouldPlaySound: !here, shouldSetBadge: false };
+    },
   });
 }
 
