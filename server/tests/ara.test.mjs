@@ -385,3 +385,18 @@ test('хаб: отозванный ключ отключает компьюте�
   await tick();
   assert.equal(phone.last('ara.state').agents.length, 0);
 });
+
+test('хаб: старое завершение, увиденное поздно (рестарт сервера), не шлёт push', async () => {
+  const { hub, pushes, advance } = setup();
+  const laptop = fakeSocket();
+  hub.deviceConnected('u1', 'L', { role: 'laptop' }, laptop);
+  await hub.deviceMessage('u1', 'L', laptopSnapshot());
+  advance(60_000);
+  const late = laptopSnapshot();
+  late.live[0].state = 'waiting';
+  late.live[0].idle = 20 * 60; // закончил 20 минут назад
+  await hub.deviceMessage('u1', 'L', late);
+  advance(30_000);
+  await hub.deviceMessage('u1', 'L', late);
+  assert.equal(pushes.length, 0);
+});

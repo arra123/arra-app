@@ -22,6 +22,7 @@ const OPEN = 1;
 const PUSH_COOLDOWN_MS = 120_000;
 const PUSH_SETTLE_MS = 25_000;
 const PUSH_MIN_WORK_MS = 15_000;
+const PUSH_STALE_MS = 90_000;
 const CLIENT_ALIVE_MS = 40_000;
 
 function emit(socket, event) {
@@ -166,6 +167,10 @@ export function createHub(deps = {}) {
     if (gone.length) Promise.resolve(deps.deleteStates?.(userId, gone)).catch(() => {});
 
     for (const transition of transitions) {
+      // an old finish seen late (after a restart of the server, or the
+      // computer came back online): the agent has been idle for long — no push
+      const stale = (transition.agent.idle ?? 0) * 1000 > PUSH_STALE_MS;
+      if (stale) continue;
       if (transition.to === 'error' || (transition.worked ?? Infinity) >= PUSH_MIN_WORK_MS) {
         u.pendingPush.set(transition.agent.key, { transition, at: now() });
       }
