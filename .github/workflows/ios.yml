@@ -46,17 +46,25 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: npx eas-cli@latest build --platform ios --profile production --local --non-interactive --output "$GITHUB_WORKSPACE/Arra.ipa"
 
-      - name: Submit to TestFlight
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: npx eas-cli@latest submit --platform ios --path "$GITHUB_WORKSPACE/Arra.ipa" --profile production --non-interactive
-
-      - name: Add build to Internal testing group
-        run: node scripts/asc-add-latest-to-group.mjs
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Arra-ipa
           path: ${{ github.workspace }}/Arra.ipa
           if-no-files-found: warn
+
+      # straight to App Store Connect with Apple's own tool (the API key):
+      # the free Expo submission queue kept a build waiting for an hour
+      - name: Upload to App Store Connect (altool)
+        run: |
+          set -e
+          mkdir -p ~/.appstoreconnect/private_keys
+          cp credentials/AuthKey_63Y56V3L2D.p8 ~/.appstoreconnect/private_keys/
+          xcrun altool --upload-app -f "$GITHUB_WORKSPACE/Arra.ipa" -t ios \
+            --apiKey 63Y56V3L2D --apiIssuer 63274269-2c9e-473b-a82d-c8c68c3718ab
+
+      - name: Add build to Internal testing group
+        run: |
+          # Apple processes the upload first; the script takes the latest build
+          sleep 600
+          node scripts/asc-add-latest-to-group.mjs || (sleep 600 && node scripts/asc-add-latest-to-group.mjs)
