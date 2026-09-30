@@ -236,6 +236,7 @@ Window {
                         { id: "home", icon: "home", tip: "На главный экран" },
                         { id: "build", icon: "construction", tip: "Пересобрать из кода" },
                         { id: "shot", icon: "photo_camera", tip: "Скриншот экрана" },
+                        { id: "undo", icon: "undo", tip: "Отменить линию (Ctrl+Z)" },
                         { id: "ink", icon: "ink_eraser", tip: "Стереть рисунок (рисовать — правой кнопкой мыши)" },
                         { id: "zoom", icon: "zoom_in", tip: "Масштаб" },
                         { id: "top", icon: "push_pin", tip: "Поверх окон" },
@@ -303,6 +304,15 @@ Window {
         }
     }
     function clearInk() { strokes = []; cur = null; noteFile = ""; ink.requestPaint(); }
+    // one step back: the last line goes, the saved note is updated too
+    function undoInk() {
+        if (!strokes.length) return;
+        strokes = strokes.slice(0, -1);
+        ink.requestPaint();
+        if (noteFile !== "") noteSave.restart();
+        say(strokes.length ? "Линия отменена" : "Рисунок пуст");
+    }
+    Shortcut { sequence: StandardKey.Undo; onActivated: win.undoInk() }
 
     property bool building: false
     Connections {
@@ -322,6 +332,7 @@ Window {
             const path = host.shotPath();
             phone.grabToImage(r => { r.saveToFile(path); win.say("Скриншот сохранён"); });
         }
+        else if (id === "undo") undoInk();
         else if (id === "ink") { clearInk(); say("Рисунок стёрт"); }
         else if (id === "zoom") zoom = zoom > 0.95 ? 0.85 : zoom > 0.8 ? 0.72 : 1.0;
         else if (id === "top") onTop = !onTop;

@@ -68,7 +68,43 @@ class Host(QObject):
         return os.path.join(d, time.strftime("arra-phone-%Y-%m-%d_%H.%M.%S.png"))
 
 
+DEVTOOLS = "127.0.0.1:9333"
+
+
+def touch_emulation():
+    """The mouse acts as a finger: a drag is a swipe (scroll with momentum,
+    the side panel, swiping rows), like Chrome's phone mode. Done through the
+    engine's DevTools port; the session stays attached so the mode stays on,
+    and is re-attached after a reload."""
+    import asyncio
+    import json
+    import threading
+    import urllib.request
+
+    async def attach():
+        import websockets
+        while True:
+            try:
+                pages = json.load(urllib.request.urlopen(f"http://{DEVTOOLS}/json", timeout=2))
+                page = next(p for p in pages if p.get("type") == "page")
+                async with websockets.connect(page["webSocketDebuggerUrl"], max_size=None) as ws:
+                    for i, (method, params) in enumerate([
+                        ("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 5}),
+                        ("Emulation.setEmitTouchEventsForMouse", {"enabled": True, "configuration": "mobile"}),
+                    ], 1):
+                        await ws.send(json.dumps({"id": i, "method": method, "params": params}))
+                    async for _ in ws:
+                        pass
+            except Exception as error:
+                with open(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "arra-phone-touch.log"), "a") as f:
+                    f.write(f"{time.strftime('%H:%M:%S')} {type(error).__name__}: {error}\n")
+            await asyncio.sleep(1.5)
+
+    threading.Thread(target=lambda: asyncio.run(attach()), daemon=True).start()
+
+
 def main():
+    os.environ.setdefault("QTWEBENGINE_REMOTE_DEBUGGING", DEVTOOLS)
     QtWebEngineQuick.initialize()
     QGuiApplication.setApplicationName("arra-phone")
     QGuiApplication.setDesktopFileName("arra-phone")
@@ -80,6 +116,7 @@ def main():
     engine.load(QUrl.fromLocalFile(os.path.join(HERE, "Phone.qml")))
     if not engine.rootObjects():
         sys.exit(1)
+    touch_emulation()
     sys.exit(app.exec())
 
 
