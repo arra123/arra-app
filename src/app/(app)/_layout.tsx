@@ -47,6 +47,7 @@ export default function AppLayout() {
         }}
       />
       <Stack.Screen name="settings" options={{ presentation: 'modal', contentStyle: { backgroundColor: Colors.background } }} />
+      <Stack.Screen name="tests" options={{ presentation: 'modal', contentStyle: { backgroundColor: Colors.background } }} />
     </Stack>
   );
 }

@@ -172,7 +172,12 @@ export default function Settings() {
         </Section>
 
         <Section title="Аккаунт">
-          <Press onPress={() => router.push('/subscriptions')} style={styles.row} accessibilityLabel="Подписки">
+          <Press onPress={() => router.push('/tests' as never)} style={styles.row} accessibilityLabel="Тесты">
+            <IconTile name="testtube.2" color="#30d158" />
+            <T v="callout" style={{ flex: 1 }}>Тесты</T>
+            <SymbolView name="chevron.right" size={13} tintColor={Colors.textTertiary} />
+          </Press>
+          <Press onPress={() => router.push('/subscriptions')} style={[styles.row, styles.rowBorder]} accessibilityLabel="Подписки">
             <IconTile name="chart.pie" color="#bf5af2" />
             <T v="callout" style={{ flex: 1 }}>Подписки</T>
             <SymbolView name="chevron.right" size={13} tintColor={Colors.textTertiary} />

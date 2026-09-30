@@ -17,6 +17,7 @@ const MAP: Record<string, string> = {
   'plus': 'add', 'questionmark.bubble.fill': 'contact_support', 'rectangle.portrait.and.arrow.right': 'logout',
   'square.and.pencil': 'edit_square', 'stop.circle': 'stop_circle', 'stop.fill': 'stop', 'terminal': 'terminal', 'trash': 'delete',
   'waveform': 'graphic_eq', 'wifi.exclamationmark': 'wifi_off', 'xmark': 'close', 'xmark.circle': 'cancel', 'sparkles': 'auto_awesome',
+  'testtube.2': 'science', 'apple.logo': 'nutrition', 'hand.wave': 'waving_hand', 'circle.circle': 'radio_button_checked', 'rectangle.stack': 'view_agenda',
   'cpu': 'memory', 'pin': 'push_pin', 'pin.slash': 'keep_off', 'camera': 'photo_camera', 'photo': 'image', 'paperclip': 'attach_file', 'square.and.arrow.up': 'ios_share',
 };
 

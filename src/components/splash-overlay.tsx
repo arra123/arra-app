@@ -25,6 +25,100 @@ const SIZE = 110;
 const SPARKS = 8;
 const TITLE = 'Arra'.split('');
 
+export type SplashVariant = 'apple' | 'wave' | 'roll';
+
+/**
+ * The loading screen over the app. «apple» (the default): quiet, like Apple —
+ * Arra is already there (as on the system splash), breathes once and the app
+ * comes through it. «wave» and «roll» are brighter variants, in «Тесты».
+ */
+export function SplashOverlay({ ready, variant = 'apple', onDone }: { ready: boolean; variant?: SplashVariant; onDone?: () => void }) {
+  if (variant === 'wave') return <WaveSplash ready={ready} onDone={onDone} />;
+  if (variant === 'roll') return <RollSplash ready={ready} onDone={onDone} />;
+  return <AppleSplash ready={ready} onDone={onDone} />;
+}
+
+/** Apple-like: no show. A soft breath, then Arra grows a little and the screen dissolves (~0.8 s). */
+function AppleSplash({ ready, onDone }: { ready: boolean; onDone?: () => void }) {
+  const [gone, setGone] = useState(false);
+  const [minDone, setMinDone] = useState(false);
+  const scale = useSharedValue(1);
+  const fade = useSharedValue(1);
+  const glow = useSharedValue(0);
+
+  useEffect(() => {
+    scale.set(withSequence(withTiming(0.96, { duration: 260, easing: Easing.inOut(Easing.quad) }), withTiming(1, { duration: 320, easing: Easing.out(Easing.quad) })));
+    glow.set(withTiming(1, { duration: 600, easing: Easing.out(Easing.cubic) }));
+    const t = setTimeout(() => setMinDone(true), 650);
+    return () => clearTimeout(t);
+  }, [scale, glow]);
+
+  useEffect(() => {
+    if (!ready || !minDone) return;
+    scale.set(withTiming(1.12, { duration: 360, easing: Easing.in(Easing.cubic) }));
+    fade.set(withTiming(0, { duration: 360, easing: Easing.in(Easing.quad) }, (done) => {
+      if (done) runOnJS(setGone)(true);
+      if (done && onDone) runOnJS(onDone)();
+    }));
+  }, [ready, minDone, scale, fade, onDone]);
+
+  const root = useAnimatedStyle(() => ({ opacity: fade.get() }));
+  const mascot = useAnimatedStyle(() => ({ transform: [{ scale: scale.get() }] }));
+  const halo = useAnimatedStyle(() => ({ opacity: glow.get() * 0.06, transform: [{ scale: 0.8 + glow.get() * 0.4 }] }));
+  if (gone) return null;
+  return (
+    <Animated.View pointerEvents={ready && minDone ? 'none' : 'auto'} style={[StyleSheet.absoluteFill, styles.root, root]}>
+      <View style={styles.center} onLayout={() => SplashScreen.hideAsync().catch(() => {})}>
+        <Animated.View style={[styles.disc, { width: 220, height: 220, borderRadius: 110 }, halo]} />
+        <Animated.View style={mascot}><AraMascot size={SIZE} mood="idle" still /></Animated.View>
+      </View>
+    </Animated.View>
+  );
+}
+
+/** Arra rolls in from the left, stops with a bounce, smiles, and the app opens out of it. */
+function RollSplash({ ready, onDone }: { ready: boolean; onDone?: () => void }) {
+  const [gone, setGone] = useState(false);
+  const [mood, setMood] = useState<MascotMood>('idle');
+  const [minDone, setMinDone] = useState(false);
+  const x = useSharedValue(-320);
+  const turn = useSharedValue(-540);
+  const squash = useSharedValue(1);
+  const scale = useSharedValue(1);
+  const fade = useSharedValue(1);
+
+  useEffect(() => {
+    x.set(withTiming(0, { duration: 760, easing: Easing.out(Easing.cubic) }));
+    turn.set(withTiming(0, { duration: 760, easing: Easing.out(Easing.cubic) }));
+    squash.set(withDelay(720, withSequence(withTiming(0.82, { duration: 110 }), withSpring(1, { damping: 6, stiffness: 300 }))));
+    const joy = setTimeout(() => { setMood('happy'); haptic.select(); }, 820);
+    const t = setTimeout(() => setMinDone(true), 1500);
+    return () => { clearTimeout(joy); clearTimeout(t); };
+  }, [x, turn, squash]);
+
+  useEffect(() => {
+    if (!ready || !minDone) return;
+    scale.set(withTiming(7, { duration: 520, easing: Easing.in(Easing.cubic) }));
+    fade.set(withDelay(180, withTiming(0, { duration: 340 }, (done) => {
+      if (done) runOnJS(setGone)(true);
+      if (done && onDone) runOnJS(onDone)();
+    })));
+  }, [ready, minDone, scale, fade, onDone]);
+
+  const root = useAnimatedStyle(() => ({ opacity: fade.get() }));
+  const mascot = useAnimatedStyle(() => ({
+    transform: [{ translateX: x.get() }, { rotate: `${turn.get()}deg` }, { scaleY: squash.get() }, { scaleX: 2 - squash.get() }, { scale: scale.get() }],
+  }));
+  if (gone) return null;
+  return (
+    <Animated.View pointerEvents={ready && minDone ? 'none' : 'auto'} style={[StyleSheet.absoluteFill, styles.root, root]}>
+      <View style={styles.center} onLayout={() => SplashScreen.hideAsync().catch(() => {})}>
+        <Animated.View style={mascot}><AraMascot size={SIZE} mood={mood} still /></Animated.View>
+      </View>
+    </Animated.View>
+  );
+}
+
 /**
  * Живой загрузочный экран поверх приложения. Первый кадр совпадает с системной
  * заставкой (тот же маскот 110 pt по центру). Дальше Arra подпрыгивает,
@@ -32,7 +126,7 @@ const TITLE = 'Arra'.split('');
  * свечение, буквы названия выезжают по одной. Когда приложение готово (и
  * прошло ~2 с), Arra ныряет вверх, а экран растворяется.
  */
-export function SplashOverlay({ ready }: { ready: boolean }) {
+function WaveSplash({ ready, onDone }: { ready: boolean; onDone?: () => void }) {
   const [gone, setGone] = useState(false);
   const [mood, setMood] = useState<MascotMood>('idle');
   const [minDone, setMinDone] = useState(false);
@@ -84,8 +178,9 @@ export function SplashOverlay({ ready }: { ready: boolean }) {
     title.set(withTiming(0, { duration: 200 }));
     fade.set(withDelay(220, withTiming(0, { duration: 380 }, (done) => {
       if (done) runOnJS(setGone)(true);
+      if (done && onDone) runOnJS(onDone)();
     })));
-  }, [ready, minDone, hello, hand, lift, scale, title, fade]);
+  }, [ready, minDone, hello, hand, lift, scale, title, fade, onDone]);
 
   const root = useAnimatedStyle(() => ({ opacity: fade.get() }));
   const mascot = useAnimatedStyle(() => ({ transform: [{ translateY: lift.get() }, { scale: scale.get() }] }));
