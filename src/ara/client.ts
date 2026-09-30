@@ -3,6 +3,9 @@ import { AppState } from 'react-native';
 import { API_URL } from '@/lib/api';
 import { localNotify } from '@/lib/push';
 
+// off: the server sends «agent finished» (see notifyFinished)
+const NOTIFY_ON_PHONE = false;
+
 import type { Agent, AraState, FileScope, RemoteFile, Transcript } from './types';
 
 type Listener = () => void;
@@ -247,10 +250,12 @@ class AraClient {
 
   // ---------- состояние для React ----------
 
-  // Push с сервера пока нет (нет ключа APNs), поэтому «агент закончил»
-  // показывает сам телефон, пока приложение открыто или только что свёрнуто.
+  // «Агент закончил» теперь шлёт только сервер (APNs-ключ есть с 30.09): он
+  // ждёт, что агент правда остановился, и молчит о давних завершениях. Свои
+  // уведомления телефона спамили на каждое мигание «работает ↔ ждёт» и после
+  // переподключения показывали завершения, случившиеся давно.
   private notifyFinished(agents: Agent[]) {
-    if (this.state.loaded) {
+    if (NOTIFY_ON_PHONE && this.state.loaded) {
       const before = new Map(this.state.agents.map((a) => [a.key, a.state]));
       const watching = this.watchers[this.watchers.length - 1];
       for (const a of agents) {
