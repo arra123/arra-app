@@ -17,11 +17,14 @@ import { chats, useCurrentChatId } from '@/ara/chats';
 import { openChat, openNewChat } from '@/components/chat-list';
 import { ChatSidebar } from '@/components/chat-sidebar';
 import { GlassMenu, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
+import { ModeToggle } from '@/components/mode-toggle';
 import { DeskBadge, IconButton, Press, ProjectIcon, StatusDot, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
 const DEVICES: DeviceId[] = ['laptop', 'pc'];
+/** Затемнение сверху: от почти сплошного к прозрачному */
+const FADE = [0.96, 0.94, 0.9, 0.85, 0.78, 0.7, 0.6, 0.48, 0.36, 0.24, 0.13, 0.05];
 const layout = LinearTransition.duration(240).easing(Easing.out(Easing.cubic));
 
 function openAgent(key: string) {
@@ -128,10 +131,17 @@ export default function Home() {
 
           </Animated.View>
         </ScrollView>
-        {/* Работа и диалоги переключаются только через левую панель. */}
-        <View style={[styles.top, { paddingTop: insets.top + 6 }]}>
+        {/* Как в ChatGPT: без серой полосы, список мягко уходит под шапку */}
+        <View pointerEvents="none" style={[styles.fade, { height: insets.top + 84 }]}>
+          {FADE.map((opacity, i) => (
+            <View key={i} style={{ flex: 1, backgroundColor: Colors.background, opacity }} />
+          ))}
+        </View>
+        <View style={[styles.top, { paddingTop: insets.top + 6 }]} pointerEvents="box-none">
           <IconButton icon="line.3.horizontal" label="Меню" onPress={() => setSidebar(true)} />
-          <View style={styles.topTitle} />
+          <View style={styles.topTitle} pointerEvents="box-none">
+            <ModeToggle value="work" onSwitch={(mode) => { if (mode === 'chat') openChat(chats.ensureCurrent()); }} />
+          </View>
           <IconButton icon="square.and.pencil" label="Новый агент" onPress={() => router.push('/new')} />
         </View>
       </View>
@@ -314,9 +324,9 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 12,
     paddingBottom: 8,
-    backgroundColor: 'rgba(10,10,12,0.72)',
   },
-  topTitle: { flex: 1, textAlign: 'center' },
+  topTitle: { flex: 1, alignItems: 'center' },
+  fade: { position: 'absolute', top: 0, left: 0, right: 0 },
   edgeSwipe: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 24, zIndex: 4 },
   banner: {
     flexDirection: 'row',

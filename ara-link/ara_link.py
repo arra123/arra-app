@@ -219,6 +219,14 @@ class AraLink:
     async def snapshot(self) -> dict:
         data = await self.run_json([self.script("sessions")], timeout=20, env=graphical_env())
         live = data.get("live") or []
+        # ara-sessions names machines from where it runs: its own agents
+        # "laptop", the other computer's "pc". On the PC that is the other way
+        # round, so the names are swapped (the server keeps each agent from
+        # its own computer when both report it).
+        if self.device == "pc":
+            for item in live + (data.get("recent") or []):
+                item["device"] = "laptop" if item.get("device") == "pc" else "pc"
+            data["pcOnline"] = True
         for agent in live:
             agent.setdefault("device", self.device)
         self.sessions = data
@@ -515,7 +523,9 @@ class AraLink:
         env = graphical_env()
         env["ISLAND_TASK"] = task
         listen = f"unix:{env['XDG_RUNTIME_DIR']}/codex-agent-{{kitty_pid}}"
+        # its own systemd scope: restarting ara-link must not close the agents
         argv = [
+            "systemd-run", "--user", "--scope", "--collect", "-q", "--",
             "kitty", "-o", "allow_remote_control=socket-only", "--listen-on", listen,
             "--directory", str(directory), "fish", "-lc", command,
         ]

@@ -23,8 +23,9 @@ function DrawerSurface({ progress, children }: { progress: SharedValue<number>; 
   const style = useAnimatedStyle(() => ({
     borderTopLeftRadius: interpolate(progress.get(), [0, 1], [0, 32]),
     borderBottomLeftRadius: interpolate(progress.get(), [0, 1], [0, 32]),
-    shadowOpacity: interpolate(progress.get(), [0, 1], [0, 0.42]),
   }));
+  // the shadow of a full-screen view was recomputed every frame of the swipe:
+  // that made it jerk; a fixed soft shadow looks the same and costs nothing
   return <Animated.View style={[styles.surface, style]}>{children}</Animated.View>;
 }
 
@@ -91,16 +92,7 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
         </Press>
       </ScrollView>
 
-      <View style={[styles.bottom, { paddingBottom: Math.max(insets.bottom, 8) }]} pointerEvents="box-none">
-        <Press onPress={go(onWork || (() => router.dismissTo('/')))} feedback="none" scaleTo={0.97} style={[styles.modeButton, mode === 'work' && styles.modeActive]} accessibilityLabel="Работа">
-          <SymbolView name="terminal" size={18} tintColor={mode === 'work' ? Colors.onAccent : Colors.textSecondary} />
-          <T v="subhead" weight="700" color={mode === 'work' ? Colors.onAccent : Colors.textSecondary}>Работа</T>
-        </Press>
-        <Press onPress={go(onTalk || onClose)} feedback="none" scaleTo={0.97} style={[styles.modeButton, mode === 'chat' && styles.modeActive]} accessibilityLabel="Чат">
-          <SymbolView name="bubble.left" size={18} tintColor={mode === 'chat' ? Colors.onAccent : Colors.textSecondary} />
-          <T v="subhead" weight="700" color={mode === 'chat' ? Colors.onAccent : Colors.textSecondary}>Чат</T>
-        </Press>
-      </View>
+      <View style={{ height: Math.max(insets.bottom, 8) }} />
     </View>
   );
 
@@ -117,7 +109,7 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
 }
 
 const styles = StyleSheet.create({
-  surface: { flex: 1, overflow: 'hidden', backgroundColor: Colors.background, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: Colors.hairline, shadowColor: '#000', shadowRadius: 24, shadowOffset: { width: -8, height: 0 } },
+  surface: { flex: 1, overflow: 'hidden', backgroundColor: Colors.background, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: Colors.hairline, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 24, shadowOffset: { width: -8, height: 0 } },
   panel: { flex: 1, backgroundColor: Colors.background },
   head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, minHeight: 60 },
   brand: { flexDirection: 'row', alignItems: 'center', gap: 10 },

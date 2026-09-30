@@ -2,7 +2,7 @@ import * as Clipboard from 'expo-clipboard';
 import { SymbolView } from 'expo-symbols';
 import * as WebBrowser from 'expo-web-browser';
 import { memo, useMemo, type ReactNode } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { parseMarkdown, plain, type Block, type Inline } from '@/ara/markdown';
 import { Press, T } from '@/components/ui';
@@ -17,7 +17,8 @@ function openLink(href: string) {
     ]);
     return;
   }
-  if (/^https?:\/\//i.test(href)) WebBrowser.openBrowserAsync(href).catch(() => {});
+  // the real browser (Safari / the default one); the in-app sheet only if that fails
+  if (/^https?:\/\//i.test(href)) Linking.openURL(href).catch(() => WebBrowser.openBrowserAsync(href).catch(() => {}));
   else Clipboard.setStringAsync(href).then(() => haptic.success());
 }
 

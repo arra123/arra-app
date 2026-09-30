@@ -33,7 +33,8 @@ export default function AppLayout() {
       }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="agent/[key]" />
-      <Stack.Screen name="chat/[id]" />
+      {/* «Чат | Работа»: мягкая смена экрана, как вкладки, а не въезд сбоку */}
+      <Stack.Screen name="chat/[id]" options={{ animation: 'fade', animationDuration: 220 }} />
       <Stack.Screen name="ask" />
       <Stack.Screen
         name="new"

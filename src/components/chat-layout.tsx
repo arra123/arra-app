@@ -33,6 +33,8 @@ type Props<T> = {
    * bottom — сколько снизу занимает поле ввода вместе с клавиатурой.
    */
   overlay?: (bounds: { top: number; bottom: SharedValue<number> }) => ReactNode;
+  /** Заголовок уже сам капсула (переключатель «Чат | Работа»): без второго стекла */
+  bareTitle?: boolean;
 };
 
 /** Какие ключи появились после первой загрузки — только они въезжают анимацией. */
@@ -55,7 +57,7 @@ export function useFreshKeys(keys: string[]) {
  * перевёрнутая лента (новое внизу, открывается на последнем сообщении),
  * поле ввода прилипает к клавиатуре, свайп от края — назад.
  */
-export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, composer, empty, back = true, left, headerTop = 0, overlay }: Props<T>) {
+export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, composer, empty, back = true, left, headerTop = 0, overlay, bareTitle = false }: Props<T>) {
   const insets = useSafeAreaInsets();
   // Капсула названия стоит ровно по центру экрана: поля с обеих сторон
   // по самой широкой боковой кнопке, так что кнопки её не сдвигают и не перекрывают
@@ -119,7 +121,7 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
         onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}>
         <View style={styles.headerRow} pointerEvents="box-none">
           <View style={[styles.titleSlot, { paddingHorizontal: 12 + side }]} pointerEvents="box-none">
-            <Glass radius={22} backing style={styles.titleCapsule}>{title}</Glass>
+            {bareTitle ? title : <Glass radius={22} backing style={styles.titleCapsule}>{title}</Glass>}
           </View>
           <View pointerEvents="box-none" onLayout={(e) => {
             const width = Math.round(e.nativeEvent.layout.width);
