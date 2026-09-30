@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as Updates from 'expo-updates';
@@ -6,7 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { SplashOverlay } from '@/components/splash-overlay';
+import { SplashOverlay, type SplashVariant } from '@/components/splash-overlay';
 import { Colors } from '@/constants/theme';
 import { AuthProvider, useAuth } from '@/lib/auth';
 
@@ -22,9 +23,13 @@ const theme = {
   },
 };
 
+// the preview on a computer can ask for a splash variant: /?splash=wave
+const SPLASH_FROM_URL = (Platform.OS === 'web' && typeof window !== 'undefined'
+  ? new URLSearchParams(window.location.search).get('splash') : null) as SplashVariant | null;
+
 function Splash() {
   const { loading } = useAuth();
-  return <SplashOverlay ready={!loading} />;
+  return <SplashOverlay ready={!loading} variant={SPLASH_FROM_URL ?? 'apple'} />;
 }
 
 function Gate() {
