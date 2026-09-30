@@ -122,8 +122,37 @@ Window {
                         httpUserAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1"
                     }
                     onNewWindowRequested: request => Qt.openUrlExternally(request.requestedUrl)
+                    onUrlChanged: win.clearInk()
                 }
 
+                // notes: the right mouse button draws on the screen (left
+                // clicks still go to the app); a pause saves the picture with
+                // the drawing to ~/Pictures/arra-notes
+                Canvas {
+                    id: ink
+                    anchors.fill: parent
+                    z: 5
+                    onPaint: {
+                        const c = getContext("2d");
+                        c.clearRect(0, 0, width, height);
+                        c.lineWidth = 4; c.lineCap = "round"; c.lineJoin = "round";
+                        c.strokeStyle = "#ff3b30";
+                        for (const s of win.strokes.concat(win.cur ? [win.cur] : [])) {
+                            if (s.length < 2) continue;
+                            c.beginPath(); c.moveTo(s[0].x, s[0].y);
+                            for (let i = 1; i < s.length; i++) c.lineTo(s[i].x, s[i].y);
+                            c.stroke();
+                        }
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.RightButton
+                        cursorShape: pressed ? Qt.CrossCursor : Qt.ArrowCursor
+                        onPressed: mouse => { win.cur = [{ x: mouse.x, y: mouse.y }]; noteSave.stop(); }
+                        onPositionChanged: mouse => { if (win.cur) { win.cur.push({ x: mouse.x, y: mouse.y }); ink.requestPaint(); } }
+                        onReleased: { if (win.cur) win.strokes = win.strokes.concat([win.cur]); win.cur = null; ink.requestPaint(); noteSave.restart(); }
+                    }
+                }
                 // status bar: time, the island, signal / wi-fi / battery
                 Item {
                     width: parent.width
@@ -207,6 +236,7 @@ Window {
                         { id: "home", icon: "home", tip: "На главный экран" },
                         { id: "build", icon: "construction", tip: "Пересобрать из кода" },
                         { id: "shot", icon: "photo_camera", tip: "Скриншот экрана" },
+                        { id: "ink", icon: "ink_eraser", tip: "Стереть рисунок (рисовать — правой кнопкой мыши)" },
                         { id: "zoom", icon: "zoom_in", tip: "Масштаб" },
                         { id: "top", icon: "push_pin", tip: "Поверх окон" },
                         { id: "quit", icon: "power_settings_new", tip: "Выключить" }
@@ -253,6 +283,27 @@ Window {
         }
     }
 
+    // notes drawn with the right button
+    property var strokes: []
+    property var cur: null
+    property string noteFile: ""
+    Timer {
+        id: noteSave
+        interval: 1400
+        onTriggered: {
+            if (!win.strokes.length) return;
+            const fresh = win.noteFile === "";
+            if (fresh) win.noteFile = host.notePath();
+            const path = win.noteFile;
+            phone.grabToImage(r => {
+                r.saveToFile(path);
+                if (fresh) host.logNote(path, String(web.url));
+                win.say("Заметка сохранена");
+            });
+        }
+    }
+    function clearInk() { strokes = []; cur = null; noteFile = ""; ink.requestPaint(); }
+
     property bool building: false
     Connections {
         target: host
@@ -271,6 +322,7 @@ Window {
             const path = host.shotPath();
             phone.grabToImage(r => { r.saveToFile(path); win.say("Скриншот сохранён"); });
         }
+        else if (id === "ink") { clearInk(); say("Рисунок стёрт"); }
         else if (id === "zoom") zoom = zoom > 0.95 ? 0.85 : zoom > 0.8 ? 0.72 : 1.0;
         else if (id === "top") onTop = !onTop;
         else if (id === "quit") Qt.quit();

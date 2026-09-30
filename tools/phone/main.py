@@ -49,6 +49,19 @@ class Host(QObject):
         subprocess.Popen(["xdg-open", path])
 
     @Slot(result=str)
+    def notePath(self):
+        """A new note picture: ~/Pictures/arra-notes/note-<time>.png"""
+        d = os.path.expanduser("~/Pictures/arra-notes")
+        os.makedirs(d, exist_ok=True)
+        return os.path.join(d, time.strftime("note-%Y-%m-%d_%H.%M.%S.png"))
+
+    @Slot(str, str)
+    def logNote(self, path, url):
+        """notes.tsv: time, the picture, the screen (url) it was drawn on"""
+        with open(os.path.expanduser("~/Pictures/arra-notes/notes.tsv"), "a") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{path}\t{url}\n")
+
+    @Slot(result=str)
     def shotPath(self):
         d = os.path.expanduser("~/Pictures/Screenshots")
         os.makedirs(d, exist_ok=True)
