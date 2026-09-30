@@ -4,7 +4,7 @@ import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import * as Updates from 'expo-updates';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ComponentProps, type ReactNode } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -88,7 +88,7 @@ export default function Settings() {
   return (
     <View style={styles.root}>
       <View style={[styles.top, { paddingTop: 14 }]}>
-        <T v="title" weight="800">Настройки</T>
+        <T v="largeTitle" weight="800">Настройки</T>
         <IconButton icon="xmark" label="Закрыть" onPress={() => router.back()} size={34} />
       </View>
       <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 32 }} indicatorStyle="white">
@@ -99,7 +99,7 @@ export default function Settings() {
             const via = state.devices[device].via;
             return (
               <View key={device} style={[styles.row, i > 0 && styles.rowBorder]}>
-                <SymbolView name={DEVICE_META[device].icon} size={22} tintColor={Colors.text} style={{ width: 30 }} />
+                <IconTile name={DEVICE_META[device].icon} color={device === 'pc' ? '#0a84ff' : '#5e5ce6'} />
                 <View style={{ flex: 1 }}>
                   <T v="callout" weight="600">{DEVICE_META[device].label}</T>
                   <T v="caption" color={online ? Colors.success : Colors.textSecondary}>
@@ -156,10 +156,10 @@ export default function Settings() {
 
         <Section title="Уведомления">
           <View style={styles.row}>
-            <SymbolView name="bell.badge" size={20} tintColor={Colors.text} style={{ width: 30 }} />
+            <IconTile name="bell.badge" color="#ff453a" />
             <View style={{ flex: 1 }}>
               <T v="callout" weight="600">Агент закончил</T>
-              <T v="caption" color={Colors.textSecondary}>Баннер, пока приложение открыто; когда закрыто — сообщение в Telegram</T>
+              <T v="caption" color={Colors.textSecondary}>Пуш, когда агент закончил или ждёт ответа</T>
             </View>
             {push === 'granted' ? (
               <SymbolView name="checkmark.circle.fill" size={20} tintColor={Colors.success} />
@@ -173,12 +173,12 @@ export default function Settings() {
 
         <Section title="Аккаунт">
           <Press onPress={() => router.push('/subscriptions')} style={styles.row} accessibilityLabel="Подписки">
-            <SymbolView name="chart.pie" size={20} tintColor={Colors.text} style={{ width: 30 }} />
+            <IconTile name="chart.pie" color="#bf5af2" />
             <T v="callout" style={{ flex: 1 }}>Подписки</T>
             <SymbolView name="chevron.right" size={13} tintColor={Colors.textTertiary} />
           </Press>
           <View style={[styles.row, styles.rowBorder]}>
-            <SymbolView name="person.crop.circle" size={22} tintColor={Colors.text} style={{ width: 30 }} />
+            <IconTile name="person.crop.circle" color="#8e8e93" />
             <T v="callout" style={{ flex: 1 }} numberOfLines={1}>{user?.name || user?.email}</T>
           </View>
           <Press
@@ -197,7 +197,7 @@ export default function Settings() {
             }
             style={[styles.row, styles.rowBorder]}
             accessibilityLabel="Выйти">
-            <SymbolView name="rectangle.portrait.and.arrow.right" size={18} tintColor={Colors.error} style={{ width: 30 }} />
+            <IconTile name="rectangle.portrait.and.arrow.right" color="#ff453a" />
             <T v="callout" color={Colors.error}>Выйти</T>
           </Press>
         </Section>
@@ -208,6 +208,15 @@ export default function Settings() {
           </T>
         </Animated.View>
       </ScrollView>
+    </View>
+  );
+}
+
+/** The coloured rounded square with a white symbol, as in iOS Settings. */
+function IconTile({ name, color }: { name: ComponentProps<typeof SymbolView>['name']; color: string }) {
+  return (
+    <View style={[styles.tile, { backgroundColor: color }]}>
+      <SymbolView name={name} size={17} tintColor="#ffffff" weight="semibold" />
     </View>
   );
 }
@@ -224,11 +233,14 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
   top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: ScreenPadding, paddingBottom: 8 },
-  section: { marginTop: 22, paddingHorizontal: ScreenPadding },
-  sectionTitle: { textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8, paddingHorizontal: 4 },
-  group: { backgroundColor: Colors.card, borderRadius: Radius.lg, overflow: 'hidden' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, minHeight: 56 },
-  rowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.separator },
+  // iOS Settings: inset grouped lists, 10 pt corners, small grey headers,
+  // separators start after the icon
+  section: { marginTop: 26, paddingHorizontal: 16 },
+  sectionTitle: { textTransform: 'uppercase', fontSize: 13, letterSpacing: 0.2, marginBottom: 7, paddingHorizontal: 16 },
+  group: { backgroundColor: '#1c1c1e', borderRadius: 10, overflow: 'hidden' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 10, minHeight: 52 },
+  rowBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(84,84,88,0.6)' },
+  tile: { width: 30, height: 30, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
   rowActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   smallButton: { paddingHorizontal: 12, height: 30, borderRadius: 15, backgroundColor: Colors.cardRaised, alignItems: 'center', justifyContent: 'center' },
   primaryButton: { backgroundColor: Colors.text },

@@ -2,7 +2,7 @@ import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useMemo, useRef, useState } from 'react';
 import { Alert, StyleSheet, TextInput, View } from 'react-native';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeInDown, FadeOut, useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 
 import { chats, useChat, type AskModel, type ChatMessage } from '@/ara/chats';
 import { mediaPaths } from '@/ara/format';
@@ -183,7 +183,11 @@ export function AraChat({ id, autoFocus = false, voiceRequest }: { id: string; a
       onWork={() => router.dismissTo('/')}
       onTalk={() => setSidebar(false)}>
       <ChatLayout
-        title={title}
+        // no «Arra» capsule on top (it only took room); what Arra is doing is
+        // written at the bottom left, next to a small Arra, like in tito
+        title={null}
+        bareTitle
+        overlay={({ bottom }) => <AraStatus text={status} busy={busy} bottom={bottom} />}
         left={left}
         right={right}
         data={messages}
@@ -231,4 +235,21 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   error: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   empty: { alignItems: 'center' },
+});
+
+/** Bottom left, over the input: a small Arra and what it is doing (types,
+ * the computer is off). Appears and goes softly. */
+function AraStatus({ text, busy, bottom }: { text: string | null; busy: boolean; bottom: SharedValue<number> }) {
+  const lift = useAnimatedStyle(() => ({ bottom: bottom.get() + 6 }));
+  if (!text) return null;
+  return (
+    <Animated.View pointerEvents="none" entering={FadeIn.duration(220)} exiting={FadeOut.duration(180)} style={[statusStyles.box, lift]}>
+      <AraMascot size={20} mood={busy ? 'thinking' : 'idle'} />
+      <T v="footnote" color={busy ? Colors.textSecondary : Colors.error} numberOfLines={1}>{text}</T>
+    </Animated.View>
+  );
+}
+
+const statusStyles = StyleSheet.create({
+  box: { position: 'absolute', left: 18, flexDirection: 'row', alignItems: 'center', gap: 8 },
 });

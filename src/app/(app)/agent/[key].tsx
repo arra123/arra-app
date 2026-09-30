@@ -342,13 +342,8 @@ export default function AgentScreen() {
   );
 
   // Справа отдельная капсула: кольцо остатка недельного лимита и «⋯» (системное меню)
-  const ring = item ? (
-    <WeekRing
-      title={item.agent === 'claude' ? 'Claude' : `Codex ${item.device === 'pc' ? 'ПК' : 'ноутбук'}`}
-      limit={limitFor(limits, item.agent, item.device)}
-      size={28}
-    />
-  ) : null;
+  // the week-limit ring (a number of tokens) is not shown in the header any more
+  const ring = null;
   const right = ring || menu.length ? (
     <Glass radius={22} backing style={styles.right}>
       {ring}

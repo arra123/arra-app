@@ -320,19 +320,18 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 },
   },
   // Плотная подложка: полупрозрачное стекло поверх ленты читалось плохо
+  // as the iOS menu (UIMenu) looks: #2c2c2e plate, 14 pt corners, thin
+  // separators, groups split by a darker 8 pt band (the phone itself uses UIMenu)
   box: {
-    paddingVertical: 4,
-    backgroundColor: Colors.cardRaised,
-    borderRadius: Radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.hairline,
+    backgroundColor: 'rgba(44,44,46,0.98)',
+    borderRadius: 14,
     overflow: 'hidden',
   },
-  section: { borderTopWidth: 6, borderTopColor: Colors.card },
+  section: { borderTopWidth: 8, borderTopColor: 'rgba(0,0,0,0.28)' },
   title: { paddingHorizontal: 14, paddingTop: 8, paddingBottom: 2, textTransform: 'uppercase', letterSpacing: 0.6 },
-  item: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, minHeight: ITEM_H, paddingVertical: 8 },
-  itemBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.separator },
-  pressed: { backgroundColor: Colors.cardPressed },
+  item: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, minHeight: ITEM_H, paddingVertical: 10 },
+  itemBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(84,84,88,0.6)' },
+  pressed: { backgroundColor: 'rgba(255,255,255,0.1)' },
   check: { width: 16, alignItems: 'center' },
   icon: { width: 22, alignItems: 'center' },
 });
