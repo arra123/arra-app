@@ -14,6 +14,9 @@ export function ringsProps(agents: Agent[], now = Date.now()): RingsProps {
       project: a.project,
       state: a.state === 'working' ? 'work' : a.state === 'waiting' ? 'wait' : 'done',
       min: a.since ? Math.max(0, Math.round((now - a.since) / 60000)) : 0,
+      where: a.device === 'pc' ? 'ПК' : 'ноутбук',
+      // the task in one short line (the whole state must stay under 4 KB)
+      note: (a.task || '').replace(/\s+/g, ' ').trim().slice(0, 60),
     })),
     working: shown.filter((a) => a.state === 'working').length,
     waiting: shown.filter((a) => a.state === 'waiting').length,

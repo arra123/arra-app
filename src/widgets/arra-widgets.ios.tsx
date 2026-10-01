@@ -11,7 +11,7 @@ import { createLiveActivity, createWidget } from 'expo-widgets';
  * Everything a widget function uses must be declared inside it: the function
  * is sent to the extension as text.
  */
-export type RingAgent = { key: string; title: string; project: string; state: 'work' | 'wait' | 'done'; min: number };
+export type RingAgent = { key: string; title: string; project: string; state: 'work' | 'wait' | 'done'; min: number; where?: string; note?: string };
 export type RingsProps = { agents: RingAgent[]; working: number; waiting: number; updated: number };
 
 const RingsActivity = (props: RingsProps) => {
@@ -19,14 +19,29 @@ const RingsActivity = (props: RingsProps) => {
   const all = props.agents || [];
   const waiting = all.filter((a) => a.state !== 'work');
   const working = all.filter((a) => a.state === 'work');
-  const list = waiting.concat(working).slice(0, 4);
+  // one or two agents get a second line each (project, machine, the task);
+  // three fit only as single lines: the block is at most 160 pt tall
+  const detailed = all.length <= 2;
+  const list = waiting.concat(working).slice(0, detailed ? 2 : 3);
   const more = all.length - list.length;
   const n = waiting.length;
   const w = props.working || working.length;
   const head = n === 1 ? 'Агент ждёт тебя' : n > 1 ? `${n} агента ждут тебя` : w === 1 ? 'Агент работает' : `${w} агента работают`;
   const headColor = n ? '#ffd60a' : '#ffffff';
   const ago = (m: number) => (m < 1 ? 'только что' : m < 60 ? `${m} мин` : `${Math.floor(m / 60)} ч`);
+  const under = (a: RingAgent) => [a.project !== a.title ? a.project : '', a.where || '', a.note || ''].filter((x) => x).join(' · ');
   const row = (a: RingAgent) => (
+    <HStack key={a.key} spacing={8}>
+      <Text modifiers={[font({ size: 9 }), foregroundStyle(a.state === 'work' ? '#64d2ff' : '#ffd60a')]}>●</Text>
+      <VStack alignment="leading" spacing={1}>
+        <Text modifiers={[font({ size: 15, weight: 'semibold' }), foregroundStyle('#ffffff'), lineLimit(1)]}>{a.title}</Text>
+        <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93'), lineLimit(1)]}>{detailed ? under(a) : ''}</Text>
+      </VStack>
+      <Spacer />
+      <Text modifiers={[font({ size: 13 }), foregroundStyle('#a1a1aa')]}>{a.state === 'work' ? (a.min < 1 ? 'работает' : `работает ${ago(a.min)}`) : ago(a.min)}</Text>
+    </HStack>
+  );
+  const line = (a: RingAgent) => (
     <HStack key={a.key} spacing={8}>
       <Text modifiers={[font({ size: 9 }), foregroundStyle(a.state === 'work' ? '#64d2ff' : '#ffd60a')]}>●</Text>
       <Text modifiers={[font({ size: 15, weight: 'semibold' }), foregroundStyle('#ffffff'), lineLimit(1)]}>{a.title}</Text>
@@ -34,9 +49,10 @@ const RingsActivity = (props: RingsProps) => {
       <Text modifiers={[font({ size: 13 }), foregroundStyle('#a1a1aa')]}>{a.state === 'work' ? (a.min < 1 ? 'работает' : `работает ${ago(a.min)}`) : ago(a.min)}</Text>
     </HStack>
   );
+  const tail = more > 0 ? ` · и ещё ${more}` : '';
   return {
     banner: (
-      <VStack alignment="leading" spacing={9} modifiers={[padding({ all: 16 }), activityBackgroundTint('#111114'), widgetURL('arra://')]}>
+      <VStack alignment="leading" spacing={9} modifiers={[padding({ all: 14 }), activityBackgroundTint('#111114'), widgetURL('arra://')]}>
         {/* our mascot (a white block with two eyes) and the headline next to it */}
         <HStack spacing={10}>
           <ZStack>
@@ -48,13 +64,13 @@ const RingsActivity = (props: RingsProps) => {
           </ZStack>
           <VStack alignment="leading" spacing={1}>
             <Text modifiers={[font({ size: 15, weight: 'bold' }), foregroundStyle(headColor)]}>{head}</Text>
-            <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{n && w ? `ещё ${w} работают` : n ? 'ответь, и он продолжит' : 'Arra следит за ними'}</Text>
+            <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{(n && w ? `ещё ${w} работают` : n ? 'ответь, и он продолжит' : 'Arra следит за ними') + tail}</Text>
           </VStack>
           <Spacer />
         </HStack>
         {/* the rows in a stack of their own: a list next to other children was not drawn at all */}
         <VStack alignment="leading" spacing={9}>
-          {list.map(row).concat(more > 0 ? [<Text key="more" modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{`и ещё ${more}`}</Text>] : [])}
+          {list.map(detailed ? row : line)}
         </VStack>
       </VStack>
     ),
@@ -65,7 +81,7 @@ const RingsActivity = (props: RingsProps) => {
     minimal: <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{n ? `${n}` : ''}</Text>,
     expandedLeading: <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundStyle(headColor), padding({ leading: 8 })]}>{head}</Text>,
     expandedTrailing: <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93'), padding({ trailing: 8 })]}>{n && w ? `${w} работают` : ''}</Text>,
-    expandedBottom: <VStack alignment="leading" spacing={8} modifiers={[padding({ horizontal: 8, top: 4 })]}>{list.map(row)}</VStack>,
+    expandedBottom: <VStack alignment="leading" spacing={8} modifiers={[padding({ horizontal: 8, top: 4 })]}>{list.map(line)}</VStack>,
   };
 };
 
