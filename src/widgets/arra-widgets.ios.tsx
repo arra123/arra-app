@@ -1,5 +1,5 @@
 import { HStack, Spacer, Text, VStack } from '@expo/ui/swift-ui';
-import { activityBackgroundTint, font, foregroundStyle, frame, lineLimit, padding, widgetURL } from '@expo/ui/swift-ui/modifiers';
+import { activityBackgroundTint, font, foregroundStyle, lineLimit, padding, widgetURL } from '@expo/ui/swift-ui/modifiers';
 import { createLiveActivity, createWidget } from 'expo-widgets';
 
 /**
@@ -42,8 +42,10 @@ const RingsActivity = (props: RingsProps) => {
           <Spacer />
           <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{n && w ? `ещё ${w} работают` : 'Arra'}</Text>
         </HStack>
-        {list.map(row)}
-        {more > 0 ? <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{`и ещё ${more}`}</Text> : null}
+        {/* the rows in a stack of their own: a list next to other children was not drawn at all */}
+        <VStack alignment="leading" spacing={9}>
+          {list.map(row).concat(more > 0 ? [<Text key="more" modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{`и ещё ${more}`}</Text>] : [])}
+        </VStack>
       </VStack>
     ),
     // the Dynamic Island says something only when someone waits for you; while
@@ -88,17 +90,18 @@ const RingsWidget = (props: RingsProps, env: { widgetFamily?: string }) => {
       <HStack spacing={6}>
         <Text modifiers={[font({ size: 15, weight: 'bold' }), foregroundStyle('#ffffff')]}>Arra</Text>
         <Spacer />
-        {waiting ? <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{`${waiting} ждут`}</Text> : null}
-        {!small || !waiting ? <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundStyle('#64d2ff')]}>{`${working} в работе`}</Text> : null}
+        <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundStyle(waiting ? '#ffd60a' : '#64d2ff')]}>{waiting ? `${waiting} ждут` : `${working} в работе`}</Text>
       </HStack>
+      <VStack alignment="leading" spacing={7}>
       {list.length ? list.map((a) => (
         <HStack key={a.key} spacing={7}>
           <Text modifiers={[font({ size: 8 }), foregroundStyle(a.state === 'work' ? '#64d2ff' : '#ffd60a')]}>●</Text>
           <Text modifiers={[font({ size: 13, weight: 'medium' }), foregroundStyle('#ffffff'), lineLimit(1)]}>{a.title}</Text>
           <Spacer />
-          {small ? null : <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93'), frame({ width: 56 })]}>{a.state === 'work' ? ago(a.min) : 'ждёт'}</Text>}
+          <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{small ? '' : a.state === 'work' ? ago(a.min) : 'ждёт'}</Text>
         </HStack>
-      )) : <Text modifiers={[font({ size: 13 }), foregroundStyle('#8e8e93')]}>Агенты отдыхают</Text>}
+      )) : [<Text key="none" modifiers={[font({ size: 13 }), foregroundStyle('#8e8e93')]}>Агенты отдыхают</Text>]}
+      </VStack>
       <Spacer />
     </VStack>
   );
