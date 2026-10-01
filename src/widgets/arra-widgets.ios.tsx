@@ -1,126 +1,100 @@
-import { Gauge, HStack, Image, Spacer, Text, VStack } from '@expo/ui/swift-ui';
-import {
-  activityBackgroundTint,
-  font,
-  foregroundStyle,
-  frame,
-  gaugeStyle,
-  lineLimit,
-  padding,
-  tint,
-  widgetURL,
-} from '@expo/ui/swift-ui/modifiers';
+import { HStack, Spacer, Text, VStack } from '@expo/ui/swift-ui';
+import { activityBackgroundTint, font, foregroundStyle, frame, lineLimit, padding, widgetURL } from '@expo/ui/swift-ui/modifiers';
 import { createLiveActivity, createWidget } from 'expo-widgets';
 
 /**
- * «Кольца» (the variant picked on 01.10): every agent is a ring that fills up
- * with the time it has been working, like the Activity rings. The same data
- * drives the Live Activity (lock screen + Dynamic Island) and the home screen
- * widgets. Props are plain JSON: the extension renders them with SwiftUI.
+ * The lock screen block and the Dynamic Island appear only when an agent
+ * needs you: it finished or it asks something. While agents just work there
+ * is nothing on the screen (it used to glow all day). The block is a short
+ * list: who waits and for how long. The home screen widget lists every agent.
+ *
+ * Everything a widget function uses must be declared inside it: the function
+ * is sent to the extension as text.
  */
 export type RingAgent = { key: string; title: string; project: string; state: 'work' | 'wait' | 'done'; min: number };
 export type RingsProps = { agents: RingAgent[]; working: number; waiting: number; updated: number };
 
-// (the colours live inside each widget function: it is sent to the extension as text,
-// and anything declared outside it does not exist there)
-
 const RingsActivity = (props: RingsProps) => {
   'widget';
-  const COLORS = ['#0a84ff', '#bf5af2', '#ff9f0a', '#30d158', '#ff375f', '#64d2ff'];
-  const list = (props.agents || []).slice(0, 4);
-  const colorOf = (i: number, a: RingAgent) => (a.state === 'done' ? '#30d158' : a.state === 'wait' ? '#ffd60a' : COLORS[i % COLORS.length]);
-  const summary = props.waiting ? `${props.working || 0} работают · ${props.waiting} ждёт` : `${props.working || 0} работают`;
-  const ring = (a: RingAgent, i: number, size: number) => (
-    <Gauge
-      value={Math.min(1, Math.max(0.04, a.min / 60))}
-      modifiers={[gaugeStyle('circularCapacity'), tint(colorOf(i, a)), frame({ width: size, height: size })]}>
-      <Image systemName={a.state === 'done' ? 'checkmark' : a.state === 'wait' ? 'hand.raised.fill' : 'bolt.fill'} color={colorOf(i, a)} />
-    </Gauge>
-  );
-  const rings = (
-    <HStack spacing={12}>
-      {list.map((a, i) => (
-        <VStack key={a.key} spacing={4}>
-          {ring(a, i, 46)}
-          <Text modifiers={[font({ size: 11, weight: 'semibold' }), foregroundStyle('#ffffff'), lineLimit(1), frame({ width: 70 })]}>{a.title}</Text>
-          <Text modifiers={[font({ size: 10 }), foregroundStyle('#9a9aa2')]}>{a.state === 'done' ? 'готово' : a.state === 'wait' ? 'ждёт тебя' : `${a.min} мин`}</Text>
-        </VStack>
-      ))}
+  const all = props.agents || [];
+  const waiting = all.filter((a) => a.state !== 'work');
+  const list = (waiting.length ? waiting : all).slice(0, 3);
+  const more = (waiting.length ? waiting.length : all.length) - list.length;
+  const n = props.waiting || waiting.length;
+  const head = n === 1 ? 'Агент ждёт тебя' : `${n} агента ждут тебя`;
+  const ago = (m: number) => (m < 1 ? 'только что' : m < 60 ? `${m} мин` : `${Math.floor(m / 60)} ч`);
+  const row = (a: RingAgent) => (
+    <HStack key={a.key} spacing={8}>
+      <Text modifiers={[font({ size: 9 }), foregroundStyle(a.state === 'work' ? '#64d2ff' : '#ffd60a')]}>●</Text>
+      <Text modifiers={[font({ size: 15, weight: 'semibold' }), foregroundStyle('#ffffff'), lineLimit(1)]}>{a.title}</Text>
+      <Spacer />
+      <Text modifiers={[font({ size: 13 }), foregroundStyle('#a1a1aa')]}>{ago(a.min)}</Text>
     </HStack>
   );
   return {
     banner: (
-      <VStack spacing={10} modifiers={[padding({ all: 14 }), activityBackgroundTint('#161618'), widgetURL('arra://')]}>
-        <HStack>
-          <Image systemName="sparkles" color="#ffffff" />
-          <Text modifiers={[font({ size: 15, weight: 'bold' }), foregroundStyle('#ffffff')]}>Arra</Text>
+      <VStack alignment="leading" spacing={9} modifiers={[padding({ all: 16 }), activityBackgroundTint('#111114'), widgetURL('arra://')]}>
+        <HStack spacing={6}>
+          <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{head}</Text>
           <Spacer />
-          <Text modifiers={[font({ size: 13 }), foregroundStyle('#9a9aa2')]}>{summary}</Text>
+          <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{props.working ? `ещё ${props.working} работают` : 'Arra'}</Text>
         </HStack>
-        {list.length ? rings : <Text modifiers={[font({ size: 13 }), foregroundStyle('#9a9aa2')]}>Агенты отдыхают</Text>}
+        {list.map(row)}
+        {more > 0 ? <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{`и ещё ${more}`}</Text> : null}
       </VStack>
     ),
-    compactLeading: <Image systemName="sparkles" color="#ffffff" />,
-    compactTrailing: (
-      <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundStyle(props.waiting ? '#ffd60a' : '#64d2ff')]}>
-        {props.waiting ? `${props.working}·${props.waiting}` : `${props.working}`}
-      </Text>
-    ),
-    minimal: list.length ? ring(list[0], 0, 22) : <Image systemName="sparkles" color="#ffffff" />,
-    expandedLeading: (
-      <HStack spacing={6} modifiers={[padding({ leading: 6 })]}>
-        <Image systemName="sparkles" color="#ffffff" />
-        <Text modifiers={[font({ size: 15, weight: 'bold' }), foregroundStyle('#ffffff')]}>Arra</Text>
-      </HStack>
-    ),
-    expandedTrailing: <Text modifiers={[font({ size: 13 }), foregroundStyle('#9a9aa2'), padding({ trailing: 6 })]}>{summary}</Text>,
-    expandedBottom: <VStack modifiers={[padding({ top: 6 })]}>{rings}</VStack>,
+    compactLeading: <Text modifiers={[font({ size: 12 }), foregroundStyle('#ffd60a')]}>●</Text>,
+    compactTrailing: <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{`${n}`}</Text>,
+    minimal: <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{`${n}`}</Text>,
+    expandedLeading: <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundStyle('#ffd60a'), padding({ leading: 8 })]}>{head}</Text>,
+    expandedTrailing: <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93'), padding({ trailing: 8 })]}>{props.working ? `${props.working} работают` : ''}</Text>,
+    expandedBottom: <VStack alignment="leading" spacing={8} modifiers={[padding({ horizontal: 8, top: 4 })]}>{list.map(row)}</VStack>,
   };
 };
 
 const RingsWidget = (props: RingsProps, env: { widgetFamily?: string }) => {
   'widget';
-  const COLORS = ['#0a84ff', '#bf5af2', '#ff9f0a', '#30d158', '#ff375f', '#64d2ff'];
-  const list = (props.agents || []).slice(0, env.widgetFamily === 'systemSmall' ? 2 : 4);
-  const colorOf = (i: number, a: RingAgent) => (a.state === 'done' ? '#30d158' : a.state === 'wait' ? '#ffd60a' : COLORS[i % COLORS.length]);
-  const total = (props.agents || []).length;
+  const all = props.agents || [];
+  const working = props.working || 0;
+  const waiting = props.waiting || 0;
   if (env.widgetFamily === 'accessoryCircular') {
     return (
-      <Gauge value={total ? (props.working || 0) / total : 0} modifiers={[gaugeStyle('circularCapacity')]}>
-        <Text modifiers={[font({ size: 16, weight: 'bold' })]}>{`${props.working || 0}`}</Text>
-      </Gauge>
+      <VStack spacing={0}>
+        <Text modifiers={[font({ size: 20, weight: 'bold' })]}>{`${waiting || working}`}</Text>
+        <Text modifiers={[font({ size: 9 })]}>{waiting ? 'ждут' : 'в работе'}</Text>
+      </VStack>
     );
   }
   if (env.widgetFamily === 'accessoryRectangular' || env.widgetFamily === 'accessoryInline') {
     return (
       <VStack alignment="leading" spacing={1}>
         <Text modifiers={[font({ size: 13, weight: 'bold' })]}>Arra</Text>
-        <Text modifiers={[font({ size: 12 })]}>{`${props.working || 0} работают · ${props.waiting || 0} ждут`}</Text>
+        <Text modifiers={[font({ size: 12 })]}>{waiting ? `${waiting} ждут тебя · ${working} работают` : `${working} работают`}</Text>
       </VStack>
     );
   }
+  const small = env.widgetFamily === 'systemSmall';
+  // the ones that wait for you first
+  const sorted = all.filter((a) => a.state !== 'work').concat(all.filter((a) => a.state === 'work'));
+  const list = sorted.slice(0, small ? 3 : 4);
+  const ago = (m: number) => (m < 1 ? 'сейчас' : m < 60 ? `${m} мин` : `${Math.floor(m / 60)} ч`);
   return (
-    <VStack alignment="leading" spacing={8} modifiers={[widgetURL('arra://')]}>
-      <HStack>
-        <Image systemName="sparkles" color="#ffffff" />
-        <Text modifiers={[font({ size: 14, weight: 'bold' })]}>Arra</Text>
+    <VStack alignment="leading" spacing={7} modifiers={[widgetURL('arra://')]}>
+      <HStack spacing={6}>
+        <Text modifiers={[font({ size: 15, weight: 'bold' }), foregroundStyle('#ffffff')]}>Arra</Text>
         <Spacer />
-        <Text modifiers={[font({ size: 22, weight: 'heavy' }), foregroundStyle('#64d2ff')]}>{`${props.working || 0}`}</Text>
+        {waiting ? <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{`${waiting} ждут`}</Text> : null}
+        {!small || !waiting ? <Text modifiers={[font({ size: 13, weight: 'semibold' }), foregroundStyle('#64d2ff')]}>{`${working} в работе`}</Text> : null}
       </HStack>
-      {total ? (
-        <HStack spacing={10}>
-          {list.map((a, i) => (
-            <VStack key={a.key} spacing={3}>
-              <Gauge value={Math.min(1, Math.max(0.04, a.min / 60))} modifiers={[gaugeStyle('circularCapacity'), tint(colorOf(i, a)), frame({ width: 40, height: 40 })]}>
-                <Image systemName={a.state === 'done' ? 'checkmark' : a.state === 'wait' ? 'hand.raised.fill' : 'bolt.fill'} color={colorOf(i, a)} />
-              </Gauge>
-              <Text modifiers={[font({ size: 10, weight: 'semibold' }), lineLimit(1), frame({ width: 62 })]}>{a.title}</Text>
-            </VStack>
-          ))}
+      {list.length ? list.map((a) => (
+        <HStack key={a.key} spacing={7}>
+          <Text modifiers={[font({ size: 8 }), foregroundStyle(a.state === 'work' ? '#64d2ff' : '#ffd60a')]}>●</Text>
+          <Text modifiers={[font({ size: 13, weight: 'medium' }), foregroundStyle('#ffffff'), lineLimit(1)]}>{a.title}</Text>
+          <Spacer />
+          {small ? null : <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93'), frame({ width: 56 })]}>{a.state === 'work' ? ago(a.min) : 'ждёт'}</Text>}
         </HStack>
-      ) : (
-        <Text modifiers={[font({ size: 12 }), foregroundStyle('#9a9aa2')]}>Агенты отдыхают</Text>
-      )}
+      )) : <Text modifiers={[font({ size: 13 }), foregroundStyle('#8e8e93')]}>Агенты отдыхают</Text>}
+      <Spacer />
     </VStack>
   );
 };

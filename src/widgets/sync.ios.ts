@@ -3,6 +3,8 @@ import { AppState } from 'react-native';
 import type { Agent } from '@/ara/types';
 import { api } from '@/lib/api';
 
+import { addPushToStartTokenListener } from 'expo-widgets';
+
 import { ringsActivity, ringsWidget, type RingsProps } from './arra-widgets.ios';
 import { ringsProps } from './props';
 
@@ -24,9 +26,26 @@ export function widgetStatus() { return status; }
  * closed the server moves the Live Activity by APNs (its push token is sent
  * to /push/activity).
  */
+/** An agent «needs you» for this long after it stopped; then the block leaves by itself. */
+const FRESH_MS = 15 * 60_000;
+let startTokenSent = false;
+
 export function syncWidgets(agents: Agent[]) {
-  const props = ringsProps(agents);
-  const key = JSON.stringify({ ...props, updated: 0 });
+  // the server may start the block while the app is closed: it needs this token
+  if (!startTokenSent) {
+    startTokenSent = true;
+    try {
+      addPushToStartTokenListener((event) => {
+        if (event.activityPushToStartToken) api('/push/activity-start', { body: { token: event.activityPushToStartToken } }).catch(() => {});
+      });
+    } catch { /* an older system: the block starts only from the app */ }
+  }
+  const all = ringsProps(agents);
+  // the home screen widget shows everyone; the lock screen block only who needs you now
+  const nowMs = Date.now();
+  const calling = agents.filter((a) => (a.state === 'waiting' || a.state === 'error') && a.since && nowMs - a.since < FRESH_MS);
+  const props: RingsProps = { ...ringsProps(calling), working: all.working };
+  const key = JSON.stringify({ ...props, updated: 0, agents: props.agents.map((a) => a.key) });
   serial = serial.then(async () => {
     if (!started) {
       started = true;
@@ -35,19 +54,20 @@ export function syncWidgets(agents: Agent[]) {
       if (current) watchToken(current);
     }
     // the home screen widget: at most every 20 s (iOS rations reloads)
-    if (key !== lastWidget && Date.now() - lastWidgetAt > 20_000) {
-      lastWidget = key;
+    const widgetKey = JSON.stringify({ ...all, updated: 0 });
+    if (widgetKey !== lastWidget && Date.now() - lastWidgetAt > 20_000) {
+      lastWidget = widgetKey;
       lastWidgetAt = Date.now();
-      ringsWidget.updateSnapshot(props);
+      ringsWidget.updateSnapshot(all);
     }
     if (key === lastActivity) return;
     lastActivity = key;
-    const live = props.working + props.waiting > 0;
+    const live = props.agents.length > 0;
     if (!live) {
       // 'immediate': an ended block used to stay on the lock screen for hours, empty
       if (current) await current.end('immediate', props);
       current = null;
-      status = 'агентов в работе нет — блок не нужен';
+      status = 'никто не ждёт ответа — блок не показывается';
       return;
     }
     if (current) {
