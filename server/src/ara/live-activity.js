@@ -58,7 +58,9 @@ export function ringsProps(agents, now = Date.now()) {
 const FRESH_MS = 15 * 60_000;
 export function callingProps(agents, now = Date.now()) {
   const calling = agents.filter((a) => (a.state === 'waiting' || a.state === 'error') && a.since && now - a.since < FRESH_MS);
-  return { ...ringsProps(calling, now), working: agents.filter((a) => a.state === 'working').length };
+  // who needs the user first, then who works: the block stays while anyone works or waits
+  const busy = agents.filter((a) => a.state === 'working');
+  return { ...ringsProps([...calling, ...busy], now), waiting: calling.length, working: busy.length };
 }
 
 export function activityPayload(props, now = Date.now()) {
@@ -153,10 +155,11 @@ export async function pushRings(userId, agents, { force = false } = {}) {
     if (status === 410 || status === 400) await query('DELETE FROM ara_live_activities WHERE token = $1', [token]).catch(() => {});
   }
   if (!props.agents.length) { started.delete(userId); return; }
+  if (!props.waiting) return; // nobody waits: the block is not started from here just for working agents
   // nobody shows it yet: start it from here, once per agent that began to wait
   if (alive === 0) {
     const was = started.get(userId);
-    const fresh = props.agents.filter((a) => !was || !was.keys.has(a.key));
+    const fresh = props.agents.filter((a) => a.state !== 'work' && (!was || !was.keys.has(a.key)));
     if (!fresh.length) return;
     const row = await query('SELECT token FROM ara_live_start WHERE user_id = $1', [userId]).then((r) => r.rows[0]).catch(() => null);
     if (!row) return;

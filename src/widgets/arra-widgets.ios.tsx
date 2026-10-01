@@ -18,36 +18,41 @@ const RingsActivity = (props: RingsProps) => {
   'widget';
   const all = props.agents || [];
   const waiting = all.filter((a) => a.state !== 'work');
-  const list = (waiting.length ? waiting : all).slice(0, 3);
-  const more = (waiting.length ? waiting.length : all.length) - list.length;
-  const n = props.waiting || waiting.length;
-  const head = n === 1 ? 'Агент ждёт тебя' : `${n} агента ждут тебя`;
+  const working = all.filter((a) => a.state === 'work');
+  const list = waiting.concat(working).slice(0, 4);
+  const more = all.length - list.length;
+  const n = waiting.length;
+  const w = props.working || working.length;
+  const head = n === 1 ? 'Агент ждёт тебя' : n > 1 ? `${n} агента ждут тебя` : w === 1 ? 'Агент работает' : `${w} агента работают`;
+  const headColor = n ? '#ffd60a' : '#ffffff';
   const ago = (m: number) => (m < 1 ? 'только что' : m < 60 ? `${m} мин` : `${Math.floor(m / 60)} ч`);
   const row = (a: RingAgent) => (
     <HStack key={a.key} spacing={8}>
       <Text modifiers={[font({ size: 9 }), foregroundStyle(a.state === 'work' ? '#64d2ff' : '#ffd60a')]}>●</Text>
       <Text modifiers={[font({ size: 15, weight: 'semibold' }), foregroundStyle('#ffffff'), lineLimit(1)]}>{a.title}</Text>
       <Spacer />
-      <Text modifiers={[font({ size: 13 }), foregroundStyle('#a1a1aa')]}>{ago(a.min)}</Text>
+      <Text modifiers={[font({ size: 13 }), foregroundStyle('#a1a1aa')]}>{a.state === 'work' ? (a.min < 1 ? 'работает' : `работает ${ago(a.min)}`) : ago(a.min)}</Text>
     </HStack>
   );
   return {
     banner: (
       <VStack alignment="leading" spacing={9} modifiers={[padding({ all: 16 }), activityBackgroundTint('#111114'), widgetURL('arra://')]}>
         <HStack spacing={6}>
-          <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{head}</Text>
+          <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundStyle(headColor)]}>{head}</Text>
           <Spacer />
-          <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{props.working ? `ещё ${props.working} работают` : 'Arra'}</Text>
+          <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{n && w ? `ещё ${w} работают` : 'Arra'}</Text>
         </HStack>
         {list.map(row)}
         {more > 0 ? <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{`и ещё ${more}`}</Text> : null}
       </VStack>
     ),
-    compactLeading: <Text modifiers={[font({ size: 12 }), foregroundStyle('#ffd60a')]}>●</Text>,
-    compactTrailing: <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{`${n}`}</Text>,
-    minimal: <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{`${n}`}</Text>,
-    expandedLeading: <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundStyle('#ffd60a'), padding({ leading: 8 })]}>{head}</Text>,
-    expandedTrailing: <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93'), padding({ trailing: 8 })]}>{props.working ? `${props.working} работают` : ''}</Text>,
+    // the Dynamic Island says something only when someone waits for you; while
+    // agents just work it stays empty (nothing glows on top all day)
+    compactLeading: <Text modifiers={[font({ size: 12 }), foregroundStyle('#ffd60a')]}>{n ? '●' : ''}</Text>,
+    compactTrailing: <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{n ? `${n}` : ''}</Text>,
+    minimal: <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{n ? `${n}` : ''}</Text>,
+    expandedLeading: <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundStyle(headColor), padding({ leading: 8 })]}>{head}</Text>,
+    expandedTrailing: <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93'), padding({ trailing: 8 })]}>{n && w ? `${w} работают` : ''}</Text>,
     expandedBottom: <VStack alignment="leading" spacing={8} modifiers={[padding({ horizontal: 8, top: 4 })]}>{list.map(row)}</VStack>,
   };
 };

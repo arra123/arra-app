@@ -263,7 +263,7 @@ export function FloatingAgent({ agent, transcript, plan, helpers, now, stopping,
               it is doing. At the right edge the layout is mirrored, so the
               mascot always stands at the screen's edge and the words inside. */}
           <View style={[styles.capsule, sideJS ? styles.capsuleRight : null]}>
-            <AraMascot size={38} mood={state === 'working' ? 'thinking' : 'idle'} />
+            <AraMascot size={42} mood={state === 'working' ? 'thinking' : 'idle'} />
             <View style={[styles.words, { alignItems: sideJS ? 'flex-end' : 'flex-start' }]}>
               <T v="footnote" weight="600" color={state === 'waiting' ? Colors.waiting : state === 'error' ? Colors.error : Colors.text} numberOfLines={1}>
                 {saying}
@@ -380,16 +380,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingLeft: 7,
-    paddingRight: 14,
+    paddingLeft: 2,
+    paddingRight: 2,
     minWidth: H + 8,
-    maxWidth: 250,
-    backgroundColor: Colors.cardRaised,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.hairline,
+    maxWidth: 260,
   },
-  capsuleRight: { flexDirection: 'row-reverse', paddingLeft: 14, paddingRight: 7 },
-  words: { flexShrink: 1, gap: 2 },
+  capsuleRight: { flexDirection: 'row-reverse' },
+  // the words in a small bubble next to the free-standing mascot, like the buddy on the computer
+  words: {
+    flexShrink: 1, gap: 2, paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
+    backgroundColor: Colors.cardRaised, borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.hairline,
+  },
   sub: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 12 },
   helpers: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   helperDot: { width: 7, height: 7, borderRadius: 4 },

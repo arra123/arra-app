@@ -44,7 +44,10 @@ export function syncWidgets(agents: Agent[]) {
   // the home screen widget shows everyone; the lock screen block only who needs you now
   const nowMs = Date.now();
   const calling = agents.filter((a) => (a.state === 'waiting' || a.state === 'error') && a.since && nowMs - a.since < FRESH_MS);
-  const props: RingsProps = { ...ringsProps(calling), working: all.working };
+  // the block lists who needs you first, then who works (it is on the lock screen
+  // while anyone works or waits; the Dynamic Island lights up only for the waiting)
+  const busy = agents.filter((a) => a.state === 'working');
+  const props: RingsProps = { ...ringsProps([...calling, ...busy]), waiting: calling.length, working: busy.length };
   const key = JSON.stringify({ ...props, updated: 0, agents: props.agents.map((a) => a.key) });
   serial = serial.then(async () => {
     if (!started) {
@@ -67,7 +70,7 @@ export function syncWidgets(agents: Agent[]) {
       // 'immediate': an ended block used to stay on the lock screen for hours, empty
       if (current) await current.end('immediate', props);
       current = null;
-      status = 'никто не ждёт ответа — блок не показывается';
+      status = 'агенты не работают и никто не ждёт — блок не показывается';
       return;
     }
     if (current) {
