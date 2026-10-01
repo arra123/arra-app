@@ -43,7 +43,7 @@ function AraAnswer({ message, chatId, onRetry }: { message: ChatMessage; chatId:
               ))}
             </View>
           ) : null}
-          {message.streaming && !message.text ? <AraMascot size={34} mood="thinking" /> : null}
+          {/* while Arra thinks, the small Arra at the bottom left says so: a second one here doubled it */}
           {message.error ? (
             <View style={styles.error}>
               <SymbolView name="exclamationmark.triangle" size={13} tintColor={Colors.error} />
@@ -244,7 +244,7 @@ function AraStatus({ text, busy, bottom }: { text: string | null; busy: boolean;
   if (!text) return null;
   return (
     <Animated.View pointerEvents="none" entering={FadeIn.duration(220)} exiting={FadeOut.duration(180)} style={[statusStyles.box, lift]}>
-      <AraMascot size={20} mood={busy ? 'thinking' : 'idle'} />
+      <AraMascot size={30} mood={busy ? 'thinking' : 'idle'} />
       <T v="footnote" color={busy ? Colors.textSecondary : Colors.error} numberOfLines={1}>{text}</T>
     </Animated.View>
   );

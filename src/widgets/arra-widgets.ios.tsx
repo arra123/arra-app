@@ -21,13 +21,15 @@ import { createLiveActivity, createWidget } from 'expo-widgets';
 export type RingAgent = { key: string; title: string; project: string; state: 'work' | 'wait' | 'done'; min: number };
 export type RingsProps = { agents: RingAgent[]; working: number; waiting: number; updated: number };
 
-const COLORS = ['#0a84ff', '#bf5af2', '#ff9f0a', '#30d158', '#ff375f', '#64d2ff'];
+// (the colours live inside each widget function: it is sent to the extension as text,
+// and anything declared outside it does not exist there)
 
 const RingsActivity = (props: RingsProps) => {
   'widget';
-  const list = props.agents.slice(0, 4);
+  const COLORS = ['#0a84ff', '#bf5af2', '#ff9f0a', '#30d158', '#ff375f', '#64d2ff'];
+  const list = (props.agents || []).slice(0, 4);
   const colorOf = (i: number, a: RingAgent) => (a.state === 'done' ? '#30d158' : a.state === 'wait' ? '#ffd60a' : COLORS[i % COLORS.length]);
-  const summary = props.waiting ? `${props.working} работают · ${props.waiting} ждёт` : `${props.working} работают`;
+  const summary = props.waiting ? `${props.working || 0} работают · ${props.waiting} ждёт` : `${props.working || 0} работают`;
   const ring = (a: RingAgent, i: number, size: number) => (
     <Gauge
       value={Math.min(1, Math.max(0.04, a.min / 60))}
@@ -40,7 +42,7 @@ const RingsActivity = (props: RingsProps) => {
       {list.map((a, i) => (
         <VStack key={a.key} spacing={4}>
           {ring(a, i, 46)}
-          <Text modifiers={[font({ size: 11, weight: 'semibold' }), lineLimit(1), frame({ width: 70 })]}>{a.title}</Text>
+          <Text modifiers={[font({ size: 11, weight: 'semibold' }), foregroundStyle('#ffffff'), lineLimit(1), frame({ width: 70 })]}>{a.title}</Text>
           <Text modifiers={[font({ size: 10 }), foregroundStyle('#9a9aa2')]}>{a.state === 'done' ? 'готово' : a.state === 'wait' ? 'ждёт тебя' : `${a.min} мин`}</Text>
         </VStack>
       ))}
@@ -51,11 +53,11 @@ const RingsActivity = (props: RingsProps) => {
       <VStack spacing={10} modifiers={[padding({ all: 14 }), activityBackgroundTint('#161618'), widgetURL('arra://')]}>
         <HStack>
           <Image systemName="sparkles" color="#ffffff" />
-          <Text modifiers={[font({ size: 15, weight: 'bold' })]}>Arra</Text>
+          <Text modifiers={[font({ size: 15, weight: 'bold' }), foregroundStyle('#ffffff')]}>Arra</Text>
           <Spacer />
           <Text modifiers={[font({ size: 13 }), foregroundStyle('#9a9aa2')]}>{summary}</Text>
         </HStack>
-        {rings}
+        {list.length ? rings : <Text modifiers={[font({ size: 13 }), foregroundStyle('#9a9aa2')]}>Агенты отдыхают</Text>}
       </VStack>
     ),
     compactLeading: <Image systemName="sparkles" color="#ffffff" />,
@@ -68,7 +70,7 @@ const RingsActivity = (props: RingsProps) => {
     expandedLeading: (
       <HStack spacing={6} modifiers={[padding({ leading: 6 })]}>
         <Image systemName="sparkles" color="#ffffff" />
-        <Text modifiers={[font({ size: 15, weight: 'bold' })]}>Arra</Text>
+        <Text modifiers={[font({ size: 15, weight: 'bold' }), foregroundStyle('#ffffff')]}>Arra</Text>
       </HStack>
     ),
     expandedTrailing: <Text modifiers={[font({ size: 13 }), foregroundStyle('#9a9aa2'), padding({ trailing: 6 })]}>{summary}</Text>,
@@ -78,6 +80,7 @@ const RingsActivity = (props: RingsProps) => {
 
 const RingsWidget = (props: RingsProps, env: { widgetFamily?: string }) => {
   'widget';
+  const COLORS = ['#0a84ff', '#bf5af2', '#ff9f0a', '#30d158', '#ff375f', '#64d2ff'];
   const list = (props.agents || []).slice(0, env.widgetFamily === 'systemSmall' ? 2 : 4);
   const colorOf = (i: number, a: RingAgent) => (a.state === 'done' ? '#30d158' : a.state === 'wait' ? '#ffd60a' : COLORS[i % COLORS.length]);
   const total = (props.agents || []).length;

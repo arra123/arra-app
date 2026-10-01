@@ -1,3 +1,4 @@
+import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
 import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { FlatList, Platform, StyleSheet, View, type ListRenderItem } from 'react-native';
@@ -110,7 +111,11 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
       ) : null}
 
       {/* Только под статус-баром: сплошной фон без ступенек (полосатый градиент убран) */}
-      <View pointerEvents="none" style={[styles.fade, { height: insets.top, backgroundColor: Colors.background }]} />
+      {/* the whole header stands on frosted dark glass: the messages blur away under it instead of showing through the title */}
+      <BlurView pointerEvents="none" intensity={55} tint="dark" style={[styles.fade, { height: headerHeight }]}>
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(10,10,12,0.74)' }]} />
+        <View style={styles.headerLine} />
+      </BlurView>
       <View
         style={[styles.header, { paddingTop: insets.top + 4 + headerTop }]}
         pointerEvents="box-none"
@@ -154,7 +159,8 @@ const FADE = [0.96, 0.94, 0.9, 0.85, 0.78, 0.7, 0.6, 0.48, 0.36, 0.24, 0.13, 0.0
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
-  fade: { position: 'absolute', top: 0, left: 0, right: 0 },
+  fade: { position: 'absolute', top: 0, left: 0, right: 0, overflow: 'hidden' },
+  headerLine: { position: 'absolute', left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)' },
   header: { position: 'absolute', top: 0, left: 0, right: 0, paddingBottom: 6 },
   headerRow: {
     flexDirection: 'row',

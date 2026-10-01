@@ -44,7 +44,8 @@ export function syncWidgets(agents: Agent[]) {
     lastActivity = key;
     const live = props.working + props.waiting > 0;
     if (!live) {
-      if (current) await current.end('default', props);
+      // 'immediate': an ended block used to stay on the lock screen for hours, empty
+      if (current) await current.end('immediate', props);
       current = null;
       status = 'агентов в работе нет — блок не нужен';
       return;

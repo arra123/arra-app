@@ -62,7 +62,7 @@ export function activityPayload(props, now = Date.now()) {
       timestamp: ts,
       event: live ? 'update' : 'end',
       'content-state': { name: 'ArraRings', props: JSON.stringify(props) },
-      ...(live ? { 'stale-date': ts + 300 } : { 'dismissal-date': ts + 600 }),
+      ...(live ? { 'stale-date': ts + 300 } : { 'dismissal-date': ts }),
     },
   };
 }

@@ -125,7 +125,17 @@ export default function AgentScreen() {
 
 
   const userCount = messages.filter((m) => m.role === 'user').length;
-  const visiblePending = pending.filter((p) => userCount <= p.index && now - p.at < 90_000);
+  // a sent message leaves the local queue when the computer's log has it. The
+  // count alone is not enough: a long log is cut to its last messages, so the
+  // count stays the same and the message stood twice (once from the log, once
+  // from here) for a minute and a half. So it is matched by its text too.
+  const squash = (t: string) => t.replace(/\s+/g, ' ').trim().slice(0, 80);
+  const lastUsers = messages.filter((m) => m.role === 'user').slice(-6).map((m) => squash(m.text || ''));
+  const landed = (p: { text: string; index: number }) => {
+    const mine = squash(p.text);
+    return userCount > p.index || (!!mine && lastUsers.some((t) => t.startsWith(mine) || mine.startsWith(t.slice(0, 40)) && t.length > 8));
+  };
+  const visiblePending = pending.filter((p) => !landed(p) && now - p.at < 90_000);
 
   useEffect(() => {
     if (agent?.state !== 'working') setStopping(false);
