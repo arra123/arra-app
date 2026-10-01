@@ -82,7 +82,8 @@ export async function api<T = any>(path: string, opts: Options = {}): Promise<T>
     data = null;
   }
   if (!res.ok) {
-    throw new Error(data?.error || `Ошибка ${res.status}`);
+    // the status travels with the error: only a 401 means «log in again»
+    throw Object.assign(new Error(data?.error || `Ошибка ${res.status}`), { status: res.status });
   }
   return data as T;
 }

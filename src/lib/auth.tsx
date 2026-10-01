@@ -24,11 +24,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const token = await getToken();
         if (token) {
-          const { user } = await api<{ user: User }>('/me');
-          setUser(user);
+          // a weak network at the start: a few tries before the login screen is shown
+          for (let attempt = 0; ; attempt++) {
+            try {
+              const { user } = await api<{ user: User }>('/me');
+              setUser(user);
+              break;
+            } catch (error: any) {
+              if (error?.status === 401 || attempt >= 4) throw error;
+              await new Promise((resolve) => setTimeout(resolve, 1500));
+            }
+          }
         }
-      } catch {
-        await setToken(null);
+      } catch (error: any) {
+        // only a refused token logs out; no network at the start must not ask for the password again
+        if (error?.status === 401) await setToken(null);
       } finally {
         setLoading(false);
       }

@@ -355,7 +355,8 @@ export function createHub(deps = {}) {
     const client = u.clients.get(socket);
     if (!client || !msg || typeof msg.type !== 'string') return;
     client.at = now();
-    if (msg.type === 'ping') return;
+    // answer, or the phone decides the line is dead and reconnects every 45 s
+    if (msg.type === 'ping') { emit(socket, { type: 'pong' }); return; }
     const entry = { socket, reqId: msg.reqId ?? null, kind: 'command' };
     const key = text(msg.agentKey, 200);
     const item = key ? findItem(u, key) : null;

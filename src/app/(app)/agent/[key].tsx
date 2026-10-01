@@ -130,10 +130,17 @@ export default function AgentScreen() {
   // count stays the same and the message stood twice (once from the log, once
   // from here) for a minute and a half. So it is matched by its text too.
   const squash = (t: string) => t.replace(/\s+/g, ' ').trim().slice(0, 80);
-  const lastUsers = messages.filter((m) => m.role === 'user').slice(-6).map((m) => squash(m.text || ''));
-  const landed = (p: { text: string; index: number }) => {
+  const lastUsers = messages.filter((m) => m.role === 'user').slice(-6);
+  // only messages the log got AFTER this one was sent count («да», «ок» sent
+  // twice in a row are different messages and both must show)
+  const landed = (p: { text: string; index: number; at: number }) => {
     const mine = squash(p.text);
-    return userCount > p.index || (!!mine && lastUsers.some((t) => t.startsWith(mine) || mine.startsWith(t.slice(0, 40)) && t.length > 8));
+    if (userCount > p.index) return true;
+    return !!mine && lastUsers.some((m) => {
+      const t = squash(m.text || '');
+      const after = !m.ts || m.ts * 1000 >= p.at - 4000;
+      return after && (t === mine || (mine.length > 12 && (t.startsWith(mine) || mine.startsWith(t))));
+    });
   };
   const visiblePending = pending.filter((p) => !landed(p) && now - p.at < 90_000);
 
