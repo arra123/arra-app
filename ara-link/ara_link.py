@@ -322,6 +322,14 @@ class AraLink:
         if not isinstance(data, dict) or data.get("same"):
             return
         data = fit_transcript(data)
+        # a model picked on the phone: the log still names the old one until the
+        # agent answers again, and the phone showed the change being undone
+        picked = getattr(self, "model_picked", {}).get(key)
+        if picked:
+            if data.get("model") and data.get("model") != picked["was"]:
+                self.model_picked.pop(key, None)   # the log caught up (or it changed elsewhere)
+            else:
+                data = {**data, "model": picked["model"]}
         stamp = hashlib.sha1(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         if not force and self.tx_seen.get(key) == stamp:
             return
@@ -491,6 +499,9 @@ class AraLink:
             for key, entry in self.watch.items():
                 if entry.get("term") == agent.get("term") and entry.get("device") == agent.get("device"):
                     cached = self.transcripts.get(key)
+                    if not hasattr(self, "model_picked"):
+                        self.model_picked = {}
+                    self.model_picked[key] = {"model": delivery["model"], "was": (cached or {}).get("model") or ""}
                     if cached:
                         data = {**cached, "model": delivery["model"]}
                         self.remember(key, data)

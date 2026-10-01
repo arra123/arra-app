@@ -13,6 +13,10 @@ let lastWidget = '';
 let lastWidgetAt = 0;
 let started = false;
 let serial: Promise<void> = Promise.resolve();
+let status = 'ещё не запускался';
+
+/** What the widgets are doing: shown in Settings → Тесты, to see why the lock screen block is missing. */
+export function widgetStatus() { return status; }
 
 /**
  * Keeps the home screen widget and the lock screen Live Activity («Кольца»)
@@ -42,20 +46,25 @@ export function syncWidgets(agents: Agent[]) {
     if (!live) {
       if (current) await current.end('default', props);
       current = null;
+      status = 'агентов в работе нет — блок не нужен';
       return;
     }
-    if (current) await current.update(props);
-    else if (AppState.currentState === 'active') {
+    if (current) {
+      await current.update(props);
+      status = `обновлён: ${props.working} работают, ${props.waiting} ждут`;
+    } else if (AppState.currentState === 'active') {
       // iOS lets an app start a Live Activity only while it is on screen
       current = ringsActivity.start(props, 'arra://');
       watchToken(current);
-    }
-  }).catch((error) => console.warn('Arra widgets:', String(error)));
+      status = `запущен: ${props.working} работают, ${props.waiting} ждут`;
+    } else status = 'приложение не на экране — iOS не даёт запустить блок';
+  }).catch((error) => { status = 'ошибка: ' + String(error); console.warn('Arra widgets:', String(error)); });
 }
 
 function watchToken(activity: Activity) {
   const send = (token: string | null) => {
-    if (token) api('/push/activity', { body: { token } }).catch(() => {});
+    if (token) api('/push/activity', { body: { token } }).then(() => { status += ' · токен на сервере'; }).catch((e) => { status += ' · токен не ушёл: ' + String(e); });
+    else status += ' · токена пуша нет';
   };
   activity.addPushTokenListener((event) => send(event.pushToken));
   activity.getPushToken().then(send).catch(() => {});

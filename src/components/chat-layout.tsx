@@ -109,12 +109,8 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
         <Animated.View pointerEvents="box-none" style={[styles.empty, { paddingTop: headerHeight }, emptyLift]}>{empty}</Animated.View>
       ) : null}
 
-      {/* Как в ChatGPT: сплошной полосы нет, лента уходит под плавающие капсулы, верх мягко затемнён */}
-      <View pointerEvents="none" style={[styles.fade, { height: insets.top + headerTop + 84 }]}>
-        {FADE.map((opacity, i) => (
-          <View key={i} style={{ flex: 1, backgroundColor: Colors.background, opacity }} />
-        ))}
-      </View>
+      {/* Только под статус-баром: сплошной фон без ступенек (полосатый градиент убран) */}
+      <View pointerEvents="none" style={[styles.fade, { height: insets.top, backgroundColor: Colors.background }]} />
       <View
         style={[styles.header, { paddingTop: insets.top + 4 + headerTop }]}
         pointerEvents="box-none"

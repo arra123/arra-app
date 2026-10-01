@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SplashOverlay, type SplashVariant } from '@/components/splash-overlay';
 import { IconButton, Press, T } from '@/components/ui';
+import { widgetStatus } from '@/widgets/sync';
 import { Colors } from '@/constants/theme';
 
 type Symbol = ComponentProps<typeof SymbolView>['name'];
@@ -30,6 +31,7 @@ const WIDGETS: { id: string; title: string; sub: string; color: string; icon: Sy
 export default function Tests() {
   const insets = useSafeAreaInsets();
   const [playing, setPlaying] = useState<SplashVariant | null>(null);
+  const [tick, setTick] = useState(0);
 
   const openWidget = (v: string) => {
     if (Platform.OS === 'web') window.location.href = `/mock/live.html?v=${v}`;
@@ -55,6 +57,18 @@ export default function Tests() {
               <SymbolView name="play.circle.fill" size={24} tintColor={Colors.text} />
             </Press>
           ))}
+        </View>
+
+        <T v="caption" weight="600" color={Colors.textSecondary} style={styles.sectionTitle}>Живой блок сейчас</T>
+        <View style={styles.group}>
+          <Press onPress={() => setTick((n) => n + 1)} style={styles.row} accessibilityLabel="Состояние живого блока">
+            <View style={[styles.tile, { backgroundColor: '#ff9f0a' }]}><SymbolView name="waveform" size={17} tintColor="#fff" weight="semibold" /></View>
+            <View style={{ flex: 1 }}>
+              <T v="callout" weight="600">Состояние</T>
+              <T v="caption" color={Colors.textSecondary}>{widgetStatus()}{tick ? '' : ''}</T>
+            </View>
+            <SymbolView name="arrow.clockwise" size={15} tintColor={Colors.textTertiary} />
+          </Press>
         </View>
 
         <T v="caption" weight="600" color={Colors.textSecondary} style={styles.sectionTitle}>Виджет на экране блокировки</T>

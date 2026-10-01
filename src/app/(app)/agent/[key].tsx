@@ -31,10 +31,13 @@ type Row =
   | { kind: 'message'; key: string; message: TranscriptMessage }
   | { kind: 'pending'; key: string; text: string; images: string[]; localImages: string[]; progress: number; total: number };
 
+// the same choice as in tito on the computer: exact models, not just families
 const CLAUDE_MODELS = [
-  { value: 'opus', label: 'Opus', hint: 'самая умная' },
-  { value: 'sonnet', label: 'Sonnet', hint: 'баланс' },
-  { value: 'haiku', label: 'Haiku', hint: 'самая быстрая' },
+  { value: 'opus', label: 'Opus 5.5', hint: 'самый умный' },
+  { value: 'opus[1m]', label: 'Opus 5.5 · 1M', hint: 'длинный контекст' },
+  { value: 'sonnet', label: 'Sonnet 5.5', hint: 'быстрый и умный' },
+  { value: 'haiku', label: 'Haiku 4.5', hint: 'самый быстрый' },
+  { value: 'claude-fable-5-1', label: 'Fable 5.1', hint: 'новая модель' },
 ];
 
 const CODEX_MODELS = [
@@ -293,7 +296,8 @@ export default function AgentScreen() {
       items: models.map((m) => ({
         label: m.label,
         subtitle: m.hint,
-        checked: model.toLowerCase() === m.value || currentModel.toLowerCase() === m.label.toLowerCase(),
+        checked: model.toLowerCase() === m.value || currentModel.toLowerCase() === m.label.toLowerCase()
+          || (!!currentModel && m.value !== 'opus[1m]' && m.label.toLowerCase().startsWith(currentModel.toLowerCase())),
         onPress: () => changeModel(m.value),
       })),
     });
