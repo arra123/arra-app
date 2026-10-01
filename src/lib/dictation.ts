@@ -74,6 +74,8 @@ export function useDictation(text: string, setText: (text: string) => void) {
   const partial = useRef('');
   const heardAny = useRef(false);
   const cancelled = useRef(false);
+  /** the recording of what was said (the recogniser keeps it for us) */
+  const audioUri = useRef<string | null>(null);
   const waiters = useRef<((text: string) => void)[]>([]);
   const textRef = useRef(text);
   useEffect(() => {
@@ -108,6 +110,28 @@ export function useDictation(text: string, setText: (text: string) => void) {
       partial.current = '';
       render();
     }
+    // The phone's own recognition is only the live preview. The sound it
+    // recorded goes to the computer, whose model (the same as the desktop
+    // dictation) hears Russian better and puts the punctuation: its text
+    // replaces the preview. No computer, no answer in time: the preview stays.
+    const uri = audioUri.current;
+    audioUri.current = null;
+    if (!cancelled.current && heardAny.current && uri) {
+      setMode('transcribing');
+      const liveText = committed.current;
+      const timeout = new Promise<string>((resolve) => setTimeout(() => resolve(''), 20_000));
+      Promise.race([transcribe(uri).catch(() => ''), timeout]).then((better) => {
+        if (better && better.trim() && !cancelled.current && committed.current === liveText) {
+          committed.current = better.trim();
+          setEngine('laptop');
+          render();
+          haptic.success();
+        }
+        setMode('idle');
+        settle(textRef.current);
+      });
+      return;
+    }
     setMode((m) => (m === 'live' ? 'idle' : m));
     settle(textRef.current);
   }
@@ -137,6 +161,10 @@ export function useDictation(text: string, setText: (text: string) => void) {
     render();
   });
 
+  useSpeechRecognitionEvent('audioend', (event) => {
+    if (active.current && event.uri) audioUri.current = event.uri;
+  });
+
   useSpeechRecognitionEvent('volumechange', (event) => {
     if (!active.current) return;
     started.current = true;
@@ -145,8 +173,10 @@ export function useDictation(text: string, setText: (text: string) => void) {
 
   useSpeechRecognitionEvent('end', () => {
     if (!active.current) return;
-    finishLive();
     if (heardAny.current && !cancelled.current) haptic.success();
+    // the recording's address may come a moment after «end»
+    if (audioUri.current) finishLive();
+    else setTimeout(() => { if (active.current) finishLive(); }, 400);
   });
 
   useSpeechRecognitionEvent('error', (event) => {
@@ -204,6 +234,7 @@ export function useDictation(text: string, setText: (text: string) => void) {
       heardAny.current = false;
       cancelled.current = false;
       started.current = false;
+      audioUri.current = null;
       active.current = true;
       step = 'запуск';
       ExpoSpeechRecognitionModule.start({
@@ -215,6 +246,8 @@ export function useDictation(text: string, setText: (text: string) => void) {
         iosTaskHint: 'dictation',
         iosCategory: { category: 'playAndRecord', categoryOptions: ['defaultToSpeaker', 'allowBluetooth'], mode: 'measurement' },
         volumeChangeEventOptions: { enabled: true, intervalMillis: 80 },
+        // keep the sound: the computer recognises it again, better, after ■
+        recordingOptions: { persist: true },
       });
       setEngine(onDevice ? 'phone' : 'apple');
       setStartedAt(Date.now());

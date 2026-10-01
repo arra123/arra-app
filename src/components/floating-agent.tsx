@@ -64,7 +64,7 @@ function savePlace(place: Place) {
   }
 }
 
-const H = 34;
+const H = 52;
 const MARGIN = 10;
 /** Зона касания язычка у края; сама полоска тоньше */
 const TAB_HIT = 24;
@@ -240,6 +240,13 @@ export function FloatingAgent({ agent, transcript, plan, helpers, now, stopping,
   // На агентике только план и помощники; статус и минуты — в шапке
   const done = plan.filter((p) => p.status === 'completed').length;
   const active = helpers.filter((h) => h.active);
+  // in words, like the buddy on the computer
+  const waitsHelper = state === 'working' ? awaitedHelper(agent, transcript, now) : null;
+  const saying = stopping ? 'останавливаю…'
+    : state === 'working' ? (waitsHelper ? 'ждёт помощника' : (currentActivity(agent, transcript) || 'работает'))
+    : state === 'waiting' ? 'ждёт тебя'
+    : state === 'error' ? 'ошибка'
+    : 'готов';
 
   return (
     <>
@@ -252,22 +259,33 @@ export function FloatingAgent({ agent, transcript, plan, helpers, now, stopping,
           accessibilityRole="button"
           accessibilityLabel="Агент: подробности"
           accessibilityHint="Тяни, чтобы передвинуть; смахни за край, чтобы спрятать">
-          <View style={styles.capsule}>
-            <AraMascot size={24} mood={state === 'working' ? 'thinking' : 'idle'} />
-            {state === 'working' || stopping ? <Spinner size={10} color={Colors.working} /> : null}
-            {plan.length ? (
-              <T v="caption" weight="600" color={Colors.textSecondary} style={{ fontVariant: ['tabular-nums'] }}>
-                {done}/{plan.length}
+          {/* a small copy of the computer's buddy: the mascot and, in words, what
+              it is doing. At the right edge the layout is mirrored, so the
+              mascot always stands at the screen's edge and the words inside. */}
+          <View style={[styles.capsule, sideJS ? styles.capsuleRight : null]}>
+            <AraMascot size={38} mood={state === 'working' ? 'thinking' : 'idle'} />
+            <View style={[styles.words, { alignItems: sideJS ? 'flex-end' : 'flex-start' }]}>
+              <T v="footnote" weight="600" color={state === 'waiting' ? Colors.waiting : state === 'error' ? Colors.error : Colors.text} numberOfLines={1}>
+                {saying}
               </T>
-            ) : null}
-            {active.length ? (
-              <View style={styles.helpers} accessibilityLabel={`Помощников: ${active.length}`}>
-                {active.slice(0, 4).map((h, i) => (
-                  <View key={h.id} style={[styles.helperDot, { backgroundColor: Colors.helpers[i % Colors.helpers.length] }]} />
-                ))}
-                {active.length > 4 ? <T v="tiny" color={Colors.textSecondary}>+{active.length - 4}</T> : null}
+              <View style={styles.sub}>
+                {state === 'working' || stopping ? <Spinner size={9} color={Colors.working} /> : null}
+                {plan.length ? (
+                  <T v="tiny" weight="600" color={Colors.textSecondary} style={{ fontVariant: ['tabular-nums'] }}>
+                    план {done}/{plan.length}
+                  </T>
+                ) : null}
+                {active.length ? (
+                  <View style={styles.helpers} accessibilityLabel={`Помощников: ${active.length}`}>
+                    {active.slice(0, 4).map((h, i) => (
+                      <View key={h.id} style={[styles.helperDot, { backgroundColor: Colors.helpers[i % Colors.helpers.length] }]} />
+                    ))}
+                    {active.length > 4 ? <T v="tiny" color={Colors.textSecondary}>+{active.length - 4}</T> : null}
+                  </View>
+                ) : null}
+                {!plan.length && !active.length && state !== 'working' ? <T v="tiny" color={Colors.textTertiary}>нажми: подробности</T> : null}
               </View>
-            ) : null}
+            </View>
           </View>
         </Animated.View>
       </GestureDetector>
@@ -361,14 +379,18 @@ const styles = StyleSheet.create({
     borderRadius: H / 2,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingLeft: 6,
-    paddingRight: 10,
+    gap: 8,
+    paddingLeft: 7,
+    paddingRight: 14,
     minWidth: H + 8,
+    maxWidth: 250,
     backgroundColor: Colors.cardRaised,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: Colors.hairline,
   },
+  capsuleRight: { flexDirection: 'row-reverse', paddingLeft: 14, paddingRight: 7 },
+  words: { flexShrink: 1, gap: 2 },
+  sub: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 12 },
   helpers: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   helperDot: { width: 7, height: 7, borderRadius: 4 },
   tab: { position: 'absolute', top: 0, left: 0, width: TAB_HIT, height: TAB_H, justifyContent: 'center', paddingHorizontal: 2 },

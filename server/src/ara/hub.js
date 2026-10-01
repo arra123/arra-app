@@ -495,7 +495,9 @@ export function createHub(deps = {}) {
   /** Голос с телефона → текст на ноутбуке (Handy, модель GigaAM): бесплатно и по-русски. */
   function transcribe(userId, blob) {
     const u = user(userId);
-    const target = pickHostForDevice(hostList(u), 'laptop');
+    // the laptop first (as before), else the PC, else whatever computer is online
+    const hosts = hostList(u);
+    const target = pickHostForDevice(hosts, 'laptop') || pickHostForDevice(hosts, 'pc') || hosts[0]?.tokenId || null;
     return new Promise((resolve, reject) => {
       forward(u, userId, target, {
         type: 'ara.transcribe',

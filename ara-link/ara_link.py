@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import shutil
 import logging
 import os
 import re
@@ -459,7 +460,9 @@ class AraLink:
                                            "-ar", "16000", "-ac", "1", str(wav)], timeout=60)
             if code != 0:
                 raise RuntimeError(err.strip()[-200:] or "Не удалось прочитать запись")
-            argv = [str(Path("~/.local/bin/handy").expanduser()), "-f", str(wav), "--json"]
+            # Handy lives in ~/.local/bin on the laptop and in /usr/bin on the PC
+            handy = Path("~/.local/bin/handy").expanduser()
+            argv = [str(handy) if handy.exists() else (shutil.which("handy") or "handy"), "-f", str(wav), "--json"]
             if model:
                 argv += ["--model", model]
             code, out, err = await self.run(argv, timeout=120)
