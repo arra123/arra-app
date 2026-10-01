@@ -1,5 +1,5 @@
-import { HStack, Spacer, Text, VStack } from '@expo/ui/swift-ui';
-import { activityBackgroundTint, font, foregroundStyle, lineLimit, padding, widgetURL } from '@expo/ui/swift-ui/modifiers';
+import { Capsule, HStack, RoundedRectangle, Spacer, Text, VStack, ZStack } from '@expo/ui/swift-ui';
+import { activityBackgroundTint, font, foregroundStyle, frame, lineLimit, padding, widgetURL } from '@expo/ui/swift-ui/modifiers';
 import { createLiveActivity, createWidget } from 'expo-widgets';
 
 /**
@@ -37,10 +37,20 @@ const RingsActivity = (props: RingsProps) => {
   return {
     banner: (
       <VStack alignment="leading" spacing={9} modifiers={[padding({ all: 16 }), activityBackgroundTint('#111114'), widgetURL('arra://')]}>
-        <HStack spacing={6}>
-          <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundStyle(headColor)]}>{head}</Text>
+        {/* our mascot (a white block with two eyes) and the headline next to it */}
+        <HStack spacing={10}>
+          <ZStack>
+            <RoundedRectangle cornerRadius={10} modifiers={[foregroundStyle('#ffffff'), frame({ width: 40, height: 29 })]} />
+            <HStack spacing={7}>
+              <Capsule modifiers={[foregroundStyle('#16171b'), frame({ width: 5, height: 9 })]} />
+              <Capsule modifiers={[foregroundStyle('#16171b'), frame({ width: 5, height: 9 })]} />
+            </HStack>
+          </ZStack>
+          <VStack alignment="leading" spacing={1}>
+            <Text modifiers={[font({ size: 15, weight: 'bold' }), foregroundStyle(headColor)]}>{head}</Text>
+            <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{n && w ? `ещё ${w} работают` : n ? 'ответь, и он продолжит' : 'Arra следит за ними'}</Text>
+          </VStack>
           <Spacer />
-          <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{n && w ? `ещё ${w} работают` : 'Arra'}</Text>
         </HStack>
         {/* the rows in a stack of their own: a list next to other children was not drawn at all */}
         <VStack alignment="leading" spacing={9}>
