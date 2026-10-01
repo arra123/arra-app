@@ -28,6 +28,13 @@ export const config = {
     chatModel: process.env.AI_CHAT_MODEL || 'gpt-4o',
     visionModel: process.env.AI_VISION_MODEL || 'gpt-4o',
     voiceModel: process.env.AI_VOICE_MODEL || 'whisper-1',
+    // «Разговор голосом»: быстрая модель для ответа и синтез речи
+    talkModel: process.env.AI_TALK_MODEL || 'gpt-4.1-mini',
+    speakModel: process.env.AI_SPEAK_MODEL || 'gpt-4o-mini-tts',
+    speakVoice: process.env.AI_SPEAK_VOICE || 'coral',
+    speakInstructions:
+      process.env.AI_SPEAK_INSTRUCTIONS ||
+      'Говори по-русски без акцента, спокойно и тепло, в живом разговорном темпе, как в личной беседе.',
   },
 
   // Куда складывать загруженные файлы на сервере

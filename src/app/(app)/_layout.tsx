@@ -36,6 +36,8 @@ export default function AppLayout() {
       {/* «Чат | Работа»: мягкая смена экрана, как вкладки, а не въезд сбоку */}
       <Stack.Screen name="chat/[id]" options={{ animation: 'fade', animationDuration: 220, gestureEnabled: false }} />
       <Stack.Screen name="ask" />
+      {/* Разговор голосом (arra://voice): один на всё приложение — второй экран делил бы с первым микрофон */}
+      <Stack.Screen name="voice" dangerouslySingular options={{ animation: 'fade', animationDuration: 220 }} />
       <Stack.Screen
         name="new"
         options={{
