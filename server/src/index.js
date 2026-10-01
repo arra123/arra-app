@@ -10,6 +10,7 @@ import aiRoutes from './routes/ai.js';
 import araRoutes from './routes/ara.js';
 import authRoutes from './routes/auth.js';
 import deviceRoutes from './routes/devices.js';
+import kbRoutes from './routes/kb.js';
 import pushRoutes from './routes/push.js';
 import relayRoutes from './routes/relay.js';
 
@@ -41,6 +42,7 @@ await app.register(aiRoutes);
 await app.register(deviceRoutes);
 await app.register(relayRoutes);
 await app.register(araRoutes);
+await app.register(kbRoutes);
 
 try {
   await app.listen({ port: config.port, host: config.host });
