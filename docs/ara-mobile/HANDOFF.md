@@ -122,7 +122,7 @@ npm ci
 npx tsc --noEmit && npm run lint
 eas build -p ios -e production
 eas submit -p ios -e production
-node scripts/asc-add-latest-to-group.mjs   # положить сборку в группу TestFlight
+node scripts/asc-add-latest-to-group.mjs "$BUILD_NUMBER"   # точная новая сборка, не предыдущий билд
 ```
 
 Внимание: `.github/workflows/ios.yml` собирает и отправляет в TestFlight при
