@@ -21,6 +21,7 @@ const RENDERER_VERSION = '3';
 let serial: Promise<void> = Promise.resolve();
 let status = 'ещё не запускался';
 let latestAgents: Agent[] | null = null;
+let tokenListener: { remove(): void } | null = null;
 
 AppState.addEventListener('change', (state) => {
   if (state === 'active' && latestAgents) {
@@ -84,6 +85,8 @@ export function syncWidgets(agents: Agent[]) {
       // Version 130 reused old, sometimes already-ended activities. Replace
       // their archived layout once, while iOS permits starting a fresh block.
       if (AppState.currentState !== 'active') return;
+      tokenListener?.remove();
+      tokenListener = null;
       const instances = ringsActivity.getInstances();
       if (await SecureStore.getItemAsync(RENDERER_KEY) !== RENDERER_VERSION) {
         for (const instance of instances) await instance.end('immediate');
@@ -100,6 +103,8 @@ export function syncWidgets(agents: Agent[]) {
     if (!live) {
       // 'immediate': an ended block used to stay on the lock screen for hours, empty
       if (current) await current.end('immediate', props);
+      tokenListener?.remove();
+      tokenListener = null;
       current = null;
       lastActivity = key;
       status = 'нет открытых диалогов — блок закрыт';
@@ -124,7 +129,8 @@ function watchToken(activity: Activity) {
     if (token) api('/push/activity', { body: { token, layoutVersion: 2 } }).then(() => { status += ' · токен на сервере'; }).catch((e) => { status += ' · токен не ушёл: ' + String(e); });
     else status += ' · токена пуша нет';
   };
-  activity.addPushTokenListener((event) => send(event.pushToken));
+  tokenListener?.remove();
+  tokenListener = activity.addPushTokenListener((event) => send(event.pushToken));
   activity.getPushToken().then(send).catch(() => {});
 }
 

@@ -20,6 +20,9 @@ module.exports = function withDialogWidgets(config) {
     factory = replaceRequired(factory,
       'return Activity<LiveActivityAttributes>.activities.map { activity in',
       'return Activity<LiveActivityAttributes>.activities.filter { $0.content.state.name == name && ($0.activityState == .active || $0.activityState == .stale) }.map { activity in', 'active activity instances');
+    factory = replaceRequired(factory,
+      '.map { activity in\n      LiveActivity(id: activity.id, name: name)\n    }',
+      '.map { activity in\n      let instance = LiveActivity(id: activity.id, name: name)\n      instance.observePushTokenUpdates(for: activity, pushNotificationsEnabled: LiveActivityFactory.pushNotificationsEnabled)\n      return instance\n    }', 'restored activity token observer');
     fs.writeFileSync(factoryPath, factory);
     const indexPath = path.join(c.modRequest.platformProjectRoot, 'ExpoWidgetsTarget/index.swift');
     let index = replaceRequired(fs.readFileSync(indexPath, 'utf8'), 'WidgetLiveActivity()', 'ArraLiveActivity()', 'native activity');
