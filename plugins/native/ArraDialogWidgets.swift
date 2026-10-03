@@ -72,6 +72,7 @@ struct ArraCycleDialog: LiveActivityIntent {
 }
 
 public struct ArraDialogCard: View {
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   private let props: [String: Any]
   public init(props: [String: Any]) { self.props = props }
   public init(json: String) { props = ArraSelection.parse(json) }
@@ -87,21 +88,26 @@ public struct ArraDialogCard: View {
     let color = Self.mascotColor(mascot)
     let label = state == "work" ? "В работе" : state == "wait" ? "Нужен ответ" : state == "error" ? "Ошибка" : state == "done" ? "Готово" : "Не работает сейчас"
     let statusColor: Color = state == "wait" ? .yellow : state == "error" ? .red : state == "done" ? .green : .secondary
+    let accessible = dynamicTypeSize.isAccessibilitySize
+    let project = [agent["project"] as? String ?? "Arra", agent["where"] as? String ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+    let title = agent["title"] as? String ?? "Нет открытых диалогов"
+    let note = agent["note"] as? String ?? "Откройте агента в Arra"
     HStack(spacing: 10) {
       Link(destination: ArraSelection.url(props)) {
         HStack(spacing: 10) {
-          Image("mascot-\(mascot)").resizable().scaledToFit().frame(width: 76, height: 92).accessibilityHidden(true)
+          if !accessible { Image("mascot-\(mascot)").resizable().scaledToFit().frame(width: 76, height: 92).accessibilityHidden(true) }
           VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
+              if accessible { Image("mascot-\(mascot)").resizable().scaledToFit().frame(width: 32, height: 32).accessibilityHidden(true) }
               if number > 0 { Text("\(number)").foregroundStyle(color).bold() }
-              Text([agent["project"] as? String ?? "Arra", agent["where"] as? String ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")).lineLimit(1)
+              Text(accessible && ["wait", "error", "done"].contains(state) ? label : project).foregroundStyle(accessible && ["wait", "error", "done"].contains(state) ? statusColor : .secondary).lineLimit(1)
             }.font(.caption2).foregroundStyle(.secondary)
-            Text(agent["title"] as? String ?? "Нет открытых диалогов").font(.subheadline.weight(.semibold)).lineLimit(2)
-            Text(agent["note"] as? String ?? "Откройте агента в Arra").font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(statusColor).lineLimit(1)
+            Text(title).font(accessible ? .caption.weight(.semibold) : .subheadline.weight(.semibold)).lineLimit(accessible ? 1 : 2)
+            Text(note).font(accessible ? .caption2 : .caption).foregroundStyle(.secondary).lineLimit(2)
+            if !accessible { Text(label).font(.caption2.weight(.semibold)).foregroundStyle(statusColor).lineLimit(1) }
           }.frame(maxWidth: .infinity, alignment: .leading)
         }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-      }.buttonStyle(.plain).accessibilityLabel("Открыть диалог: \(agent["title"] as? String ?? "Arra")")
+      }.buttonStyle(.plain).accessibilityLabel("Открыть диалог: \(project), \(number). \(title). \(note). \(label)")
       VStack(spacing: 2) {
         if #available(iOS 17.0, *) {
           cycleButton(-1, key: key, enabled: list.count > 1)
