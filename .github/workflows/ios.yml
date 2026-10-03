@@ -5,9 +5,18 @@ on:
     branches:
       - master
   workflow_dispatch:
+    inputs:
+      ipa_run:
+        description: 'Повторно отправить IPA из этого workflow run, без новой сборки'
+        required: false
+        type: string
 
 jobs:
   build:
+    needs: native-preview
+    permissions:
+      contents: read
+      actions: read
     runs-on: macos-15
     timeout-minutes: 90
     steps:
@@ -28,6 +37,8 @@ jobs:
         env:
           IOS_DIST_P12_B64: ${{ secrets.IOS_DIST_P12_B64 }}
           IOS_PROFILE_B64: ${{ secrets.IOS_PROFILE_B64 }}
+          IOS_WIDGET_PROFILE_B64: ${{ secrets.IOS_WIDGET_PROFILE_B64 }}
+          IOS_NOTIFICATION_PROFILE_B64: ${{ secrets.IOS_NOTIFICATION_PROFILE_B64 }}
           ASC_KEY_P8_B64: ${{ secrets.ASC_KEY_P8_B64 }}
           IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
         run: |
@@ -36,27 +47,87 @@ jobs:
           echo "$IOS_DIST_P12_B64" | base64 --decode > credentials/dist.p12
           echo "$IOS_PROFILE_B64" | base64 --decode > credentials/profile.mobileprovision
           echo "$ASC_KEY_P8_B64" | base64 --decode > credentials/AuthKey_63Y56V3L2D.p8
-          printf '{ "ios": { "provisioningProfilePath": "credentials/profile.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } } }' "$IOS_DIST_P12_PASSWORD" > credentials.json
+          echo "$IOS_WIDGET_PROFILE_B64" | base64 --decode > credentials/widgets.mobileprovision
+          echo "$IOS_NOTIFICATION_PROFILE_B64" | base64 --decode > credentials/notifications.mobileprovision
+          # the app and its widget extension (expo-widgets), each with its profile
+          printf '{ "ios": { "Arra": { "provisioningProfilePath": "credentials/profile.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } }, "ExpoWidgetsTarget": { "provisioningProfilePath": "credentials/widgets.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } }, "ArraNotifications": { "provisioningProfilePath": "credentials/notifications.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } } } }' "$IOS_DIST_P12_PASSWORD" "$IOS_DIST_P12_PASSWORD" "$IOS_DIST_P12_PASSWORD" > credentials.json
 
       - name: Install deps
+        if: ${{ !inputs.ipa_run }}
         run: npm ci || npm install
 
+      - name: Check widget lifecycle and delivery regressions
+        if: ${{ !inputs.ipa_run }}
+        run: |
+          npm install --prefix server --no-package-lock --ignore-scripts
+          node scripts/check-widget-sync.mjs
+          node scripts/check-dialog-widgets.mjs
+          node --test server/tests/live-activity.test.mjs
+
       - name: Build IPA (eas local)
+        if: ${{ !inputs.ipa_run }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: npx eas-cli@latest build --platform ios --profile production --local --non-interactive --output "$GITHUB_WORKSPACE/Arra.ipa"
 
-      - name: Submit to TestFlight
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: npx eas-cli@latest submit --platform ios --path "$GITHUB_WORKSPACE/Arra.ipa" --profile production --non-interactive
-
-      - name: Add build to Internal testing group
-        run: node scripts/asc-add-latest-to-group.mjs
-
       - name: Upload artifact
+        if: ${{ !inputs.ipa_run }}
         uses: actions/upload-artifact@v4
         with:
           name: Arra-ipa
           path: ${{ github.workspace }}/Arra.ipa
           if-no-files-found: warn
+
+      - name: Restore existing IPA
+        if: ${{ inputs.ipa_run }}
+        uses: actions/download-artifact@v4
+        with:
+          name: Arra-ipa
+          run-id: ${{ inputs.ipa_run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read exact release target
+        run: |
+          set -e
+          unzip -p Arra.ipa Payload/Arra.app/Info.plist > "$RUNNER_TEMP/arra-info.plist"
+          echo "ARRA_BUILD=$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/arra-info.plist")" >> "$GITHUB_ENV"
+          echo "ARRA_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/arra-info.plist")" >> "$GITHUB_ENV"
+
+      # straight to App Store Connect with Apple's own tool (the API key):
+      # the free Expo submission queue kept a build waiting for an hour
+      - name: Upload to App Store Connect (altool)
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.appstoreconnect/private_keys
+          cp credentials/AuthKey_63Y56V3L2D.p8 ~/.appstoreconnect/private_keys/
+          xcrun altool --upload-app -f "$GITHUB_WORKSPACE/Arra.ipa" -t ios \
+            --apiKey 63Y56V3L2D --apiIssuer 63274269-2c9e-473b-a82d-c8c68c3718ab \
+            2>&1 | tee "$RUNNER_TEMP/arra-upload.log"
+          # altool can print ERROR and still exit 0. Never treat that as delivery.
+          if grep -Eq 'ERROR:|ERROR ITMS' "$RUNNER_TEMP/arra-upload.log"; then
+            exit 1
+          fi
+
+      - name: Add build to Internal testing group
+        run: |
+          node scripts/asc-add-latest-to-group.mjs "$ARRA_BUILD"
+          node scripts/check-release.mjs "$ARRA_VERSION"
+
+  native-preview:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Render production SwiftUI cards in iOS Simulator
+        run: bash scripts/render-native-widgets.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-widget-evidence
+          path: native-widget-evidence
+          if-no-files-found: error

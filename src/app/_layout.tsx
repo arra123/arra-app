@@ -1,67 +1,84 @@
-import {
-  Inter_400Regular,
-  Inter_500Medium,
-  Inter_600SemiBold,
-  Inter_700Bold,
-  Inter_800ExtraBold,
-  useFonts,
-} from '@expo-google-fonts/inter';
-import { DarkTheme, ThemeProvider } from 'expo-router';
-import * as ScreenOrientation from 'expo-screen-orientation';
+import { Platform } from 'react-native';
+import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import * as Updates from 'expo-updates';
 import { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
-import { AuthScreen } from '@/components/auth-screen';
+import { SplashOverlay, type SplashVariant } from '@/components/splash-overlay';
+import { Colors } from '@/constants/theme';
 import { AuthProvider, useAuth } from '@/lib/auth';
-import UlyanaApp from '@/ulyana/ulyana-app';
 
-// Секретный аккаунт: вход «ульяна» открывает совсем другое приложение (УльянаOS).
-const SECRET_LOGIN = 'ульяна';
+const theme = {
+  ...DarkTheme,
+  colors: {
+    ...DarkTheme.colors,
+    background: Colors.background,
+    card: Colors.background,
+    text: Colors.text,
+    border: Colors.separator,
+    primary: Colors.text,
+  },
+};
+
+// the preview on a computer can ask for a splash variant: /?splash=wave
+const SPLASH_FROM_URL = (Platform.OS === 'web' && typeof window !== 'undefined'
+  ? new URLSearchParams(window.location.search).get('splash') : null) as SplashVariant | null;
+
+function Splash() {
+  const { loading } = useAuth();
+  return <SplashOverlay ready={!loading} variant={SPLASH_FROM_URL ?? 'roll'} />;
+}
 
 function Gate() {
   const { user, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator />
-      </View>
-    );
-  }
-  if (!user) return <AuthScreen />;
-  if (user.email?.trim().toLowerCase() === SECRET_LOGIN) return <UlyanaApp />;
-  return <AppTabs />;
+  return (
+    <Stack screenOptions={{ headerShown: false, animation: 'fade', contentStyle: { backgroundColor: Colors.background } }}>
+      <Stack.Protected guard={loading}>
+        <Stack.Screen name="loading" />
+      </Stack.Protected>
+      <Stack.Protected guard={!loading && !user}>
+        <Stack.Screen name="sign-in" />
+      </Stack.Protected>
+      <Stack.Protected guard={!loading && !!user}>
+        <Stack.Screen name="(app)" />
+      </Stack.Protected>
+    </Stack>
+  );
 }
 
 export default function RootLayout() {
-  // Грузим Inter в фоне — НЕ блокируем рендер (иначе экран висит, если шрифт качается/не дошёл по OTA)
-  useFonts({
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_600SemiBold,
-    Inter_700Bold,
-    Inter_800ExtraBold,
-  });
-
-  // По умолчанию приложение портретное; альбомную включает только удалённый экран.
+  // Проверяем OTA-обновление при каждом запуске и применяем сразу
   useEffect(() => {
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    if (__DEV__) return;
+    (async () => {
+      try {
+        const res = await Updates.checkForUpdateAsync();
+        if (res.isAvailable) {
+          await Updates.fetchUpdateAsync();
+          await Updates.reloadAsync();
+        }
+      } catch {
+        // нет сети / уже последняя версия
+      }
+    })();
   }, []);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <ThemeProvider value={DarkTheme}>
-          <AuthProvider>
-            <AnimatedSplashOverlay />
-            <Gate />
-          </AuthProvider>
-        </ThemeProvider>
-      </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: Colors.background }}>
+      <KeyboardProvider>
+        <SafeAreaProvider>
+          <ThemeProvider value={theme}>
+            <AuthProvider>
+              <StatusBar style="light" />
+              <Gate />
+              <Splash />
+            </AuthProvider>
+          </ThemeProvider>
+        </SafeAreaProvider>
+      </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }

@@ -1,12 +1,13 @@
 {
   "name": "aura-server",
   "version": "1.0.0",
-  "description": "Бэкенд приложения Aura (финансы + перенос файлов)",
+  "description": "Бэкенд приложения «Arra»: вход, push, протокол ara.* между телефоном и компьютерами",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "migrate": "node src/migrate.js"
+    "migrate": "node src/migrate.js",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
