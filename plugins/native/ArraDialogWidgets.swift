@@ -132,13 +132,14 @@ public struct ArraDialogCard: View {
               if number > 0 { Text("\(number)").foregroundStyle(color).bold() }
               Text(accessible && ["wait", "error", "done"].contains(state) ? label : project).foregroundStyle(accessible && ["wait", "error", "done"].contains(state) ? statusColor : .secondary).lineLimit(1)
             }.font(.caption2).foregroundStyle(.secondary)
-            Text(title).font(accessible ? .caption.weight(.semibold) : .subheadline.weight(.semibold)).lineLimit(accessible ? 1 : 2)
-            Text(note).font(accessible ? .caption2 : .caption).foregroundStyle(.secondary).lineLimit(2)
+            Text(title).font(accessible ? .caption.weight(.semibold) : .subheadline.weight(.semibold)).lineLimit(accessible ? 1 : 2).layoutPriority(1)
+            Text(note).font(accessible ? .caption2 : .caption).foregroundStyle(.secondary).lineLimit(2).layoutPriority(1)
             if !accessible {
               Text(label).font(.caption2.weight(.semibold)).foregroundStyle(statusColor).lineLimit(1)
               if let updated = props["updated"] as? Double {
                 (Text("Обновлено ") + Text(Date(timeIntervalSince1970: updated / 1000), style: .relative) + Text(" назад"))
-                  .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                  .font(.caption2).foregroundStyle(.secondary).lineLimit(1).layoutPriority(-1)
+                  .environment(\.locale, Locale(identifier: "ru_RU"))
               }
             }
           }.frame(maxWidth: .infinity, alignment: .leading)
