@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { Redirect, router } from 'expo-router';
+import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useRef, useState, type ReactNode } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -16,8 +16,9 @@ import type { Agent, DeviceId, RecentSession } from '@/ara/types';
 import { chats, useCurrentChatId } from '@/ara/chats';
 import { openChat, openNewChat } from '@/components/chat-list';
 import { ChatSidebar } from '@/components/chat-sidebar';
+import { ProjectMascot } from '@/components/project-mascot';
 import { GlassMenu, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
-import { IconButton, Press, ProjectIcon, StatusDot, T } from '@/components/ui';
+import { IconButton, Press, StatusDot, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -259,7 +260,7 @@ function AgentRow({ agent, pinned, first, now }: { agent: Agent; pinned: boolean
           style={styles.row}
           accessibilityLabel={`${AGENT_LABEL[agent.agent]} ${agent.project}, ${meta.label}${pinned ? ', закреплён' : ''}`}
           accessibilityHint="Долгое нажатие — действия, свайп влево — закрыть">
-          <ProjectIcon iconName={agent.iconName} agent={agent.agent} size={34} />
+          <ProjectMascot id={agent.mascotId} size={34} still />
           <View style={styles.rowText}>
             <View style={styles.rowTitle}>
               {pinned ? <SymbolView name="pin.fill" size={10} tintColor={Colors.textTertiary} /> : null}
@@ -281,7 +282,7 @@ function AgentRow({ agent, pinned, first, now }: { agent: Agent; pinned: boolean
 function RecentRow({ item, first, now }: { item: RecentSession; first: boolean; now: number }) {
   return (
     <Press onPress={() => openAgent(item.key)} scaleTo={0.985} style={[styles.row, !first && styles.rowBorder]} accessibilityLabel={item.title || item.project}>
-      <ProjectIcon iconName={item.iconName} agent={item.agent} size={28} />
+      <ProjectMascot id={item.mascotId} size={28} still />
       <View style={styles.rowText}>
         <T v="subhead" numberOfLines={1}>{item.title || 'Без названия'}</T>
         <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{item.project}</T>
@@ -376,8 +377,7 @@ const styles = StyleSheet.create({
   },
 });
 
-/** Start: straight into the conversation, like ChatGPT; agents and dialogs are in the panel on the left. */
+/** Start with project agents. A conversation opens only by an explicit choice. */
 export default function Home() {
-  const id = chats.ensureCurrent();
-  return <Redirect href={{ pathname: '/chat/[id]', params: { id } }} />;
+  return <WorkList />;
 }
