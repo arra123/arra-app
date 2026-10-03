@@ -3,6 +3,9 @@ import WidgetKit
 import ActivityKit
 import AppIntents
 
+@available(iOS 17.0, *)
+public struct ArraWidgetsIntentsPackage: AppIntentsPackage { public init() {} }
+
 private enum ArraSelection {
   static var defaults: UserDefaults? { UserDefaults(suiteName: WidgetsStorage.appGroupIdentifier) }
   static let key = "arra.selected-dialog"

@@ -15,9 +15,10 @@ for(const id of [0,3,4,5,6,8,11,12,13,14,15,16,19]){
 }
 JS
 preview_sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
-xcrun swiftc -sdk "$preview_sdk" -target arm64-apple-ios17.0-simulator -parse-as-library scripts/native-widget-preview.swift plugins/native/ArraDialogWidgets.swift -o "$preview_app/WidgetPreview"
-xcrun swiftc -sdk "$preview_sdk" -target arm64-apple-ios17.0-simulator -typecheck plugins/native/NotificationService.swift
-/usr/libexec/PlistBuddy -c 'Add :CFBundleIdentifier string com.arratima.widgetpreview' -c 'Add :CFBundleExecutable string WidgetPreview' -c 'Add :CFBundleName string WidgetPreview' -c 'Add :CFBundlePackageType string APPL' -c 'Add :CFBundleVersion string 1' -c 'Add :CFBundleShortVersionString string 1.0' -c 'Add :MinimumOSVersion string 17.0' -c 'Add :LSRequiresIPhoneOS bool true' "$preview_app/Info.plist"
+preview_arch=$(uname -m)
+xcrun swiftc -sdk "$preview_sdk" -target "$preview_arch-apple-ios17.0-simulator" -parse-as-library scripts/native-widget-preview.swift plugins/native/ArraDialogWidgets.swift -o "$preview_app/WidgetPreview"
+xcrun swiftc -sdk "$preview_sdk" -target "$preview_arch-apple-ios17.0-simulator" -typecheck plugins/native/NotificationService.swift
+/usr/libexec/PlistBuddy -c 'Add :CFBundleIdentifier string com.arratima.widgetpreview' -c 'Add :CFBundleExecutable string WidgetPreview' -c 'Add :CFBundleName string WidgetPreview' -c 'Add :CFBundlePackageType string APPL' -c 'Add :CFBundleVersion string 1' -c 'Add :CFBundleShortVersionString string 1.0' -c 'Add :MinimumOSVersion string 17.0' -c 'Add :LSRequiresIPhoneOS bool true' -c 'Add :UILaunchScreen dict' -c 'Add :UIDeviceFamily array' -c 'Add :UIDeviceFamily:0 integer 1' "$preview_app/Info.plist"
 xcrun actool "$preview_dir/Mascots.xcassets" --compile "$preview_app" --platform iphonesimulator --minimum-deployment-target 17.0 --target-device iphone >/dev/null
 preview_runtime=$(xcrun simctl list runtimes -j | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>console.log(JSON.parse(s).runtimes.filter(r=>r.isAvailable&&r.name.startsWith("iOS")).at(-1).identifier))')
 preview_device=$(xcrun simctl list devicetypes -j | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>console.log(JSON.parse(s).devicetypes.find(d=>d.name==="iPhone 16 Pro").identifier))')
