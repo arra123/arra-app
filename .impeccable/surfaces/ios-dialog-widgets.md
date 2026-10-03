@@ -4,7 +4,7 @@ Platform: ios. Mode: Operate. Scope: `plugins/native/ArraDialogWidgets.swift`.
 Local design: [DESIGN.md](../../docs/ara-mobile/widgets/DESIGN.md).
 Product truth: [TASK.md](../../docs/ara-mobile/TASK.md).
 Direction contract: `/home/tima/Claude/helper/notch-island/tests/widget-brief.md`.
-Captured source: `dd1feb58452d9a911331d8e4325c5c36dedbe5bc` (`ara-mobile`).
+Captured source: `6b8976f906c0adac6d680823964adeab2af307e4` (`ara-mobile`).
 Documentation date: 2026-10-03.
 
 ## Согласованная задача и композиция
@@ -27,14 +27,19 @@ Documentation date: 2026-10-03.
 - ▲/▼ — `Button(intent: ArraCycleDialog)` с областью 44×44 pt, iOS 17+.
   Они обходят весь переданный список открытых диалогов по кругу; фильтр
   «только ожидающие» и скрытый лимит в этом renderer не применяются.
-- Выбранный стабильный ключ хранится в App Group UserDefaults
-  (`arra.selected-dialog`). При изменении порядка выбор сохраняется по ключу;
+- Выбранный стабильный ключ входит в Activity content и Home timeline
+  (`selectedKey`), сохраняется атомарным файлом App Group; UserDefaults
+  (`arra.selected-dialog`) остаётся fallback. При изменении порядка выбор сохраняется по ключу;
   при удалении выбранного диалога resolver возвращает первый.
 - Ссылка и `widgetURL` строят `arra://agent/<selected stable key>` через
   `URLComponents`. Пустое состояние ведёт к `arra://`.
 - Intent обновляет ActivityKit content и запрашивает reload Home timeline.
-  Это поведение установлено чтением production source; dispatch в настоящем
-  WidgetKit host этим проходом не подтверждён.
+  Девять вызовов production обработчика в Simulator подтвердили выбор,
+  общий файл, timeline и точный URL. Dispatch в настоящем WidgetKit host
+  и обновление настоящей Activity этим проходом не подтверждены.
+- Возраст данных — системная relative date с русской locale. Renderer 3
+  при первом активном запуске заменяет старые Activity одной новой;
+  foreground перепроверяет наличие блока и восстанавливает подписку токена.
 - При accessibility-размерах Dynamic Type маскот уменьшается до 32×32 pt
   и переходит в строку метаданных; текст получает ширину. В финальном `large`
   полностью видны репрезентативные заголовок и текущая задача. Произвольно
@@ -54,20 +59,22 @@ PC reference:
 SHA-256: `0724b200c102f5784ede4987e1fd590497d58e6c27e808fe1d0d2a7fe14a9fe6`.
 
 Native capture directory:
-`/home/tima/Claude/helper/.impeccable/review/ios-native-37127233385/`.
+`/home/tima/Claude/helper/.impeccable/review/ios-native-37137121431/`.
 
 | Capture | Проверяемый контент | SHA-256 |
 | --- | --- | --- |
-| `normal.png` | Обычный заголовок и текущая задача, общий вид двух карточек | `72c8deac35ba7d778e698f53f5464a24713938fe443688c9276a812587383ca2` |
-| `long.png` | Длинный заголовок: допустимое сокращение после двух строк | `434aab8c3ff4c8cb5e3aaefda937fab637ba2429521c27f494d643b3743c1702` |
-| `question.png` | Состояние «Нужен ответ» с текстом и жёлтым акцентом | `cbdc0b46130a5e86c7f4f5f70ec40f9612bc8e16e74ae83deb153399285c0b43` |
-| `empty.png` | `0 / 0`, пустое состояние, выключенные стрелки | `e11baba4626615e2929ced971c013f34bd1d63cdedd9b4952f6925f367820a2c` |
-| `large.png` | Исправленный accessibility-layout с малым маскотом и читаемой задачей | `28f79c452d0d44a9897c1a48c1ae5757cb0382613c79d776ad22720913ea2ca5` |
+| `normal.png` | Обычный заголовок и двухстрочная задача, возраст данных | `d32cb513ba5584752445ea16ea095b5f2d4beb34a291d8d0796e5900e0403264` |
+| `long.png` | Длинные заголовок и задача сокращаются; статус и возраст видны | `1327a0348f34062d5c815035372edde588857e26c664f2f439ec13755b6e683c` |
+| `question.png` | Состояние «Нужен ответ» с текстом и жёлтым акцентом | `f5e57be027e7fd628304765bc47b115a849c4e890c52c6d53020e0796931d6d9` |
+| `empty.png` | `0 / 0`, пустое состояние, выключенные стрелки | `af85b4ef43857e9e04e0cc6272524ac26070df42e484c0b6dd5d4e44847f26ce` |
+| `large.png` | Accessibility-layout с малым маскотом и читаемой задачей | `db4ab75f7c53210603ac86554a56b6a1eaf5715ae72dd01eb7f463db66c3fd49` |
 
 ## Finish review
 
-Финальный независимый reviewer дал disposition **ship** для визуального
-результата этих captures. Единственный найденный дефект Dynamic Type
+Для предыдущих captures независимый reviewer дал disposition **ship**.
+В текущем harden/polish-проходе проверены все пять captures и `interaction.json`:
+9 PASS, `systemDispatchVerified: false`, `activityUpdateVerified: false`.
+Единственный найденный ранее дефект Dynamic Type
 исправлен: крупный маскот больше не вытесняет заголовок и текущую задачу.
 Подтверждена обычная композиция без регрессии. Этот вердикт относится к
 проверенному компоненту, а не к готовности доставки на устройство.
@@ -92,3 +99,12 @@ iPhone и фактический аватар push-уведомления ост
 Эти проверки доставки не подтверждают реальное взаимодействие с WidgetKit.
 Требуется отдельная проверка настоящих виджетов, обеих стрелок, точного
 выбранного диалога при тапе и уведомлений на iPhone.
+
+После пользовательского теста 130 исправлены выбор в данных renderer,
+межпроцессное сохранение, замена старого блока и серверная свежесть.
+**2.0.1 (131)** доставлена: Apple `VALID`, группа «Автообновления»,
+[CI](https://github.com/arra123/arra-app/actions/runs/37137121431) `success`.
+Номер совпадает в IPA приложения и обоих расширений, intent metadata
+проверены. После установки необходимо один раз открыть Arra для миграции.
+Девять Simulator-проверок не заменяют повторную проверку нажатий в настоящем
+WidgetKit host и обновлений при закрытом приложении на iPhone.
