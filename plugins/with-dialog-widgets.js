@@ -20,7 +20,7 @@ module.exports = function withDialogWidgets(config) {
     const widgetPath = path.join(c.modRequest.platformProjectRoot, 'ExpoWidgetsTarget/ArraAgents.swift');
     const widget = replaceRequired(fs.readFileSync(widgetPath, 'utf8'), 'WidgetsEntryView(entry: entry)', 'ArraWidgetEntryView(props: entry.props ?? [:])', 'native home widget');
     fs.writeFileSync(widgetPath, widget);
-    fs.writeFileSync(path.join(c.modRequest.platformProjectRoot, 'Arra/ArraWidgetIntents.swift'), 'import AppIntents\nimport ExpoWidgets\n@available(iOS 17.0, *)\nstruct ArraAppIntentsPackage: AppIntentsPackage {\n  static var includedPackages: [any AppIntentsPackage.Type] { [ArraWidgetsIntentsPackage.self] }\n}\n');
+    fs.copyFileSync(path.join(root, 'plugins/native/ArraWidgetIntents.swift'), path.join(c.modRequest.platformProjectRoot, 'Arra/ArraWidgetIntents.swift'));
     return c;
   }]);
   return withXcodeProject(config, c => {
