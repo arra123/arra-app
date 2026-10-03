@@ -43,10 +43,13 @@ export function ringsProps(agents, now = Date.now()) {
   return {
     agents: shown.map((a) => ({
       key: a.key,
+      mascotId: a.mascotId || 0,
       title: a.title || a.project,
       project: a.project,
       state: a.state === 'working' ? 'work' : a.state === 'waiting' ? 'wait' : 'done',
       min: a.since ? Math.max(0, Math.round((now - a.since) / 60000)) : 0,
+      where: a.device === 'pc' ? 'ПК' : 'ноутбук',
+      note: String(a.task || '').replace(/\s+/g, ' ').trim().slice(0, 60),
     })),
     working: shown.filter((a) => a.state === 'working').length,
     waiting: shown.filter((a) => a.state === 'waiting').length,
@@ -58,9 +61,7 @@ export function ringsProps(agents, now = Date.now()) {
 const FRESH_MS = 15 * 60_000;
 export function callingProps(agents, now = Date.now()) {
   const calling = agents.filter((a) => (a.state === 'waiting' || a.state === 'error') && a.since && now - a.since < FRESH_MS);
-  // who needs the user first, then who works: the block stays while anyone works or waits
-  const busy = agents.filter((a) => a.state === 'working');
-  return { ...ringsProps([...calling, ...busy], now), waiting: calling.length, working: busy.length };
+  return { ...ringsProps(calling, now), waiting: calling.length, working: 0 };
 }
 
 export function activityPayload(props, now = Date.now()) {

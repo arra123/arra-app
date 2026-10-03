@@ -3,6 +3,7 @@ export type AgentKind = 'claude' | 'codex';
 export type AgentState = 'working' | 'waiting' | 'error' | 'old';
 
 export type Agent = {
+  mascotId?: number;
   key: string;
   device: DeviceId;
   agent: AgentKind;
@@ -12,6 +13,7 @@ export type Agent = {
   term: number;
   title: string;
   busy: boolean;
+  compacting?: boolean;
   state: AgentState;
   task: string;
   transcript: string;
@@ -23,6 +25,7 @@ export type Agent = {
 };
 
 export type RecentSession = {
+  mascotId?: number;
   key: string;
   device: DeviceId;
   agent: AgentKind;
@@ -103,6 +106,7 @@ export type AgentQuestion = {
 };
 
 export type Transcript = {
+  effort?: string;
   messages: TranscriptMessage[];
   model?: string;
   /** секунды unix: последнее сообщение пользователя / последняя запись */

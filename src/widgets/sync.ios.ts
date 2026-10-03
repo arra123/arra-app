@@ -46,9 +46,8 @@ export function syncWidgets(agents: Agent[]) {
   const calling = agents.filter((a) => (a.state === 'waiting' || a.state === 'error') && a.since && nowMs - a.since < FRESH_MS);
   // the block lists who needs you first, then who works (it is on the lock screen
   // while anyone works or waits; the Dynamic Island lights up only for the waiting)
-  const busy = agents.filter((a) => a.state === 'working');
-  const props: RingsProps = { ...ringsProps([...calling, ...busy]), waiting: calling.length, working: busy.length };
-  const key = JSON.stringify({ ...props, updated: 0, agents: props.agents.map((a) => a.key) });
+  const props: RingsProps = { ...ringsProps(calling), waiting: calling.length, working: 0 };
+  const key = JSON.stringify({ ...props, updated: 0 });
   serial = serial.then(async () => {
     if (!started) {
       started = true;
@@ -78,7 +77,7 @@ export function syncWidgets(agents: Agent[]) {
       status = `обновлён: ${props.working} работают, ${props.waiting} ждут`;
     } else if (AppState.currentState === 'active') {
       // iOS lets an app start a Live Activity only while it is on screen
-      current = ringsActivity.start(props, 'arra://');
+      current = ringsActivity.start(props, `arra://agent/${encodeURIComponent(props.agents[0].key)}`);
       watchToken(current);
       status = `запущен: ${props.working} работают, ${props.waiting} ждут`;
     } else status = 'приложение не на экране — iOS не даёт запустить блок';

@@ -13,7 +13,6 @@ export function usePushOpen() {
     const id = lastResponse?.notification.request.identifier ?? null;
     if (!key || !id || handled.current === id) return;
     handled.current = id;
-    router.navigate('/');
     router.push({ pathname: '/agent/[key]', params: { key } });
   }, [lastResponse]);
 }

@@ -220,6 +220,12 @@ class AraLink:
     async def snapshot(self) -> dict:
         data = await self.run_json([self.script("sessions")], timeout=20, env=graphical_env())
         live = data.get("live") or []
+        try:
+            mascots = json.loads((Path.home() / ".local/share/notch-island/ara-project-mascots.json").read_text())
+        except (OSError, ValueError):
+            mascots = {}
+        for item in live + (data.get("recent") or []):
+            item["mascotId"] = mascots.get(f"{item.get('device') or 'laptop'}:{item.get('cwd') or ''}", 0)
         # ara-sessions names machines from where it runs: its own agents
         # "laptop", the other computer's "pc". On the PC that is the other way
         # round, so the names are swapped (the server keeps each agent from
@@ -234,8 +240,10 @@ class AraLink:
         # subscription limits: the script caches for a minute, ask as rarely
         if time.monotonic() - getattr(self, "limits_at", -1e9) > 60:
             self.limits_at = time.monotonic()
-            with contextlib.suppress(Exception):
-                self.limits = await self.run_json([self.script("limits")], timeout=20)
+            async def refresh_limits():
+                with contextlib.suppress(Exception):
+                    self.limits = await self.run_json([self.script("limits")], timeout=20)
+            self.spawn(refresh_limits())
         # project icons: the phone loads them from the server by name
         for item in live + (data.get("recent") or []):
             icon = str(item.get("icon") or "")
@@ -276,6 +284,12 @@ class AraLink:
         except Exception as error:  # noqa: BLE001
             sent.pop(path, None)
             log.debug("иконка %s: %s", path, error)
+
+    async def send_fresh_snapshot(self) -> None:
+        try:
+            await self.send(await self.snapshot())
+        except Exception as error:
+            log.debug("refresh: %s", error)
 
     async def snapshot_loop(self) -> None:
         failures = 0
@@ -327,10 +341,10 @@ class AraLink:
         # agent answers again, and the phone showed the change being undone
         picked = getattr(self, "model_picked", {}).get(key)
         if picked:
-            if data.get("model") and data.get("model") != picked["was"]:
+            if data.get("model") == picked["model"] and (not picked.get("effort") or data.get("effort") == picked["effort"]):
                 self.model_picked.pop(key, None)   # the log caught up (or it changed elsewhere)
             else:
-                data = {**data, "model": picked["model"]}
+                data = {**data, "model": picked["model"], "effort": picked.get("effort") or data.get("effort", "")}
         stamp = hashlib.sha1(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         if not force and self.tx_seen.get(key) == stamp:
             return
@@ -397,6 +411,32 @@ class AraLink:
             )
         if isinstance(result, dict) and result.get("ok") is False:
             raise RuntimeError(result.get("error") or "Терминал не подтвердил отправку")
+
+    async def cmd_mascot(self, msg: dict) -> dict:
+        agent = msg.get("agent") or {}
+        ident = msg.get("mascotId")
+        if type(ident) is not int or ident not in (0,3,4,5,6,8,11,12,13,14,15,16,19):
+            raise RuntimeError("Неизвестный маскот")
+        if self.remote(agent.get("device")):
+            raise RuntimeError("Для смены маскота подключи компьютер напрямую")
+        cwd = agent.get("cwd") or ""
+        if not cwd.startswith("/"):
+            raise RuntimeError("Не указан проект")
+        path = Path.home() / ".local/share/notch-island/ara-project-mascots.json"
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            data = {}
+        if not isinstance(data, dict):
+            raise RuntimeError("Повреждён список маскотов")
+        data[f"laptop:{cwd}"] = ident
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as file:
+            json.dump(data, file, ensure_ascii=False)
+            temporary = file.name
+        os.replace(temporary, path)
+        await self.send_fresh_snapshot()
+        return {"mascotId": ident}
 
     async def cmd_send(self, msg: dict) -> dict:
         agent = msg.get("agent") or {}
@@ -497,19 +537,26 @@ class AraLink:
         if not MODEL_RE.match(model):
             raise RuntimeError("Непонятная модель")
         agent = msg.get("agent") or {}
-        delivery = await self.type_into(agent, f"/model {model}")
+        effort = msg.get("effort") or ""
+        if effort and effort not in ("low", "medium", "high", "xhigh", "max", "ultra"):
+            raise RuntimeError("Непонятный уровень reasoning")
+        delivery = await self.type_into(agent, f"/model {model}" + (f" {effort}" if effort else ""))
+        if delivery.get("model"):
+            parts = delivery["model"].split()
+            delivery["model"] = parts[0]
+            effort = parts[1] if len(parts) > 1 else effort
         if delivery.get("model"):
             for key, entry in self.watch.items():
                 if entry.get("term") == agent.get("term") and entry.get("device") == agent.get("device"):
                     cached = self.transcripts.get(key)
                     if not hasattr(self, "model_picked"):
                         self.model_picked = {}
-                    self.model_picked[key] = {"model": delivery["model"], "was": (cached or {}).get("model") or ""}
+                    self.model_picked[key] = {"model": delivery["model"], "effort": effort, "was": (cached or {}).get("model") or ""}
                     if cached:
-                        data = {**cached, "model": delivery["model"]}
+                        data = {**cached, "model": delivery["model"], "effort": effort or cached.get("effort", "")}
                         self.remember(key, data)
                         await self.send({"type": "ara.transcript", "agentKey": key, "data": data})
-        return {"model": delivery.get("model") or ""}
+        return {"model": delivery.get("model") or "", "effort": effort}
 
     async def cmd_launch(self, msg: dict) -> dict:
         agent = "codex" if msg.get("agent") == "codex" else "claude"
@@ -770,12 +817,18 @@ class AraLink:
         kind = msg.get("type")
         if kind == "ara.watch":
             self.on_watch(msg.get("agents") or [])
+        elif kind == "ara.refresh":
+            if time.monotonic() - getattr(self, "refresh_at", -1e9) >= 1:
+                self.refresh_at = time.monotonic()
+                self.spawn(self.send_fresh_snapshot())
         elif kind == "ara.send":
             self.spawn(self.reply(msg, self.cmd_send))
         elif kind == "ara.stop":
             self.spawn(self.reply(msg, self.cmd_stop))
         elif kind == "ara.model":
             self.spawn(self.reply(msg, self.cmd_model))
+        elif kind == "ara.mascot":
+            self.spawn(self.reply(msg, self.cmd_mascot))
         elif kind == "ara.close":
             self.spawn(self.reply(msg, self.cmd_close))
         elif kind == "ara.key":

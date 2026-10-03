@@ -9,11 +9,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { chats, useChats, type Chat } from '@/ara/chats';
 import { ago, DEVICE_META } from '@/ara/format';
 import { useAra, useNow } from '@/ara/hooks';
+import { ara } from '@/ara/client';
 import type { DeviceId } from '@/ara/types';
 import { openAgentScreen } from '@/components/chat-list';
 import { Segmented } from '@/components/segmented';
 import type { Limits } from '@/ara/types';
 import { AraMascot } from '@/components/ara-mascot';
+import { ProjectMascot } from '@/components/project-mascot';
 import { Press, ProjectIcon, StatusDot, T } from '@/components/ui';
 import { Colors } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
@@ -110,22 +112,30 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
         ) : (
           <>
             {(['pc', 'laptop'] as DeviceId[]).map((device) => {
-              const agents = state.agents.filter((a) => a.device === device);
+              const agents = state.agents.filter((a) => a.device === device).sort((a, b) => a.cwd.localeCompare(b.cwd));
               if (!agents.length && !state.devices[device].online) return null;
               return (
                 <View key={device}>
                   <T v="headline" weight="700" style={styles.section}>{DEVICE_META[device].label}</T>
-                  {agents.length ? agents.map((agent) => (
-                    <Pressable key={agent.key} onPress={go(() => openAgentScreen(agent.key))}
+                  {agents.length ? agents.map((agent, index) => (
+                    <View key={agent.key}>
+                    {(!index || agents[index - 1].cwd !== agent.cwd) && <T v="headline" weight="700" style={styles.section}>{agent.project}</T>}
+                    <Pressable onPress={go(() => openAgentScreen(agent.key))}
+                      onLongPress={() => Alert.alert('Маскот проекта', agent.project, [
+                        ...[[0,'tito'],[3,'Искра'],[4,'Камушек'],[5,'Облачко'],[6,'Желе'],[8,'Мох'],[11,'Грибок'],[12,'Пельмешек'],[13,'Котобоб'],[14,'Луна'],[15,'Рожки'],[16,'Галька'],[19,'Черничка']].map(([id, name]) => ({
+                          text: String(name), onPress: () => { ara.request({ type: 'ara.mascot', agentKey: agent.key, mascotId: id }).catch((e) => Alert.alert('Не удалось сменить маскот', String(e.message))); },
+                        })), { text: 'Отмена', style: 'cancel' },
+                      ])}
                       accessibilityRole="button" accessibilityLabel={agent.title || agent.project}
                       style={({ pressed }) => [styles.agent, pressed && styles.chatPressed]}>
-                      <ProjectIcon iconName={agent.iconName} agent={agent.agent} size={30} />
+                      <ProjectMascot id={agent.mascotId} size={30} still />
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <T v="body" numberOfLines={1} style={styles.agentTitle}>{agent.title || agent.task || agent.project}</T>
                         <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{agent.project}</T>
                       </View>
                       <StatusDot state={agent.state} />
                     </Pressable>
+                    </View>
                   )) : <T v="subhead" color={Colors.textSecondary} style={styles.empty}>Агентов нет</T>}
                 </View>
               );
@@ -137,7 +147,7 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
                   <Pressable key={item.key} onPress={go(() => openAgentScreen(item.key))}
                     accessibilityRole="button" accessibilityLabel={item.title || item.project}
                     style={({ pressed }) => [styles.agent, pressed && styles.chatPressed]}>
-                    <ProjectIcon iconName={item.iconName} agent={item.agent} size={26} />
+                    <ProjectMascot id={item.mascotId} size={26} still />
                     <T v="subhead" numberOfLines={1} style={{ flex: 1 }}>{item.title || item.project}</T>
                     {item.mtime ? <T v="caption" color={Colors.textTertiary}>{ago(item.mtime * 1000, now)}</T> : null}
                   </Pressable>

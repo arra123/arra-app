@@ -363,8 +363,14 @@ export function createHub(deps = {}) {
 
     switch (msg.type) {
       case 'ara.hello':
+        emit(socket, stateMessage(u));
+        return;
       case 'ara.refresh':
         emit(socket, stateMessage(u));
+        if (now() - (client.lastRefresh ?? -Infinity) >= 1000) {
+          client.lastRefresh = now();
+          for (const host of hostList(u)) sendToHost(u, host.tokenId, { type: 'ara.refresh' });
+        }
         return;
       case 'ara.subscribe':
         client.watch = key || null;
@@ -379,6 +385,7 @@ export function createHub(deps = {}) {
       case 'ara.stop':
       case 'ara.close':
       case 'ara.key':
+      case 'ara.mascot':
       case 'ara.model': {
         if (!item || item.term == null) {
           emit(socket, { type: 'ara.result', reqId: entry.reqId, ok: false, error: 'Агент уже закрыт' });
@@ -389,7 +396,24 @@ export function createHub(deps = {}) {
           payload.text = text(msg.text, 20_000);
           payload.images = Array.isArray(msg.images) ? msg.images.filter((p) => typeof p === 'string').slice(0, 10) : [];
         }
-        if (msg.type === 'ara.model') payload.model = text(msg.model, 80);
+        if (msg.type === 'ara.model') {
+          payload.model = text(msg.model, 80);
+          if (msg.effort !== undefined) {
+            if (!['low','medium','high','xhigh','max','ultra'].includes(msg.effort)) {
+              emit(socket, { type: 'ara.result', reqId: entry.reqId, ok: false, error: 'Неизвестный уровень reasoning' });
+              return;
+            }
+            payload.effort = msg.effort;
+          }
+        }
+        if (msg.type === 'ara.mascot') {
+          payload.agent.cwd = item.cwd;
+          if (![0,3,4,5,6,8,11,12,13,14,15,16,19].includes(msg.mascotId)) {
+            emit(socket, { type: 'ara.result', reqId: entry.reqId, ok: false, error: 'Неизвестный маскот' });
+            return;
+          }
+          payload.mascotId = msg.mascotId;
+        }
         // a key press in the agent's terminal: a digit of an answer, then Enter
         if (msg.type === 'ara.key') {
           payload.keys = (Array.isArray(msg.keys) ? msg.keys : [])

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 271 220">
+<title>Луна — вектор по утверждённому референсу</title>
+<defs>
+<path id="silhouette" transform="translate(0 220) scale(.1 -.1)" d="M1382 2115 c-505 -91 -878 -493 -899 -968 -6 -117 -7 -120 -43 -175 -66 -100 -87 -204 -56 -275 37 -87 134 -122 214 -77 l41 23 67 -62 c37 -33 71 -61 75 -61 5 0 -9 -28 -31 -61 -109 -168 -34 -259 204 -247 147 8 198 44 198 139 l-1 49 110 0 109 0 0 -45 c0 -63 17 -92 69 -117 61 -30 211 -33 284 -5 82 32 100 112 43 198 -14 21 -26 42 -26 47 0 4 21 18 48 31 196 95 379 297 443 488 11 34 18 72 14 83 -16 50 -62 63 -127 36 -295 -124 -625 143 -571 460 25 144 131 287 263 352 35 18 72 40 82 49 33 30 18 82 -30 107 -83 43 -327 59 -480 31z"/>
+<clipPath id="body-cut"><path d="M0 0H271V172H69L64 160L73 136L68 122H0Z"/></clipPath>
+<clipPath id="hand-cut"><path d="M0 122H68L73 136L64 160H0Z"/></clipPath>
+<clipPath id="left-foot-cut"><rect x="0" y="172" width="125" height="48"/></clipPath>
+<clipPath id="right-foot-cut"><rect x="125" y="172" width="146" height="48"/></clipPath>
+</defs>
+<g id="body" fill="#9ad3fe"><use href="#silhouette" clip-path="url(#body-cut)"/></g>
+<g id="left-foot" fill="#9ad3fe"><use href="#silhouette" clip-path="url(#left-foot-cut)"/></g>
+<g id="right-foot" fill="#9ad3fe"><use href="#silhouette" clip-path="url(#right-foot-cut)"/></g>
+<g id="left-hand" fill="#9ad3fe"><use href="#silhouette" clip-path="url(#hand-cut)"/></g>
+<g id="left-eye" fill="#161618" transform="translate(0 220) scale(.1 -.1)"><path d="M1147 1186 c25 -22 28 -31 28 -84 0 -50 -4 -65 -24 -86 -40 -43 -98 -31 -121 23 -19 48 -5 115 31 146 38 31 51 31 86 1z"/></g>
+<g id="right-eye" fill="#161618" transform="translate(0 220) scale(.1 -.1)"><path d="M1554 1108 c23 -32 20 -100 -5 -132 -41 -53 -109 -16 -109 59 0 80 76 128 114 73z"/></g>
+</svg>

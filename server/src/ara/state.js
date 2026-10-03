@@ -52,6 +52,7 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
     const state = AGENT_STATES.includes(raw.state) ? raw.state : (raw.busy ? 'working' : 'waiting');
     live.push({
       key: liveKey(agentDevice, term),
+      mascotId: [0,3,4,5,6,8,11,12,13,14,15,16,19].includes(raw.mascotId) ? raw.mascotId : 0,
       device: agentDevice,
       agent: normalizeAgentKind(raw.agent),
       project: str(raw.project, 120) || 'агент',
@@ -60,6 +61,7 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
       term,
       title: str(raw.title, 200),
       busy: !!raw.busy,
+      compacting: raw.compacting === true,
       state,
       idle: num(raw.idle) ?? 0,
       task: str(raw.task, 400),
@@ -75,6 +77,7 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
     const recentDevice = normalizeDevice(raw.device, device);
     recent.push({
       key: recentKey(recentDevice, id),
+      mascotId: [0,3,4,5,6,8,11,12,13,14,15,16,19].includes(raw.mascotId) ? raw.mascotId : 0,
       device: recentDevice,
       agent: normalizeAgentKind(raw.agent),
       project: str(raw.project, 120) || 'сессия',

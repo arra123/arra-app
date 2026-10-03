@@ -1,5 +1,5 @@
-import { Capsule, HStack, RoundedRectangle, Spacer, Text, VStack, ZStack } from '@expo/ui/swift-ui';
-import { activityBackgroundTint, font, foregroundStyle, frame, lineLimit, padding, widgetURL } from '@expo/ui/swift-ui/modifiers';
+import { Image, HStack, Spacer, Text, VStack } from '@expo/ui/swift-ui';
+import { activityBackgroundTint, aspectRatio, resizable, font, foregroundStyle, frame, lineLimit, padding, widgetURL } from '@expo/ui/swift-ui/modifiers';
 import { createLiveActivity, createWidget } from 'expo-widgets';
 
 /**
@@ -11,7 +11,7 @@ import { createLiveActivity, createWidget } from 'expo-widgets';
  * Everything a widget function uses must be declared inside it: the function
  * is sent to the extension as text.
  */
-export type RingAgent = { key: string; title: string; project: string; state: 'work' | 'wait' | 'done'; min: number; where?: string; note?: string };
+export type RingAgent = { key: string; title: string; project: string; state: 'work' | 'wait' | 'done'; min: number; where?: string; note?: string; mascotId?: number };
 export type RingsProps = { agents: RingAgent[]; working: number; waiting: number; updated: number };
 
 const RingsActivity = (props: RingsProps) => {
@@ -32,7 +32,7 @@ const RingsActivity = (props: RingsProps) => {
   const under = (a: RingAgent) => [a.project !== a.title ? a.project : '', a.where || '', a.note || ''].filter((x) => x).join(' · ');
   const row = (a: RingAgent) => (
     <HStack key={a.key} spacing={8}>
-      <Text modifiers={[font({ size: 9 }), foregroundStyle(a.state === 'work' ? '#64d2ff' : '#ffd60a')]}>●</Text>
+      <Image assetName={`mascot-${a.mascotId || 0}`} modifiers={[resizable(), aspectRatio({ contentMode: 'fit' }), frame({ width: 28, height: 28 })]} />
       <VStack alignment="leading" spacing={1}>
         <Text modifiers={[font({ size: 15, weight: 'semibold' }), foregroundStyle('#ffffff'), lineLimit(1)]}>{a.title}</Text>
         <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93'), lineLimit(1)]}>{detailed ? under(a) : ''}</Text>
@@ -52,16 +52,10 @@ const RingsActivity = (props: RingsProps) => {
   const tail = more > 0 ? ` · и ещё ${more}` : '';
   return {
     banner: (
-      <VStack alignment="leading" spacing={9} modifiers={[padding({ all: 14 }), activityBackgroundTint('#111114'), widgetURL('arra://')]}>
+      <VStack alignment="leading" spacing={9} modifiers={[padding({ all: 14 }), activityBackgroundTint('#111114'), widgetURL(props.agents[0] ? `arra://agent/${encodeURIComponent(props.agents[0].key)}` : 'arra://')]}>
         {/* our mascot (a white block with two eyes) and the headline next to it */}
         <HStack spacing={10}>
-          <ZStack>
-            <RoundedRectangle cornerRadius={10} modifiers={[foregroundStyle('#ffffff'), frame({ width: 40, height: 29 })]} />
-            <HStack spacing={7}>
-              <Capsule modifiers={[foregroundStyle('#16171b'), frame({ width: 5, height: 9 })]} />
-              <Capsule modifiers={[foregroundStyle('#16171b'), frame({ width: 5, height: 9 })]} />
-            </HStack>
-          </ZStack>
+          <Image assetName={`mascot-${list[0]?.mascotId || 0}`} modifiers={[resizable(), aspectRatio({ contentMode: 'fit' }), frame({ width: 40, height: 40 })]} />
           <VStack alignment="leading" spacing={1}>
             <Text modifiers={[font({ size: 15, weight: 'bold' }), foregroundStyle(headColor)]}>{head}</Text>
             <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93')]}>{(n && w ? `ещё ${w} работают` : n ? 'ответь, и он продолжит' : 'Arra следит за ними') + tail}</Text>
@@ -76,9 +70,9 @@ const RingsActivity = (props: RingsProps) => {
     ),
     // the Dynamic Island says something only when someone waits for you; while
     // agents just work it stays empty (nothing glows on top all day)
-    compactLeading: <Text modifiers={[font({ size: 12 }), foregroundStyle('#ffd60a')]}>{n ? '●' : ''}</Text>,
-    compactTrailing: <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{n ? `${n}` : ''}</Text>,
-    minimal: <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundStyle('#ffd60a')]}>{n ? `${n}` : ''}</Text>,
+    compactLeading: <Image assetName={`mascot-${list[0]?.mascotId || 0}`} modifiers={[resizable(), aspectRatio({ contentMode: 'fit' }), frame({ width: 22, height: 22 })]} />,
+    compactTrailing: <Text>{''}</Text>,
+    minimal: <Image assetName={`mascot-${list[0]?.mascotId || 0}`} modifiers={[resizable(), aspectRatio({ contentMode: 'fit' }), frame({ width: 22, height: 22 })]} />,
     expandedLeading: <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundStyle(headColor), padding({ leading: 8 })]}>{head}</Text>,
     expandedTrailing: <Text modifiers={[font({ size: 12 }), foregroundStyle('#8e8e93'), padding({ trailing: 8 })]}>{n && w ? `${w} работают` : ''}</Text>,
     expandedBottom: <VStack alignment="leading" spacing={8} modifiers={[padding({ horizontal: 8, top: 4 })]}>{list.map(line)}</VStack>,

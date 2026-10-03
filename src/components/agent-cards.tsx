@@ -17,6 +17,7 @@ import Animated, {
 import { allAnswered, answersByMessage, answersOnTap, type Selections } from '@/ara/questions';
 import type { AgentQuestion, SubAgent } from '@/ara/types';
 import { AraMascot } from '@/components/ara-mascot';
+import { ProjectMascot } from '@/components/project-mascot';
 import { Press, T } from '@/components/ui';
 import { Colors, Radius } from '@/constants/theme';
 
@@ -293,7 +294,7 @@ function useHelperColors(helpers: SubAgent[]) {
 }
 
 /** Полоса маленьких маскотов-помощников; закончившие свёрнуты в «ещё N готовых». */
-export function HelpersStrip({ helpers }: { helpers: SubAgent[] }) {
+export function HelpersStrip({ helpers, mascotId = 0 }: { helpers: SubAgent[]; mascotId?: number }) {
   const [showDone, setShowDone] = useState(false);
   const colorOf = useHelperColors(helpers);
   const active = helpers.filter((h) => h.active);
@@ -305,7 +306,7 @@ export function HelpersStrip({ helpers }: { helpers: SubAgent[] }) {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.strip}>
         {shown.map((h) => (
           <Animated.View key={h.id} entering={FadeIn.duration(200)} layout={layout} style={[styles.helper, !h.active && { opacity: 0.45 }]}>
-            <AraMascot size={30} color={colorOf(h.id)} mood={h.active ? 'thinking' : 'idle'} still={!h.active} />
+            <ProjectMascot id={mascotId} size={30} mood={h.active ? 'thinking' : 'idle'} still={!h.active} />
             <T v="tiny" color={Colors.textSecondary} numberOfLines={2} style={styles.helperText}>{h.description}</T>
             {h.active ? <RunningBar /> : <View style={styles.trackEmpty} />}
           </Animated.View>

@@ -1,6 +1,6 @@
 import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
-import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import { FlatList, Platform, StyleSheet, View, type ListRenderItem } from 'react-native';
 import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Animated, { useAnimatedStyle, useDerivedValue, useSharedValue, type SharedValue } from 'react-native-reanimated';
@@ -82,7 +82,7 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
 
   const occupiedBottom = useDerivedValue(() => composerHeight.get() + Math.max(0, -keyboard.height.get() - keyboardOpenOffset));
 
-  const reversed = [...data].reverse();
+  const reversed = useMemo(() => [...data].reverse(), [data]);
 
   return (
     <View style={styles.root}>

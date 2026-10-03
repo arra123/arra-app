@@ -96,6 +96,7 @@
       ],
       "expo-asset",
       "expo-web-browser",
+      "./plugins/with-mascot-widget-assets",
       [
         "expo-widgets",
         {

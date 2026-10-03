@@ -10,6 +10,7 @@ export function ringsProps(agents: Agent[], now = Date.now()): RingsProps {
   return {
     agents: shown.map((a) => ({
       key: a.key,
+      mascotId: a.mascotId || 0,
       title: a.title || a.project,
       project: a.project,
       state: a.state === 'working' ? 'work' : a.state === 'waiting' ? 'wait' : 'done',

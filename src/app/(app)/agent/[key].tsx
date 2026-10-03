@@ -290,10 +290,10 @@ export default function AgentScreen() {
     }
   }
 
-  async function changeModel(value: string) {
+  async function changeModel(value: string, effort?: string) {
     if (!agent) return;
     try {
-      await ara.setModel(agent.key, value);
+      await ara.setModel(agent.key, value, effort);
       haptic.success();
     } catch (error: any) {
       Alert.alert('Модель не сменилась', error?.message || '');
@@ -307,7 +307,7 @@ export default function AgentScreen() {
     const models = agent.agent === 'claude' ? CLAUDE_MODELS : CODEX_MODELS;
     menu.push({
       title: 'Модель',
-      subtitle: currentModel || undefined,
+      subtitle: [currentModel, transcript?.effort].filter(Boolean).join(' · ') || undefined,
       icon: 'cpu',
       submenu: true,
       items: models.map((m) => ({
@@ -320,6 +320,13 @@ export default function AgentScreen() {
     });
   }
   if (agent?.state === 'working') menu.push([{ label: 'Остановить', icon: 'stop.circle', onPress: stop }]);
+  if (agent?.agent === 'codex') menu.push({
+    title: 'Качество рассуждения', subtitle: transcript?.effort || 'Не определено', icon: 'brain', submenu: true,
+    items: ['low','medium','high','xhigh','max','ultra'].map((effort) => ({
+      label: effort[0].toUpperCase() + effort.slice(1), checked: transcript?.effort === effort,
+      onPress: () => changeModel(model || CODEX_MODELS[0].value, effort),
+    })),
+  });
   if (agent) menu.push([{ label: 'Закрыть терминал', icon: 'xmark.circle', destructive: true, onPress: () => confirmCloseAgent(agent) }]);
 
   // Статус в одном месте — в капсуле с названием: «ждёт · 3 мин» жёлтым или дуга и время работы

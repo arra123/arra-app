@@ -206,7 +206,9 @@ class AraClient {
         this.setState({
           connected: true,
           loaded: true,
-          agents: msg.agents || [],
+          // Idle seconds are transport diagnostics, not UI state. Keeping them
+          // invalidated every message row on each unchanged host snapshot.
+          agents: (msg.agents || []).map(({ idle, ...agent }: any) => agent),
           recent: msg.recent || [],
           devices: msg.devices || EMPTY.devices,
           limits: msg.limits || null,
@@ -214,6 +216,7 @@ class AraClient {
         return;
       case 'ara.transcript':
         if (msg.agentKey && msg.data) {
+          if (JSON.stringify(this.transcripts.get(msg.agentKey)) === JSON.stringify(msg.data)) return;
           this.transcripts.set(msg.agentKey, msg.data);
           this.transcriptListeners.forEach((l) => l());
         }
@@ -268,6 +271,7 @@ class AraClient {
   }
 
   private setState(next: AraState) {
+    if (JSON.stringify(next) === JSON.stringify(this.state)) return;
     const agentsChanged = next.agents !== this.state.agents;
     this.state = next;
     this.listeners.forEach((l) => l());
@@ -352,8 +356,8 @@ class AraClient {
     return this.request({ type: 'ara.close', agentKey });
   }
 
-  setModel(agentKey: string, model: string) {
-    return this.request({ type: 'ara.model', agentKey, model });
+  setModel(agentKey: string, model: string, effort?: string) {
+    return this.request({ type: 'ara.model', agentKey, model, effort });
   }
 
   launch(params: { device: string; agent: string; dir: string; task: string; model?: string }) {

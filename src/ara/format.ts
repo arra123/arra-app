@@ -222,6 +222,7 @@ export function awaitedHelper(agent: Agent | null, transcript: Transcript | null
 
 /** Строка «Работает 4 мин · сейчас: …» / «Закончил 3 мин назад · ждёт ответа». */
 export function statusLine(agent: Agent | null, transcript: Transcript | null, now = Date.now()): string {
+  if (agent?.compacting) return 'Сжатие контекста…';
   if (!agent) {
     const last = transcript?.last ? transcript.last * 1000 : null;
     return last ? `Сессия завершена · ${ago(last, now)} назад` : 'Сессия завершена';
