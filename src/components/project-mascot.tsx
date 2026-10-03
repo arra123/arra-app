@@ -2,6 +2,12 @@ import { Image } from 'expo-image';
 import { useEffect } from 'react';
 import Animated, { cancelAnimation, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import { AraMascot, type MascotMood } from './ara-mascot';
+import { T } from './ui';
+
+export function AgentNumber({ number, mascotId = 0 }: { number: number; mascotId?: number }) {
+  const color = ({ 3: '#ffcf40', 4: '#ad7bed', 5: '#55b9f2', 6: '#ff6379', 8: '#8caf42', 11: '#984feb', 12: '#ffbd83', 13: '#ffd13b', 14: '#359fef', 15: '#d76b8d', 16: '#aaa194', 19: '#9b93ff' } as Record<number, string>)[mascotId] || '#ffffff';
+  return <T v="subhead" weight="700" color={color} style={{ minWidth: 18, textAlign: 'center', fontVariant: ['tabular-nums'] }}>{number || '—'}</T>;
+}
 
 const ART: Record<number, number> = {
   3: require('../../assets/mascots/dot-03.svg'),

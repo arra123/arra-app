@@ -62,9 +62,11 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
       title: str(raw.title, 200),
       busy: !!raw.busy,
       compacting: raw.compacting === true,
+      error: str(raw.error, 200),
       state,
       idle: num(raw.idle) ?? 0,
       task: str(raw.task, 400),
+      stage: raw.busy ? str(raw.said, 160) : '',
       transcript: str(raw.transcript, 600),
       iconName: /^[\w.-]{1,80}\.png$/.test(String(raw.iconName || '')) ? raw.iconName : null,
       model: str(raw.model, 80),
@@ -199,6 +201,7 @@ export function pushText(transition) {
   const where = agent.device === 'pc' ? 'ПК' : 'ноутбук';
   const title = to === 'error' ? `${agent.project} · прервался` : `${agent.project} · ждёт ответа`;
   const lead = to === 'error' ? `${who} остановился с ошибкой (${where})` : `${who} закончил (${where})`;
-  const body = agent.task ? `${lead}: ${agent.task}`.slice(0, 180) : lead;
+  const detail = to === 'error' ? (agent.error || agent.task) : agent.task;
+  const body = detail ? `${lead}: ${detail}`.slice(0, 180) : lead;
   return { title, body };
 }

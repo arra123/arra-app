@@ -13,6 +13,15 @@ import { mergeHosts, normalizeSnapshot, pickHostForDevice, trackStates } from '.
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
+test('compaction progress and failure survive normalization', () => {
+  const working = normalizeSnapshot({device:'pc',live:[{term:123,state:'working',busy:true,compacting:true,said:'Сжимает контекст'}]}).live[0];
+  assert.equal(working.compacting,true);
+  assert.equal(working.stage,'Сжимает контекст');
+  const failed = normalizeSnapshot({device:'pc',live:[{term:123,state:'error',busy:false,error:'Модель перегружена'}]}).live[0];
+  assert.equal(failed.error,'Модель перегружена');
+  assert.equal(failed.stage,'');
+});
+
 function fakeSocket() {
   return {
     readyState: 1,
@@ -130,7 +139,7 @@ test('хаб: снимок → состояние телефону, push при 
   assert.equal(pushes.length, 1);
   assert.equal(pushes[0][0], 'u1');
   assert.match(pushes[0][1], /helper · ждёт ответа/);
-  assert.deepEqual(pushes[0][3], { type: 'ara.agent', agentKey: 'live:laptop:58872', state: 'waiting' });
+  assert.deepEqual(pushes[0][3], { type: 'ara.agent', agentKey: 'live:laptop:58872', state: 'waiting', mascotId: 0, project: 'helper', agentNumber: 1 });
   assert.equal(phone.last('ara.state').agents[0].since, 1_060_000);
 });
 

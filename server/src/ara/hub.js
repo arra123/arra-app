@@ -200,7 +200,12 @@ export function createHub(deps = {}) {
     if (now() - last < PUSH_COOLDOWN_MS) return;
     u.lastPush.set(key, now());
     const { title, body } = pushText(transition);
-    Promise.resolve(deps.sendPush?.(userId, title, body, { type: 'ara.agent', agentKey: key, state: transition.to }))
+    const agent = transition.agent;
+    const number = u.merged.agents.filter(a => a.device === agent.device && a.cwd === agent.cwd).findIndex(a => a.key === key) + 1;
+    Promise.resolve(deps.sendPush?.(userId, title, body, {
+      type: 'ara.agent', agentKey: key, state: transition.to,
+      mascotId: agent.mascotId || 0, project: agent.project, agentNumber: Math.max(1, number),
+    }))
       .catch(() => {});
   }
 

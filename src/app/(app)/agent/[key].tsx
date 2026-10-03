@@ -281,7 +281,7 @@ export default function AgentScreen() {
   }
 
   async function stop() {
-    if (!agent) return;
+    if (!agent || stopping) return;
     setStopping(true);
     try {
       await stopAgent(agent);
@@ -320,7 +320,7 @@ export default function AgentScreen() {
       })),
     });
   }
-  if (agent?.state === 'working') menu.push([{ label: 'Остановить', icon: 'stop.circle', onPress: stop }]);
+  if (agent?.state === 'working' && !stopping) menu.push([{ label: 'Остановить', icon: 'stop.circle', onPress: stop }]);
   if (agent?.agent === 'codex') menu.push({
     title: 'Качество рассуждения', subtitle: transcript?.effort || 'Не определено', icon: 'brain', submenu: true,
     items: ['low','medium','high','xhigh','max','ultra'].map((effort) => ({
@@ -347,7 +347,7 @@ export default function AgentScreen() {
       <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{workFrom ? shortAgo(now - workFrom) : 'работает'}</T>
     </View>
   ) : agent.state === 'error' ? (
-    <T v="caption" weight="600" color={Colors.error}>прервался</T>
+    <T v="caption" weight="600" color={Colors.error} numberOfLines={2}>{agent.error || 'прервался'}</T>
   ) : doneAt ? (
     <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{shortAgo(now - doneAt)} назад</T>
   ) : null;
@@ -380,9 +380,6 @@ export default function AgentScreen() {
   const ring = null;
   const right = ring || menu.length ? (
     <Glass radius={22} backing style={styles.right}>
-      {agent?.state === 'working' && <Press onPress={stop} disabled={stopping} accessibilityRole="button" accessibilityLabel="Остановить ответ" style={styles.more}>
-        <SymbolView name="stop.circle" size={20} tintColor={Colors.error} />
-      </Press>}
       {ring}
       {menu.length ? (
         <MenuTrigger label="Модель и действия" sections={menu} native={false}>

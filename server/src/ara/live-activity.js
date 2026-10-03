@@ -6,6 +6,7 @@ import { createPrivateKey, sign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { query } from '../db.js';
+import { dialogProps, compactDialogProps } from './dialog-widget.js';
 
 const TOPIC = 'com.arratima.aura.push-type.liveactivity';
 const CREDENTIALS = process.env.APNS_CREDENTIALS_PATH || '/opt/noda/credentials/apns.json';
@@ -94,11 +95,11 @@ export function startPayload(props, now = Date.now()) {
   };
 }
 
-export async function saveStartToken(userId, token) {
+export async function saveStartToken(userId, token, layoutVersion = 1) {
   await query(
-    `INSERT INTO ara_live_start (user_id, token) VALUES ($1, $2)
-     ON CONFLICT (user_id) DO UPDATE SET token = $2, updated_at = now()`,
-    [userId, token],
+    `INSERT INTO ara_live_start (user_id, token, layout_version) VALUES ($1, $2, $3)
+     ON CONFLICT (user_id) DO UPDATE SET token = $2, layout_version = $3, updated_at = now()`,
+    [userId, token, layoutVersion],
   );
 }
 
@@ -122,16 +123,17 @@ function send(token, payload, priority = '5') {
   });
 }
 
-export async function saveActivityToken(userId, token) {
+export async function saveActivityToken(userId, token, layoutVersion = 1) {
   await query(
-    `INSERT INTO ara_live_activities (token, user_id) VALUES ($1, $2)
-     ON CONFLICT (token) DO UPDATE SET user_id = $2, updated_at = now()`,
-    [token, userId],
+    `INSERT INTO ara_live_activities (token, user_id, layout_version) VALUES ($1, $2, $3)
+     ON CONFLICT (token) DO UPDATE SET user_id = $2, layout_version = $3, updated_at = now()`,
+    [token, userId, layoutVersion],
   );
 }
 
 const lastSent = new Map(); // userId -> { body, at }
 const started = new Map(); // userId -> { keys: Set of agent keys the block was started for, at }
+const pending = new Map();
 
 /**
  * The agents changed (or a minute passed). The block is on the screen only
@@ -139,33 +141,45 @@ const started = new Map(); // userId -> { keys: Set of agent keys the block was 
  * app is closed, and ended as soon as nobody waits (or 15 minutes passed).
  */
 export async function pushRings(userId, agents, { force = false } = {}) {
-  const props = callingProps(agents);
-  const body = JSON.stringify({ ...props, updated: 0, agents: props.agents.map((a) => [a.key, a.min]) });
+  latest.set(userId, agents);
+  const legacy = callingProps(agents);
+  const dialogs = compactDialogProps(dialogProps(agents));
+  const body = JSON.stringify({ ...dialogs, updated: 0 });
   const prev = lastSent.get(userId);
   if (!force && prev && prev.body === body) return;
   // Apple rations these: not more than every 20 s per user
-  if (prev && Date.now() - prev.at < 20_000 && !force) return;
+  if (prev && Date.now() - prev.at < 20_000 && !force) {
+    if (!pending.has(userId)) pending.set(userId, setTimeout(() => {
+      pending.delete(userId);
+      pushRings(userId, latest.get(userId) || []).catch(() => {});
+    }, 20_000 - (Date.now() - prev.at)));
+    return;
+  }
   lastSent.set(userId, { body, at: Date.now() });
-  const { rows } = await query('SELECT token FROM ara_live_activities WHERE user_id = $1', [userId]);
-  const payload = activityPayload(props);
+  const { rows } = await query('SELECT token, layout_version FROM ara_live_activities WHERE user_id = $1', [userId]);
   let alive = 0;
-  for (const { token } of rows) {
+  for (const { token, layout_version } of rows) {
+    const payload = activityPayload(layout_version === 2 ? dialogs : legacy);
     const status = await send(token, payload);
     if (status === 200) alive += 1;
     // 410: the activity is over (ended or removed): forget its token
     if (status === 410 || status === 400) await query('DELETE FROM ara_live_activities WHERE token = $1', [token]).catch(() => {});
   }
-  if (!props.agents.length) { started.delete(userId); return; }
-  if (!props.waiting) return; // nobody waits: the block is not started from here just for working agents
+  if (!agents.length) { started.delete(userId); return; }
   // nobody shows it yet: start it from here, once per agent that began to wait
   if (alive === 0) {
-    const was = started.get(userId);
-    const fresh = props.agents.filter((a) => a.state !== 'work' && (!was || !was.keys.has(a.key)));
-    if (!fresh.length) return;
-    const row = await query('SELECT token FROM ara_live_start WHERE user_id = $1', [userId]).then((r) => r.rows[0]).catch(() => null);
+    const row = await query('SELECT token, layout_version FROM ara_live_start WHERE user_id = $1', [userId]).then((r) => r.rows[0]).catch(() => null);
     if (!row) return;
-    const status = await send(row.token, startPayload(props), '10');
-    if (status === 200) started.set(userId, { keys: new Set(props.agents.map((a) => a.key)), at: Date.now() });
+    const props = row.layout_version === 2 ? dialogs : legacy;
+    if (!props.agents.length || (row.layout_version !== 2 && !props.waiting)) return;
+    const was = started.get(userId);
+    const keys = row.layout_version === 2 ? agents.map(a => a.key) : props.agents.filter(a => a.state !== 'work').map(a => a.key);
+    const fresh = keys.filter(key => !was || !was.keys.has(key));
+    if (!fresh.length) return;
+    const payload = startPayload(props);
+    if (row.layout_version === 2) payload.aps.alert = { title: 'Arra · открытые диалоги', body: 'Маскоты и текущая работа агентов' };
+    const status = await send(row.token, payload, '10');
+    if (status === 200) started.set(userId, { keys: new Set(keys), at: Date.now() });
     else if (status === 410 || status === 400) await query('DELETE FROM ara_live_start WHERE user_id = $1', [userId]).catch(() => {});
   }
 }
@@ -176,6 +190,6 @@ export function rememberAgents(userId, agents) { latest.set(userId, agents); }
 setInterval(() => {
   for (const [userId, agents] of latest) {
     // while someone waits: the minutes go on, and after 15 minutes the block leaves
-    if (lastSent.get(userId)?.body?.includes('"agents":[[')) pushRings(userId, agents).catch(() => {});
+    if (lastSent.has(userId)) pushRings(userId, agents).catch(() => {});
   }
 }, 60_000).unref?.();

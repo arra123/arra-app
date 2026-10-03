@@ -96,6 +96,7 @@
       ],
       "expo-asset",
       "expo-web-browser",
+      "./plugins/with-dialog-widgets",
       "./plugins/with-mascot-widget-assets",
       [
         "expo-widgets",
@@ -106,18 +107,19 @@
             {
               "name": "ArraAgents",
               "displayName": "Arra · агенты",
-              "description": "Кольца агентов: кто работает, кто ждёт тебя",
+              "description": "Маскот, текущее действие и переключение между открытыми диалогами",
               "supportedFamilies": [
                 "systemSmall",
                 "systemMedium",
                 "accessoryCircular",
                 "accessoryRectangular"
               ],
-              "contentMarginsDisabled": false
+              "contentMarginsDisabled": true
             }
           ]
         }
-      ]
+      ],
+      "./plugins/with-agent-notifications"
     ],
     "experiments": {
       "typedRoutes": true,

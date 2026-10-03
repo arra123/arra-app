@@ -13,6 +13,7 @@ on:
 
 jobs:
   build:
+    needs: native-preview
     permissions:
       contents: read
       actions: read
@@ -37,6 +38,7 @@ jobs:
           IOS_DIST_P12_B64: ${{ secrets.IOS_DIST_P12_B64 }}
           IOS_PROFILE_B64: ${{ secrets.IOS_PROFILE_B64 }}
           IOS_WIDGET_PROFILE_B64: ${{ secrets.IOS_WIDGET_PROFILE_B64 }}
+          IOS_NOTIFICATION_PROFILE_B64: ${{ secrets.IOS_NOTIFICATION_PROFILE_B64 }}
           ASC_KEY_P8_B64: ${{ secrets.ASC_KEY_P8_B64 }}
           IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
         run: |
@@ -46,8 +48,9 @@ jobs:
           echo "$IOS_PROFILE_B64" | base64 --decode > credentials/profile.mobileprovision
           echo "$ASC_KEY_P8_B64" | base64 --decode > credentials/AuthKey_63Y56V3L2D.p8
           echo "$IOS_WIDGET_PROFILE_B64" | base64 --decode > credentials/widgets.mobileprovision
+          echo "$IOS_NOTIFICATION_PROFILE_B64" | base64 --decode > credentials/notifications.mobileprovision
           # the app and its widget extension (expo-widgets), each with its profile
-          printf '{ "ios": { "Arra": { "provisioningProfilePath": "credentials/profile.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } }, "ExpoWidgetsTarget": { "provisioningProfilePath": "credentials/widgets.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } } } }' "$IOS_DIST_P12_PASSWORD" "$IOS_DIST_P12_PASSWORD" > credentials.json
+          printf '{ "ios": { "Arra": { "provisioningProfilePath": "credentials/profile.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } }, "ExpoWidgetsTarget": { "provisioningProfilePath": "credentials/widgets.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } }, "ArraNotifications": { "provisioningProfilePath": "credentials/notifications.mobileprovision", "distributionCertificate": { "path": "credentials/dist.p12", "password": "%s" } } } }' "$IOS_DIST_P12_PASSWORD" "$IOS_DIST_P12_PASSWORD" "$IOS_DIST_P12_PASSWORD" > credentials.json
 
       - name: Install deps
         if: ${{ !inputs.ipa_run }}
@@ -101,3 +104,22 @@ jobs:
         run: |
           node scripts/asc-add-latest-to-group.mjs "$ARRA_BUILD"
           node scripts/check-release.mjs "$ARRA_VERSION"
+
+  native-preview:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Render production SwiftUI cards in iOS Simulator
+        run: bash scripts/render-native-widgets.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-widget-evidence
+          path: native-widget-evidence
+          if-no-files-found: error

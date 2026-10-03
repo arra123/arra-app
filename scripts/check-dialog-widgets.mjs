@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { dialogProps, compactDialogProps } from '../shared/dialog-widget.js';
+import { replaceRequired } from '../plugins/with-dialog-widgets.js';
+const agents = Array.from({length:60}, (_,i)=>({key:`live:pc:${1000000+i}`,device:'pc',cwd:'/helper',project:'Помощник',title:'Длинное название диалога '.repeat(10),stage:'Сверяет результат и исправляет границы '.repeat(10),state:i===3?'old':'working',mascotId:i%2?14:3}));
+const props = dialogProps(agents, 100);
+assert.equal(props.agents.length,60);
+assert.equal(props.agents[3].state,'idle');
+assert.equal(props.agents[59].number,60);
+assert.equal(props.agents[1].mascotId,14);
+const compact = compactDialogProps(props);
+assert.equal(compact.agents.length,60);
+assert.equal(compact.agents[59][0],agents[59].key);
+assert.ok(Buffer.byteLength(JSON.stringify({aps:{timestamp:100,event:'update','content-state':{name:'ArraRings',props:JSON.stringify(compact)}}}))<4096);
+assert.equal(replaceRequired('before after','before','new','test'),'new after');
+assert.equal(replaceRequired('new after','before','new','test'),'new after');
+assert.throws(()=>replaceRequired('unexpected','before','new','test'));
+assert.equal(dialogProps([],100).agents.length,0);
+console.log('Dialog widgets: PASS (all 60 agents, idle, number, mascot, APNs size, native plugin gates)');

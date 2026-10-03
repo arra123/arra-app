@@ -30,8 +30,16 @@ const build = payload.data.find(item => releases.get(item.relationships?.preRele
 if (!build) {
   console.log(JSON.stringify({ release: expected, uploaded: false }));
 } else {
-  const groups = await get('/v1/builds/' + build.id + '/betaGroups?fields[betaGroups]=name,isInternalGroup');
+  // Apple does not support GET /builds/{id}/betaGroups. Read group -> builds.
+  const groups = await get('/v1/betaGroups?filter[app]=6782562444&fields[betaGroups]=name,isInternalGroup');
+  const memberships = [];
+  for (const group of groups.data) {
+    const builds = await get('/v1/betaGroups/' + group.id + '/builds?limit=200&fields[builds]=version');
+    if (builds.data.some(item => item.id === build.id)) {
+      memberships.push({ name: group.attributes.name, internal: group.attributes.isInternalGroup });
+    }
+  }
   console.log(JSON.stringify({ release: expected, build: build.attributes.version,
     processingState: build.attributes.processingState, uploadedDate: build.attributes.uploadedDate,
-    groups: groups.data.map(item => ({ name: item.attributes.name, internal: item.attributes.isInternalGroup })) }));
+    groups: memberships }));
 }

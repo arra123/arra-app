@@ -18,6 +18,12 @@ export const DEVICE_META: Record<DeviceId, { label: string; icon: SFSymbol }> = 
 
 export const AGENT_LABEL = { claude: 'Claude', codex: 'Codex' } as const;
 
+/** Диалоги нумеруются внутри проекта, независимо от поиска и закрепления. */
+export function agentNumber(agent: Agent, agents: Agent[]): number {
+  return agents.filter((item) => item.device === agent.device && item.cwd === agent.cwd)
+    .findIndex((item) => item.key === agent.key) + 1;
+}
+
 /** «3 мин», «2 ч 5 мин», «4 дн» */
 export function duration(ms: number): string {
   const minutes = Math.max(0, Math.floor(ms / 60_000));

@@ -14,7 +14,7 @@ export default async function pushRoutes(app) {
   app.post('/push/activity', { preHandler: app.auth }, async (request, reply) => {
     const token = request.body?.token;
     if (!token || typeof token !== 'string') return reply.code(400).send({ error: 'Нужен token' });
-    await saveActivityToken(request.user.id, token);
+    await saveActivityToken(request.user.id, token, request.body?.layoutVersion === 2 ? 2 : 1);
     return { ok: true };
   });
 
@@ -22,7 +22,7 @@ export default async function pushRoutes(app) {
   app.post('/push/activity-start', { preHandler: app.auth }, async (request, reply) => {
     const token = request.body?.token;
     if (!token || typeof token !== 'string') return reply.code(400).send({ error: 'Нужен token' });
-    await saveStartToken(request.user.id, token);
+    await saveStartToken(request.user.id, token, request.body?.layoutVersion === 2 ? 2 : 1);
     return { ok: true };
   });
 }

@@ -20,6 +20,7 @@ export async function sendPushToUser(userId, title, body, data) {
       sound: 'default',
       priority: 'high',
       data: data || {},
+      ...(data?.type === 'ara.agent' ? { mutableContent: true } : {}),
     }));
     const res = await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',

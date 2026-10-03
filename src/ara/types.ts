@@ -14,8 +14,10 @@ export type Agent = {
   title: string;
   busy: boolean;
   compacting?: boolean;
+  error?: string;
   state: AgentState;
   task: string;
+  stage?: string;
   transcript: string;
   model: string;
   /** мс: с какого момента агент в текущем состоянии */

@@ -61,6 +61,9 @@ export function answerMessage(question: AgentQuestion, picked: Selections, text 
     const answer = labels.join(', ');
     parts.push(many ? `${q.header || q.question}: ${answer}` : answer);
   });
-  if (own) parts.push(parts.length ? `Своими словами: ${own}` : own);
+  if (own) {
+    if (parts.length) parts.push(`Своими словами: ${own}`);
+    else parts.push(`${question.questions[0]?.header || question.questions[0]?.question || 'Ответ'}: ${own}`);
+  }
   return parts.join('\n');
 }

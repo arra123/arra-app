@@ -7,6 +7,7 @@ import { addPushToStartTokenListener } from 'expo-widgets';
 
 import { ringsActivity, ringsWidget, type RingsProps } from './arra-widgets.ios';
 import { ringsProps } from './props';
+import { compactDialogProps } from '../../shared/dialog-widget';
 
 type Activity = ReturnType<typeof ringsActivity.start>;
 let current: Activity | null = null;
@@ -27,8 +28,27 @@ export function widgetStatus() { return status; }
  * to /push/activity).
  */
 /** An agent «needs you» for this long after it stopped; then the block leaves by itself. */
-const FRESH_MS = 15 * 60_000;
 let startTokenSent = false;
+let widgetTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingWidget: RingsProps | null = null;
+
+function updateHomeWidget(props: RingsProps) {
+  pendingWidget = props;
+  if (widgetTimer) return;
+  const flush = () => {
+    widgetTimer = null;
+    const next = pendingWidget;
+    if (!next) return;
+    const key = JSON.stringify({ ...next, updated: 0 });
+    if (key === lastWidget) return;
+    ringsWidget.updateSnapshot(next);
+    lastWidget = key;
+    lastWidgetAt = Date.now();
+  };
+  const delay = Math.max(0, 5000 - (Date.now() - lastWidgetAt));
+  if (!delay) flush();
+  else widgetTimer = setTimeout(flush, delay);
+}
 
 export function syncWidgets(agents: Agent[]) {
   // the server may start the block while the app is closed: it needs this token
@@ -36,17 +56,15 @@ export function syncWidgets(agents: Agent[]) {
     startTokenSent = true;
     try {
       addPushToStartTokenListener((event) => {
-        if (event.activityPushToStartToken) api('/push/activity-start', { body: { token: event.activityPushToStartToken } }).catch(() => {});
+        if (event.activityPushToStartToken) api('/push/activity-start', { body: { token: event.activityPushToStartToken, layoutVersion: 2 } }).catch(() => {});
       });
     } catch { /* an older system: the block starts only from the app */ }
   }
   const all = ringsProps(agents);
-  // the home screen widget shows everyone; the lock screen block only who needs you now
-  const nowMs = Date.now();
-  const calling = agents.filter((a) => (a.state === 'waiting' || a.state === 'error') && a.since && nowMs - a.since < FRESH_MS);
-  // the block lists who needs you first, then who works (it is on the lock screen
-  // while anyone works or waits; the Dynamic Island lights up only for the waiting)
-  const props: RingsProps = { ...ringsProps(calling), waiting: calling.length, working: 0 };
+  // One persistent card, every open dialog, including idle agents. Its native
+  // selection is stored separately, so snapshots and pushes never reset it.
+  updateHomeWidget(all);
+  const props = compactDialogProps(all);
   const key = JSON.stringify({ ...props, updated: 0 });
   serial = serial.then(async () => {
     if (!started) {
@@ -55,21 +73,14 @@ export function syncWidgets(agents: Agent[]) {
       current = ringsActivity.getInstances()[0] ?? null;
       if (current) watchToken(current);
     }
-    // the home screen widget: at most every 20 s (iOS rations reloads)
-    const widgetKey = JSON.stringify({ ...all, updated: 0 });
-    if (widgetKey !== lastWidget && Date.now() - lastWidgetAt > 20_000) {
-      lastWidget = widgetKey;
-      lastWidgetAt = Date.now();
-      ringsWidget.updateSnapshot(all);
-    }
     if (key === lastActivity) return;
-    lastActivity = key;
     const live = props.agents.length > 0;
     if (!live) {
       // 'immediate': an ended block used to stay on the lock screen for hours, empty
       if (current) await current.end('immediate', props);
       current = null;
-      status = 'агенты не работают и никто не ждёт — блок не показывается';
+      lastActivity = key;
+      status = 'нет открытых диалогов — блок закрыт';
       return;
     }
     if (current) {
@@ -77,16 +88,17 @@ export function syncWidgets(agents: Agent[]) {
       status = `обновлён: ${props.working} работают, ${props.waiting} ждут`;
     } else if (AppState.currentState === 'active') {
       // iOS lets an app start a Live Activity only while it is on screen
-      current = ringsActivity.start(props, `arra://agent/${encodeURIComponent(props.agents[0].key)}`);
+      current = ringsActivity.start(props, 'arra://');
       watchToken(current);
       status = `запущен: ${props.working} работают, ${props.waiting} ждут`;
-    } else status = 'приложение не на экране — iOS не даёт запустить блок';
+    } else { status = 'приложение не на экране — iOS не даёт запустить блок'; return; }
+    lastActivity = key;
   }).catch((error) => { status = 'ошибка: ' + String(error); console.warn('Arra widgets:', String(error)); });
 }
 
 function watchToken(activity: Activity) {
   const send = (token: string | null) => {
-    if (token) api('/push/activity', { body: { token } }).then(() => { status += ' · токен на сервере'; }).catch((e) => { status += ' · токен не ушёл: ' + String(e); });
+    if (token) api('/push/activity', { body: { token, layoutVersion: 2 } }).then(() => { status += ' · токен на сервере'; }).catch((e) => { status += ' · токен не ушёл: ' + String(e); });
     else status += ' · токена пуша нет';
   };
   activity.addPushTokenListener((event) => send(event.pushToken));

@@ -9,14 +9,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { confirmCloseAgent, stopAgent } from '@/ara/actions';
 import { ara } from '@/ara/client';
-import { AGENT_LABEL, ago, DEVICE_META, STATE_META } from '@/ara/format';
+import { agentNumber, AGENT_LABEL, ago, DEVICE_META, STATE_META } from '@/ara/format';
 import { useAra, useNow } from '@/ara/hooks';
 import { pins, usePins } from '@/ara/pins';
 import type { Agent, DeviceId, RecentSession } from '@/ara/types';
 import { chats, useCurrentChatId } from '@/ara/chats';
 import { openChat, openNewChat } from '@/components/chat-list';
 import { ChatSidebar } from '@/components/chat-sidebar';
-import { ProjectMascot } from '@/components/project-mascot';
+import { AgentNumber, ProjectMascot } from '@/components/project-mascot';
 import { GlassMenu, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
 import { IconButton, Press, StatusDot, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
@@ -106,6 +106,7 @@ export function WorkList() {
                   device={device}
                   online={state.devices[device].online}
                   agents={sortPinned(agents.filter((a) => a.device === device), pinned)}
+                  allAgents={state.agents}
                   pinned={pinned}
                   loaded={state.loaded}
                   filtered={!!q}
@@ -166,10 +167,11 @@ function SectionTitle({ title, icon, right }: { title: string; icon?: 'laptopcom
   );
 }
 
-function DeviceSection({ device, online, agents, pinned, loaded, filtered, now }: {
+function DeviceSection({ device, online, agents, allAgents, pinned, loaded, filtered, now }: {
   device: DeviceId;
   online: boolean;
   agents: Agent[];
+  allAgents: Agent[];
   pinned: string[];
   loaded: boolean;
   filtered: boolean;
@@ -188,7 +190,7 @@ function DeviceSection({ device, online, agents, pinned, loaded, filtered, now }
       />
       <Animated.View layout={layout} style={styles.group}>
         {agents.length ? (
-          agents.map((agent, i) => <AgentRow key={agent.key} agent={agent} pinned={pinned.includes(agent.key)} first={i === 0} now={now} />)
+          agents.map((agent, i) => <AgentRow key={agent.key} agent={agent} number={agentNumber(agent, allAgents)} pinned={pinned.includes(agent.key)} first={i === 0} now={now} />)
         ) : (
           <View style={styles.emptyRow}>
             <T v="footnote" color={Colors.textTertiary}>
@@ -208,7 +210,7 @@ function agentsWord(n: number) {
   return 'агентов';
 }
 
-function AgentRow({ agent, pinned, first, now }: { agent: Agent; pinned: boolean; first: boolean; now: number }) {
+function AgentRow({ agent, number, pinned, first, now }: { agent: Agent; number: number; pinned: boolean; first: boolean; now: number }) {
   const meta = STATE_META[agent.state];
   // big: what the agent is doing (the session's name); small: its state and
   // the project; right corner: when it last did something
@@ -258,8 +260,9 @@ function AgentRow({ agent, pinned, first, now }: { agent: Agent; pinned: boolean
           delayLongPress={350}
           scaleTo={0.985}
           style={styles.row}
-          accessibilityLabel={`${AGENT_LABEL[agent.agent]} ${agent.project}, ${meta.label}${pinned ? ', закреплён' : ''}`}
+          accessibilityLabel={`${number}, ${AGENT_LABEL[agent.agent]} ${agent.project}, ${meta.label}${pinned ? ', закреплён' : ''}`}
           accessibilityHint="Долгое нажатие — действия, свайп влево — закрыть">
+          <AgentNumber number={number} mascotId={agent.mascotId} />
           <ProjectMascot id={agent.mascotId} size={34} still />
           <View style={styles.rowText}>
             <View style={styles.rowTitle}>
