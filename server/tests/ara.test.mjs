@@ -219,6 +219,53 @@ test('хаб: запуск на ПК через ноутбук и поток о�
   assert.equal(phone.all('ara.ask.delta').length, 2);
 });
 
+test('хаб: High передаётся отдельно, неподдерживаемые значения отклоняются', async () => {
+  const { hub } = setup();
+  const laptop = fakeSocket(), phone = fakeSocket();
+  hub.deviceConnected('u1', 'L', { role: 'laptop' }, laptop);
+  hub.clientConnected('u1', phone);
+  await hub.deviceMessage('u1', 'L', laptopSnapshot());
+  hub.clientMessage('u1', phone, { type: 'ara.model', reqId: 'm1', agentKey: 'live:pc:700', model: 'gpt-6.1-sol', effort: 'high' });
+  const forwarded = laptop.last('ara.model');
+  assert.equal(forwarded.model, 'gpt-6.1-sol');
+  assert.equal(forwarded.effort, 'high');
+  await hub.deviceMessage('u1', 'L', { type: 'ara.result', reqId: forwarded.reqId, ok: true, queued: true });
+  assert.equal(phone.last('ara.result').queued, true);
+  hub.clientMessage('u1', phone, { type: 'ara.model', reqId: 'm2', agentKey: 'live:pc:700', model: 'gpt-6.1-sol', effort: 'invalid' });
+  assert.equal(phone.last('ara.result').ok, false);
+  assert.equal(laptop.all('ara.model').length, 1);
+});
+
+test('хаб: маскот относится к проекту; исключённые персонажи не возвращаются', async () => {
+  const { hub } = setup();
+  const laptop = fakeSocket(), phone = fakeSocket();
+  hub.deviceConnected('u1', 'L', { role: 'laptop' }, laptop);
+  hub.clientConnected('u1', phone);
+  await hub.deviceMessage('u1', 'L', laptopSnapshot());
+  hub.clientMessage('u1', phone, { type: 'ara.mascot', reqId: 'p1', agentKey: 'live:laptop:58872', mascotId: 14 });
+  const forwarded = laptop.last('ara.mascot');
+  assert.equal(forwarded.agent.cwd, '/home/tima/Claude/helper');
+  assert.equal(forwarded.mascotId, 14);
+  await hub.deviceMessage('u1', 'L', { type: 'ara.result', reqId: forwarded.reqId, ok: true });
+  hub.clientMessage('u1', phone, { type: 'ara.mascot', reqId: 'p2', agentKey: 'live:laptop:58872', mascotId: 2 });
+  assert.equal(phone.last('ara.result').ok, false);
+  assert.equal(laptop.all('ara.mascot').length, 1);
+});
+
+test('хаб: refresh сразу отдаёт кэш и запрашивает свежие данные с ограничением частоты', async () => {
+  const { hub, advance } = setup();
+  const laptop = fakeSocket(), phone = fakeSocket();
+  hub.deviceConnected('u1', 'L', { role: 'laptop' }, laptop);
+  hub.clientConnected('u1', phone);
+  await hub.deviceMessage('u1', 'L', laptopSnapshot());
+  for (let i = 0; i < 3; i++) hub.clientMessage('u1', phone, { type: 'ara.refresh' });
+  assert.equal(phone.last('ara.state').agents.length, 2);
+  assert.equal(laptop.all('ara.refresh').length, 1);
+  advance(1000);
+  hub.clientMessage('u1', phone, { type: 'ara.refresh' });
+  assert.equal(laptop.all('ara.refresh').length, 2);
+});
+
 test('хаб: без компьютера — понятная ошибка; отключение компьютера обрывает запросы', async () => {
   const { hub } = setup({ timeouts: { command: 10_000 } });
   const phone = fakeSocket();
