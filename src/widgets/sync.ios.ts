@@ -27,7 +27,6 @@ export function widgetStatus() { return status; }
  * closed the server moves the Live Activity by APNs (its push token is sent
  * to /push/activity).
  */
-/** An agent «needs you» for this long after it stopped; then the block leaves by itself. */
 let startTokenSent = false;
 let widgetTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingWidget: RingsProps | null = null;

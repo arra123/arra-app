@@ -28,7 +28,9 @@ enum WidgetsStorage {
         Text("Экран блокировки · 160 pt").font(.caption)
         ArraDialogCard(props: mode == "empty" ? [:] : props).frame(height:160).background(Color(red:0.125,green:0.137,blue:0.157)).clipShape(RoundedRectangle(cornerRadius:20))
         Text("Домашний экран · 160 pt").font(.caption)
-        ArraWidgetEntryView(props: props).environment(\.widgetFamily,.systemMedium).frame(height:160).background(Color(red:0.125,green:0.137,blue:0.157)).clipShape(RoundedRectangle(cornerRadius:20))
+        // systemMedium uses this same production card; WidgetFamily is read-only
+        // and can only be supplied by a real WidgetKit extension host.
+        ArraDialogCard(props: mode == "empty" ? [:] : props).frame(height:160).background(Color(red:0.125,green:0.137,blue:0.157)).clipShape(RoundedRectangle(cornerRadius:20))
         Spacer()
       }.padding(16).padding(.top,24).background(Color.black).preferredColorScheme(.dark)
         .dynamicTypeSize(mode == "large" ? .accessibility1 : .large)
