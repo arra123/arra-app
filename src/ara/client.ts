@@ -75,7 +75,7 @@ class AraClient {
       if (this.backgroundAt && Date.now() - this.backgroundAt > 60_000) this.dropStale();
       this.backgroundAt = 0;
       // После фона iOS мог тихо убить сокет — проверяем сразу, а не ждём пинга
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN || Date.now() - this.lastMessageAt > 30_000) {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN || Date.now() - this.lastMessageAt > 10_000) {
         this.reconnectNow();
         return;
       }

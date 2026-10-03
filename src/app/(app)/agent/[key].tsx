@@ -293,7 +293,8 @@ export default function AgentScreen() {
   async function changeModel(value: string, effort?: string) {
     if (!agent) return;
     try {
-      await ara.setModel(agent.key, value, effort);
+      const result = await ara.setModel(agent.key, value, effort);
+      if (result.queued) Alert.alert('Смена после ответа', `${value}${effort ? ' · ' + effort : ''} применится, когда агент закончит текущий ответ.`);
       haptic.success();
     } catch (error: any) {
       Alert.alert('Модель не сменилась', error?.message || '');
@@ -334,6 +335,8 @@ export default function AgentScreen() {
   const doneAt = transcript?.last ? transcript.last * 1000 : agent?.since;
   const shortStatus = !agent ? null : stopping ? (
     <T v="caption" color={Colors.textSecondary}>останавливаю…</T>
+  ) : agent.compacting ? (
+    <T v="caption" color={Colors.textSecondary} numberOfLines={1}>сжатие контекста…</T>
   ) : agent.state === 'waiting' ? (
     <T v="caption" weight="600" color={Colors.waiting} numberOfLines={1}>
       {doneAt ? `ждёт · ${shortAgo(now - doneAt)}` : 'ждёт ответа'}
@@ -377,11 +380,15 @@ export default function AgentScreen() {
   const ring = null;
   const right = ring || menu.length ? (
     <Glass radius={22} backing style={styles.right}>
+      {agent?.state === 'working' && <Press onPress={stop} disabled={stopping} accessibilityRole="button" accessibilityLabel="Остановить ответ" style={styles.more}>
+        <SymbolView name="stop.circle" size={20} tintColor={Colors.error} />
+      </Press>}
       {ring}
       {menu.length ? (
         <MenuTrigger label="Модель и действия" sections={menu} native={false}>
           <View style={styles.more}>
             <SymbolView name="ellipsis" size={18} tintColor={Colors.text} weight="semibold" />
+            {transcript?.effort ? <T v="tiny" color={Colors.textSecondary}>{transcript.effort}</T> : null}
           </View>
         </MenuTrigger>
       ) : null}

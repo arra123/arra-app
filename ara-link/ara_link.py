@@ -296,6 +296,13 @@ class AraLink:
         while True:
             try:
                 await self.send(await self.snapshot())
+                queue = getattr(self, "model_queue", {})
+                for key, change in list(queue.items()):
+                    target = change.get("agent") or {}
+                    agent = next((a for a in self.sessions.get("live", []) if a.get("term") == target.get("term") and a.get("device") == target.get("device")), None)
+                    if agent and not agent.get("busy"):
+                        queue.pop(key, None)
+                        self.spawn(self.apply_queued_model(change))
                 failures = 0
             except Exception as error:  # noqa: BLE001 — скрипт мог упасть, живём дальше
                 failures += 1
@@ -532,6 +539,12 @@ class AraLink:
             await asyncio.sleep(0.15)
         return {}
 
+    async def apply_queued_model(self, msg: dict) -> None:
+        try:
+            await self.cmd_model({**msg, "_ready": True})
+        except Exception as error:
+            log.warning("queued model: %s", error)
+
     async def cmd_model(self, msg: dict) -> dict:
         model = str(msg.get("model") or "")
         if not MODEL_RE.match(model):
@@ -540,6 +553,12 @@ class AraLink:
         effort = msg.get("effort") or ""
         if effort and effort not in ("low", "medium", "high", "xhigh", "max", "ultra"):
             raise RuntimeError("Непонятный уровень reasoning")
+        current = next((a for a in self.sessions.get("live", []) if a.get("term") == agent.get("term") and a.get("device") == agent.get("device")), None)
+        if not msg.get("_ready") and current and current.get("busy"):
+            if not hasattr(self, "model_queue"):
+                self.model_queue = {}
+            self.model_queue[f"{agent.get('device')}:{agent.get('term')}"] = dict(msg)
+            return {"queued": True, "requestedModel": model, "requestedEffort": effort}
         delivery = await self.type_into(agent, f"/model {model}" + (f" {effort}" if effort else ""))
         if delivery.get("model"):
             parts = delivery["model"].split()

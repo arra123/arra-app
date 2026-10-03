@@ -3,7 +3,7 @@
     "name": "Arra",
     "slug": "aura",
     "owner": "arratima",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": [
@@ -133,7 +133,7 @@
       "url": "https://u.expo.dev/804ef682-ea7e-4d3f-9994-d578dd0e4c79",
       "enabled": true,
       "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 10000
+      "fallbackToCacheTimeout": 0
     },
     "backgroundColor": "#0a0a0c"
   }

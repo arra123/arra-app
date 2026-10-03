@@ -224,7 +224,11 @@ class AraLinkTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("pc stop 222", self.calls())
 
         await self.command({"type": "ara.model", "reqId": "r5", "agent": laptop_agent, "model": "sonnet"})
-        await self.expect("ara.result", lambda m: m["reqId"] == "r5")
+        result = await self.expect("ara.result", lambda m: m["reqId"] == "r5")
+        self.assertTrue(result["queued"])
+        self.assertNotIn("send 111 </model sonnet>", self.calls())
+        change = self.link.model_queue.pop("laptop:111")
+        await self.link.apply_queued_model(change)
         self.assertIn("send 111 </model sonnet>", self.calls())
         await self.command({"type": "ara.model", "reqId": "r6", "agent": laptop_agent, "model": "x; rm -rf /"})
         self.assertFalse((await self.expect("ara.result", lambda m: m["reqId"] == "r6"))["ok"])
