@@ -6,9 +6,24 @@ import AppIntents
 @available(iOS 17.0, *)
 public struct ArraWidgetsIntentsPackage: AppIntentsPackage { public init() {} }
 
-private enum ArraSelection {
+enum ArraSelection {
   static var defaults: UserDefaults? { UserDefaults(suiteName: WidgetsStorage.appGroupIdentifier) }
   static let key = "arra.selected-dialog"
+  // WidgetKit renders in another process. Read an atomic shared file instead
+  // of depending on a cached UserDefaults value becoming observable there.
+  static var selectionURL: URL? {
+    guard let group = WidgetsStorage.appGroupIdentifier else { return nil }
+    return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)?.appendingPathComponent("arra-selected-dialog")
+  }
+  static func save(_ selected: String) throws {
+    if let url = selectionURL { try Data(selected.utf8).write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]) }
+    defaults?.set(selected, forKey: key)
+  }
+  static func selectedKey(_ props: [String: Any]) -> String? {
+    if let selected = props["selectedKey"] as? String { return selected }
+    if let url = selectionURL, let data = try? Data(contentsOf: url) { return String(data: data, encoding: .utf8) }
+    return defaults?.string(forKey: key)
+  }
   static func agents(_ props: [String: Any]) -> [[String: Any]] {
     if let list = props["agents"] as? [[String: Any]] { return list }
     // Compact APNs state: preserve every dialog within Apple's 4KB limit.
@@ -19,8 +34,8 @@ private enum ArraSelection {
       return agent
     }
   }
-  static func index(_ agents: [[String: Any]]) -> Int {
-    let selected = defaults?.string(forKey: key)
+  static func index(_ agents: [[String: Any]], props: [String: Any]) -> Int {
+    let selected = selectedKey(props)
     return agents.firstIndex { ($0["key"] as? String) == selected } ?? 0
   }
   static func parse(_ json: String) -> [String: Any] {
@@ -29,7 +44,7 @@ private enum ArraSelection {
   }
   static func url(_ props: [String: Any]) -> URL {
     let list = agents(props)
-    guard !list.isEmpty, let key = list[index(list)]["key"] as? String else { return URL(string: "arra://")! }
+    guard !list.isEmpty, let key = list[index(list, props: props)]["key"] as? String else { return URL(string: "arra://")! }
     var url = URLComponents()
     url.scheme = "arra"; url.host = "agent"; url.path = "/" + key
     return url.url ?? URL(string: "arra://")!
@@ -39,16 +54,16 @@ private enum ArraSelection {
 // Unlike expo-widgets' Live Activity button event, this intent updates the
 // ActivityKit content itself. It works even when the React Native app is closed.
 @available(iOS 17.0, *)
-struct ArraCycleDialog: LiveActivityIntent {
-  static var title: LocalizedStringResource = "Переключить диалог Arra"
-  static var isDiscoverable = false
-  static var openAppWhenRun = false
-  @Parameter(title: "Направление") var direction: Int
-  @Parameter(title: "Текущий диалог") var currentKey: String
-  init() { direction = 1; currentKey = "" }
-  init(direction: Int, currentKey: String) { self.direction = direction; self.currentKey = currentKey }
+public struct ArraCycleDialog: LiveActivityIntent {
+  public static var title: LocalizedStringResource = "Переключить диалог Arra"
+  public static var isDiscoverable = false
+  public static var openAppWhenRun = false
+  @Parameter(title: "Направление") public var direction: Int
+  @Parameter(title: "Текущий диалог") public var currentKey: String
+  public init() { direction = 1; currentKey = "" }
+  public init(direction: Int, currentKey: String) { self.direction = direction; self.currentKey = currentKey }
 
-  func perform() async throws -> some IntentResult {
+  public func perform() async throws -> some IntentResult {
     let activities = Activity<LiveActivityAttributes>.activities.filter { $0.content.state.name == "ArraRings" }
     let timeline = WidgetsStorage.getArray(forKey: "__expo_widgets_ArraAgents_timeline")
     let entry = timeline?.last as? [String: Any]
@@ -56,15 +71,30 @@ struct ArraCycleDialog: LiveActivityIntent {
     let props = activities.first.map { ArraSelection.parse($0.content.state.props) } ?? widgetProps
     let list = ArraSelection.agents(props)
     guard !list.isEmpty else { return .result() }
-    let old = list.firstIndex { ($0["key"] as? String) == currentKey } ?? ArraSelection.index(list)
+    let old = list.firstIndex { ($0["key"] as? String) == currentKey } ?? ArraSelection.index(list, props: props)
     let next = (old + (direction < 0 ? -1 : 1) + list.count) % list.count
-    ArraSelection.defaults?.set(list[next]["key"] as? String, forKey: ArraSelection.key)
+    guard let selected = list[next]["key"] as? String else { return .result() }
+    try ArraSelection.save(selected)
     for activity in activities {
       var updated = ArraSelection.parse(activity.content.state.props)
+      updated["selectedKey"] = selected
       updated["selectionRevision"] = Date().timeIntervalSince1970
       let data = try JSONSerialization.data(withJSONObject: updated)
       let state = LiveActivityAttributes.ContentState(name: "ArraRings", props: String(decoding: data, as: UTF8.self))
       await activity.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(300)))
+    }
+    // A reload with the same timeline is not a data change. Write the selection
+    // into every entry too, so the archived view and its Link share that key.
+    if let timeline = timeline as? [[String: Any]], let defaults = ArraSelection.defaults {
+      let updated = timeline.map { entry in
+        var entry = entry
+        var props = entry["props"] as? [String: Any] ?? [:]
+        props["selectedKey"] = selected
+        props["selectionRevision"] = Date().timeIntervalSince1970
+        entry["props"] = props
+        return entry
+      }
+      defaults.set(updated, forKey: "__expo_widgets_ArraAgents_timeline")
     }
     WidgetCenter.shared.reloadTimelines(ofKind: "ArraAgents")
     return .result()
@@ -79,7 +109,7 @@ public struct ArraDialogCard: View {
 
   public var body: some View {
     let list = ArraSelection.agents(props)
-    let index = ArraSelection.index(list)
+    let index = ArraSelection.index(list, props: props)
     let agent = list.isEmpty ? [:] : list[index]
     let key = agent["key"] as? String ?? ""
     let mascot = agent["mascotId"] as? Int ?? 0
@@ -104,7 +134,13 @@ public struct ArraDialogCard: View {
             }.font(.caption2).foregroundStyle(.secondary)
             Text(title).font(accessible ? .caption.weight(.semibold) : .subheadline.weight(.semibold)).lineLimit(accessible ? 1 : 2)
             Text(note).font(accessible ? .caption2 : .caption).foregroundStyle(.secondary).lineLimit(2)
-            if !accessible { Text(label).font(.caption2.weight(.semibold)).foregroundStyle(statusColor).lineLimit(1) }
+            if !accessible {
+              Text(label).font(.caption2.weight(.semibold)).foregroundStyle(statusColor).lineLimit(1)
+              if let updated = props["updated"] as? Double {
+                (Text("Обновлено ") + Text(Date(timeIntervalSince1970: updated / 1000), style: .relative) + Text(" назад"))
+                  .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+              }
+            }
           }.frame(maxWidth: .infinity, alignment: .leading)
         }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
       }.buttonStyle(.plain).accessibilityLabel("Открыть диалог: \(project), \(number). \(title). \(note). \(label)")
@@ -145,7 +181,7 @@ public struct ArraWidgetEntryView: View {
   }
   @ViewBuilder private var content: some View {
     let list = ArraSelection.agents(props)
-    let agent = list.isEmpty ? [:] : list[ArraSelection.index(list)]
+    let agent = list.isEmpty ? [:] : list[ArraSelection.index(list, props: props)]
     if family == .systemMedium { ArraDialogCard(props: props) }
     else {
       Link(destination: ArraSelection.url(props)) {

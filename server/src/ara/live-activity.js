@@ -106,6 +106,7 @@ export async function saveStartToken(userId, token, layoutVersion = 1) {
 function send(token, payload, priority = '5') {
   return new Promise((resolve) => {
     let status = 0;
+    let response = '';
     try {
       const req = apns().request({
         ':method': 'POST', ':path': `/3/device/${token}`, authorization: `bearer ${auth()}`,
@@ -113,11 +114,19 @@ function send(token, payload, priority = '5') {
       });
       req.setTimeout(10_000, () => { req.close(); resolve(0); });
       req.on('response', (h) => { status = Number(h[':status']); });
-      req.on('data', () => {});
-      req.on('end', () => resolve(status));
-      req.on('error', () => resolve(0));
+      req.on('data', (chunk) => { if (response.length < 1024) response += chunk; });
+      req.on('end', () => {
+        {
+          let reason = status === 200 ? 'Accepted' : 'Unknown';
+          try { reason = JSON.parse(response).reason || reason; } catch {}
+          console.info('Arra Live Activity APNs:', status, reason);
+        }
+        resolve(status);
+      });
+      req.on('error', (error) => { console.warn('Arra Live Activity transport:', error.code || error.name); resolve(0); });
       req.end(JSON.stringify(payload));
-    } catch {
+    } catch (error) {
+      console.warn('Arra Live Activity transport:', error.code || error.name);
       resolve(0);
     }
   });
@@ -129,16 +138,26 @@ export async function saveActivityToken(userId, token, layoutVersion = 1) {
      ON CONFLICT (token) DO UPDATE SET user_id = $2, layout_version = $3, updated_at = now()`,
     [token, userId, layoutVersion],
   );
+  // A newly registered activity must receive current data even if nothing
+  // changed since a push to an older activity.
+  const agents = latest.get(userId);
+  if (agents) pushRings(userId, agents, { force: true }).catch((error) => {
+    console.warn('Arra Live Activity refresh:', error.code || error.name);
+  });
 }
 
-const lastSent = new Map(); // userId -> { body, at }
+const lastSent = new Map(); // userId -> { body, at, delivered }
 const started = new Map(); // userId -> { keys: Set of agent keys the block was started for, at }
 const pending = new Map();
 
+export function activityNeedsUpdate(previous, body, now = Date.now()) {
+  return !previous || !previous.delivered || previous.body !== body || now - previous.at >= 120_000;
+}
+
 /**
- * The agents changed (or a minute passed). The block is on the screen only
- * while someone needs the user: it is updated, or started from here when the
- * app is closed, and ended as soon as nobody waits (or 15 minutes passed).
+ * Version 2 shows all open dialogs. Version 1 retains the old, 15-minute
+ * result-only behavior for phones that have not installed the native update.
+ * Changes are coalesced; unchanged live data gets a freshness heartbeat.
  */
 export async function pushRings(userId, agents, { force = false } = {}) {
   latest.set(userId, agents);
@@ -146,7 +165,7 @@ export async function pushRings(userId, agents, { force = false } = {}) {
   const dialogs = compactDialogProps(dialogProps(agents));
   const body = JSON.stringify({ ...dialogs, updated: 0 });
   const prev = lastSent.get(userId);
-  if (!force && prev && prev.body === body) return;
+  if (!force && !activityNeedsUpdate(prev, body)) return;
   // Apple rations these: not more than every 20 s per user
   if (prev && Date.now() - prev.at < 20_000 && !force) {
     if (!pending.has(userId)) pending.set(userId, setTimeout(() => {
@@ -155,17 +174,21 @@ export async function pushRings(userId, agents, { force = false } = {}) {
     }, 20_000 - (Date.now() - prev.at)));
     return;
   }
-  lastSent.set(userId, { body, at: Date.now() });
+  const attempt = { body, at: Date.now(), delivered: false };
+  lastSent.set(userId, attempt);
   const { rows } = await query('SELECT token, layout_version FROM ara_live_activities WHERE user_id = $1', [userId]);
   let alive = 0;
   for (const { token, layout_version } of rows) {
     const payload = activityPayload(layout_version === 2 ? dialogs : legacy);
-    const status = await send(token, payload);
+    // Actual changes are visible updates; the periodic freshness refresh can
+    // use Apple's low-priority delivery and avoid spending its update budget.
+    const status = await send(token, payload, force || prev?.body !== body ? '10' : '5');
     if (status === 200) alive += 1;
     // 410: the activity is over (ended or removed): forget its token
     if (status === 410 || status === 400) await query('DELETE FROM ara_live_activities WHERE token = $1', [token]).catch(() => {});
   }
-  if (!agents.length) { started.delete(userId); return; }
+  attempt.delivered = alive > 0;
+  if (!agents.length) { started.delete(userId); attempt.delivered = true; return; }
   // nobody shows it yet: start it from here, once per agent that began to wait
   if (alive === 0) {
     const row = await query('SELECT token, layout_version FROM ara_live_start WHERE user_id = $1', [userId]).then((r) => r.rows[0]).catch(() => null);
@@ -179,17 +202,16 @@ export async function pushRings(userId, agents, { force = false } = {}) {
     const payload = startPayload(props);
     if (row.layout_version === 2) payload.aps.alert = { title: 'Arra · открытые диалоги', body: 'Маскоты и текущая работа агентов' };
     const status = await send(row.token, payload, '10');
-    if (status === 200) started.set(userId, { keys: new Set(keys), at: Date.now() });
+    if (status === 200) { started.set(userId, { keys: new Set(keys), at: Date.now() }); attempt.delivered = true; }
     else if (status === 410 || status === 400) await query('DELETE FROM ara_live_start WHERE user_id = $1', [userId]).catch(() => {});
   }
 }
 
-// the minutes on the rings go on while agents work
+// Refresh freshness even when the actual work/state has not changed.
 const latest = new Map(); // userId -> agents
 export function rememberAgents(userId, agents) { latest.set(userId, agents); }
 setInterval(() => {
   for (const [userId, agents] of latest) {
-    // while someone waits: the minutes go on, and after 15 minutes the block leaves
     if (lastSent.has(userId)) pushRings(userId, agents).catch(() => {});
   }
 }, 60_000).unref?.();

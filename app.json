@@ -20,6 +20,7 @@
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
+        "NSSupportsLiveActivitiesFrequentUpdates": true,
         "CFBundleDisplayName": "Arra",
         "NSCameraUsageDescription": "Arra снимает фото, чтобы отправить его агенту на компьютер.",
         "NSMicrophoneUsageDescription": "Arra записывает голос, чтобы продиктовать сообщение агенту или Arra.",

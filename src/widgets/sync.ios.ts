@@ -1,4 +1,5 @@
 import { AppState } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 
 import type { Agent } from '@/ara/types';
 import { api } from '@/lib/api';
@@ -15,8 +16,20 @@ let lastActivity = '';
 let lastWidget = '';
 let lastWidgetAt = 0;
 let started = false;
+const RENDERER_KEY = 'arra-widget-renderer';
+const RENDERER_VERSION = '3';
 let serial: Promise<void> = Promise.resolve();
 let status = 'ещё не запускался';
+let latestAgents: Agent[] | null = null;
+
+AppState.addEventListener('change', (state) => {
+  if (state === 'active' && latestAgents) {
+    // Reconcile OS-ended blocks even when the agent snapshot is unchanged.
+    started = false;
+    lastActivity = '';
+    syncWidgets(latestAgents);
+  }
+});
 
 /** What the widgets are doing: shown in Settings → Тесты, to see why the lock screen block is missing. */
 export function widgetStatus() { return status; }
@@ -50,6 +63,7 @@ function updateHomeWidget(props: RingsProps) {
 }
 
 export function syncWidgets(agents: Agent[]) {
+  latestAgents = agents;
   // the server may start the block while the app is closed: it needs this token
   if (!startTokenSent) {
     startTokenSent = true;
@@ -67,9 +81,18 @@ export function syncWidgets(agents: Agent[]) {
   const key = JSON.stringify({ ...props, updated: 0 });
   serial = serial.then(async () => {
     if (!started) {
+      // Version 130 reused old, sometimes already-ended activities. Replace
+      // their archived layout once, while iOS permits starting a fresh block.
+      if (AppState.currentState !== 'active') return;
+      const instances = ringsActivity.getInstances();
+      if (await SecureStore.getItemAsync(RENDERER_KEY) !== RENDERER_VERSION) {
+        for (const instance of instances) await instance.end('immediate');
+        current = null;
+      } else {
+        current = instances[0] ?? null;
+        for (const duplicate of instances.slice(1)) await duplicate.end('immediate');
+      }
       started = true;
-      // a Live Activity left from a previous run: pick it up
-      current = ringsActivity.getInstances()[0] ?? null;
       if (current) watchToken(current);
     }
     if (key === lastActivity) return;
@@ -89,6 +112,7 @@ export function syncWidgets(agents: Agent[]) {
       // iOS lets an app start a Live Activity only while it is on screen
       current = ringsActivity.start(props, 'arra://');
       watchToken(current);
+      await SecureStore.setItemAsync(RENDERER_KEY, RENDERER_VERSION);
       status = `запущен: ${props.working} работают, ${props.waiting} ждут`;
     } else { status = 'приложение не на экране — iOS не даёт запустить блок'; return; }
     lastActivity = key;

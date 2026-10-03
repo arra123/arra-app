@@ -56,6 +56,13 @@ jobs:
         if: ${{ !inputs.ipa_run }}
         run: npm ci || npm install
 
+      - name: Check widget lifecycle and delivery regressions
+        if: ${{ !inputs.ipa_run }}
+        run: |
+          node scripts/check-widget-sync.mjs
+          node scripts/check-dialog-widgets.mjs
+          node --test server/tests/live-activity.test.mjs
+
       - name: Build IPA (eas local)
         if: ${{ !inputs.ipa_run }}
         env:
