@@ -14,5 +14,7 @@ export function usePushOpen() {
     if (!key || !id || handled.current === id) return;
     handled.current = id;
     router.push({ pathname: '/agent/[key]', params: { key } });
+    // Do not reopen this old notification when the app is launched manually.
+    Notifications.clearLastNotificationResponseAsync().catch(() => {});
   }, [lastResponse]);
 }
