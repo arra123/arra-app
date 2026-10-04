@@ -7,7 +7,7 @@ import { test } from 'node:test';
 
 import Fastify from 'fastify';
 
-import { createBlobStore, sendBlob } from '../src/ara/blobs.js';
+import { createBlobStore, sendBlob, mimeFor } from '../src/ara/blobs.js';
 import { createHub } from '../src/ara/hub.js';
 import { mergeHosts, normalizeSnapshot, pickHostForDevice, trackStates } from '../src/ara/state.js';
 
@@ -380,6 +380,12 @@ test('хаб: ara.file и ara.upload', async () => {
   await hub.deviceMessage('u1', 'L', { type: 'ara.result', reqId: laptop.last('ara.upload').reqId, ok: false, error: 'нет места' });
   await assert.rejects(failing, /нет места/);
   await rm(dir, { recursive: true, force: true });
+});
+
+test('blobs: аудио получает правильный MIME', () => {
+  for (const [extension, type] of Object.entries({ mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', aac: 'audio/aac', ogg: 'audio/ogg', flac: 'audio/flac' })) {
+    assert.equal(mimeFor(`voice.${extension.toUpperCase()}`), type);
+  }
 });
 
 test('blobs: лимит размера и Range для видео', async () => {

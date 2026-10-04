@@ -1,0 +1,45 @@
+name: widget-host-test
+on:
+  workflow_dispatch:
+  push:
+    branches: [ara-mobile]
+    paths:
+      - '.github/workflows/widget-host-test.yml'
+      - 'scripts/setup-widget-host-test.cjs'
+      - 'scripts/native-widget-driver.swift'
+      - 'scripts/native-widget-host-tests.swift'
+jobs:
+  interaction:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - name: Prepare actual native app and WidgetKit extension
+        run: |
+          npx expo prebuild --platform ios --no-install
+          node scripts/setup-widget-host-test.cjs
+          cd ios
+          pod install
+      - name: Tap real Live Activity arrows through SpringBoard
+        run: |
+          set -euo pipefail
+          widget_runtime=$(xcrun simctl list runtimes -j | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>console.log(JSON.parse(s).runtimes.filter(r=>r.isAvailable&&r.name.startsWith("iOS")).at(-1).identifier))')
+          widget_type=$(xcrun simctl list devicetypes -j | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>console.log(JSON.parse(s).devicetypes.find(d=>d.name==="iPhone 16 Pro").identifier))')
+          widget_udid=$(xcrun simctl create ArraWidgetHost "$widget_type" "$widget_runtime")
+          xcrun simctl boot "$widget_udid"
+          xcrun simctl bootstatus "$widget_udid" -b
+          xcodebuild test -quiet -workspace ios/Arra.xcworkspace -scheme ArraWidgetUITests -destination "platform=iOS Simulator,id=$widget_udid" -resultBundlePath widget-host.xcresult CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= PROVISIONING_PROFILE= 2>&1 | tee widget-host.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: widget-host-result
+          path: |
+            widget-host.xcresult
+            widget-host.log

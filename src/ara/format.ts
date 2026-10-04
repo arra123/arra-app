@@ -258,13 +258,16 @@ export function statusLine(agent: Agent | null, transcript: Transcript | null, n
 }
 
 /** Пути к картинкам/видео в тексте (для ответов Arra). */
-const MEDIA_RE = /(\/[^\s"'`<>()]+?\.(png|jpe?g|gif|webp|heic|mp4|mov|webm|m4v))(?=$|[\s"'`<>(),;:!?]|\.(?:\s|$))/gi;
+const MEDIA_RE = /(\/[^\s"'`<>()]+?\.(png|jpe?g|gif|webp|heic|mp4|mov|webm|m4v|mp3|m4a|wav|aac|ogg|flac))(?=$|[\s"'`<>(),;:!?]|\.(?:\s|$))/gi;
+
+export function isAudioPath(path: string) { return /\.(mp3|m4a|wav|aac|ogg|flac)$/i.test(path); }
 
 export function mediaPaths(text: string): { images: string[]; videos: string[] } {
   const images = new Set<string>();
   const videos = new Set<string>();
   for (const match of text.matchAll(MEDIA_RE)) {
-    if (/^(mp4|mov|webm|m4v)$/i.test(match[2])) videos.add(match[1]);
+    // The existing transcript wire format puts playable media in videos.
+    if (/^(mp4|mov|webm|m4v)$/i.test(match[2]) || isAudioPath(match[1])) videos.add(match[1]);
     else images.add(match[1]);
   }
   return { images: [...images], videos: [...videos] };

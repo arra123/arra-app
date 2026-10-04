@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { SymbolView } from 'expo-symbols';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useEffect, useState } from 'react';
@@ -15,7 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { ara } from '@/ara/client';
-import { baseName } from '@/ara/format';
+import { baseName, isAudioPath } from '@/ara/format';
 import type { FileScope, RemoteFile } from '@/ara/types';
 import { IconButton, Press, T } from '@/components/ui';
 import { Colors, Radius } from '@/constants/theme';
@@ -107,6 +108,9 @@ export function RemoteVideo({ path, scope, size }: { path: string; scope: FileSc
   const { width } = useWindowDimensions();
   const w = size || Math.min(width - 64, 360);
   if (error) return <Failed error={error} onRetry={retry} name={baseName(path)} />;
+  if (isAudioPath(path)) return file
+    ? <AudioPlayerView uri={file.url} name={baseName(path)} onRetry={retry} />
+    : <View style={styles.audio}><ActivityIndicator color={Colors.textSecondary} /><T v="caption">Загружаю {baseName(path)}…</T></View>;
   return (
     <View style={[styles.video, { width: w, height: w * 0.5625 }]}>
       {file ? (
@@ -119,6 +123,34 @@ export function RemoteVideo({ path, scope, size }: { path: string; scope: FileSc
       )}
     </View>
   );
+}
+
+function AudioPlayerView({ uri, name, onRetry }: { uri: string; name: string; onRetry: () => void }) {
+  const player = useAudioPlayer({ uri, headers: ara.authHeaders() }, { updateInterval: 250 });
+  const status = useAudioPlayerStatus(player);
+  const [error, setError] = useState<string | null>(null);
+  const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+  async function toggle() {
+    try {
+      if (status.playing) { player.pause(); return; }
+      await setAudioModeAsync({ playsInSilentMode: true });
+      if (status.didJustFinish || status.duration > 0 && status.currentTime >= status.duration) await player.seekTo(0);
+      player.play();
+    } catch { setError('Не удалось воспроизвести аудио. Нажмите, чтобы загрузить заново.'); }
+  }
+  if (error || status.error) return <Failed error={error || 'Не удалось загрузить аудио. Повторите загрузку.'} name={name} onRetry={onRetry} />;
+  return <View style={styles.audio}>
+    <Press onPress={toggle} disabled={!status.isLoaded} accessibilityRole="button" accessibilityLabel={`${status.playing ? 'Пауза' : 'Воспроизвести'}: ${name}`} style={styles.audioPlay}>
+      {status.isLoaded ? <SymbolView name={status.playing ? 'pause.fill' : 'play.fill'} size={20} tintColor={Colors.text} /> : <ActivityIndicator color={Colors.textSecondary} />}
+    </Press>
+    <View style={{ flex: 1, gap: 6 }}>
+      <T v="footnote" numberOfLines={1}>{name}</T>
+      <T v="caption" color={Colors.textSecondary} style={{ fontVariant: ['tabular-nums'] }}>{time(status.currentTime)} / {time(status.duration)}</T>
+      <View style={styles.audioTrack} accessibilityLabel={`Прослушано ${Math.round(status.currentTime)} из ${Math.round(status.duration)} секунд`}>
+        <View style={[styles.audioProgress, { width: `${status.duration > 0 ? Math.min(100, status.currentTime / status.duration * 100) : 0}%` }]} />
+      </View>
+    </View>
+  </View>;
 }
 
 function VideoPlayerView({ uri }: { uri: string }) {
@@ -238,6 +270,10 @@ export function ImageViewer({ uri, headers, visible, onClose }: { uri: string; h
 }
 
 const styles = StyleSheet.create({
+  audio: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: Radius.md, backgroundColor: Colors.card, width: '100%', minHeight: 76 },
+  audioPlay: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  audioTrack: { height: 3, backgroundColor: Colors.hairline, borderRadius: 2, overflow: 'hidden' },
+  audioProgress: { height: 3, backgroundColor: Colors.textSecondary },
   thumb: {
     borderRadius: Radius.md,
     overflow: 'hidden',

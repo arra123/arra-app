@@ -77,8 +77,8 @@ DEFAULTS: dict[str, Any] = {
     "scripts": {},
 }
 
-MEDIA_RE = re.compile(r"\.(png|jpe?g|gif|webp|heic|mp4|mov|webm|m4v)$", re.I)
-PATH_RE = re.compile(r"(/[^\s\"'`<>()]+?\.(?:png|jpe?g|gif|webp|heic|mp4|mov|webm|m4v))(?=$|[\s\"'`<>(),;:!?]|\.(?:\s|$))", re.I)
+MEDIA_RE = re.compile(r"\.(png|jpe?g|gif|webp|heic|mp4|mov|webm|m4v|mp3|m4a|wav|aac|ogg|flac)$", re.I)
+PATH_RE = re.compile(r"(/[^\s\"'`<>()]+?\.(?:png|jpe?g|gif|webp|heic|mp4|mov|webm|m4v|mp3|m4a|wav|aac|ogg|flac))(?=$|[\s\"'`<>(),;:!?]|\.(?:\s|$))", re.I)
 MAX_TRANSCRIPT_BYTES = 6 * 1024 * 1024  # сервер режет сообщения больше 8 МБ
 MODEL_RE = re.compile(r"^[A-Za-z0-9._:\-\[\]]{1,80}$")
 

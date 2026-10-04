@@ -268,6 +268,29 @@ class AraLinkTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.link.path_allowed("/home/answer.png", None, "c2"))
         self.assertFalse(self.link.path_allowed("/home/v.mp4", None, "c1"))
 
+    async def test_audio_files(self):
+        await self.expect("ara.snapshot")
+        key = "live:laptop:111"
+        paths = [self.home / "A-zhivo.mp3", self.home / "B-bystree.mp3"]
+        for path in paths:
+            path.write_bytes(b"MP3DATA")
+        self.link.remember(key, {"messages": [{"role": "assistant", "text": "\n".join(map(str, paths))}]})
+        for i, path in enumerate(paths):
+            self.assertTrue(self.link.path_allowed(str(path), key, None))
+            await self.command({"type": "ara.file", "reqId": f"audio{i}", "agentKey": key, "path": str(path)})
+            for _ in range(50):
+                if len(BlobHandler.uploads) > i:
+                    break
+                await asyncio.sleep(0.05)
+            self.assertEqual(BlobHandler.uploads[i][1], b"MP3DATA")
+        self.assertFalse(self.link.path_allowed(str(paths[0]), "other-dialog", None))
+        self.link.remember(key, {"messages": [{"role": "user", "text": str(paths[0])}]})
+        self.assertFalse(self.link.path_allowed(str(paths[0]), key, None))
+        self.link.remember(key, {"messages": [{"role": "assistant", "text": str(paths[0])}]})
+        paths[0].unlink()
+        paths[0].symlink_to(self.home / "secret.txt")
+        self.assertFalse(self.link.path_allowed(str(paths[0]), key, None))
+
     async def test_files(self):
         await self.expect("ara.snapshot")
         key = "live:laptop:111"

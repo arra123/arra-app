@@ -12,6 +12,8 @@ const MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
   '.webp': 'image/webp', '.heic': 'image/heic', '.mp4': 'video/mp4', '.m4v': 'video/mp4',
   '.mov': 'video/quicktime', '.webm': 'video/webm', '.pdf': 'application/pdf',
+  '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav',
+  '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.flac': 'audio/flac',
 };
 
 export function mimeFor(name, fallback = 'application/octet-stream') {
