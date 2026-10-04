@@ -6,9 +6,6 @@ on:
         description: 'Run with widget-host-result artifact'
         default: '37189757888'
         type: string
-  push:
-    branches: [ara-mobile]
-    paths: ['.github/workflows/widget-result.yml']
 jobs:
   inspect:
     runs-on: macos-15

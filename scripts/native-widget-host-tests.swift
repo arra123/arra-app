@@ -14,14 +14,19 @@ final class WidgetInteractionTests: XCTestCase {
       // the actual Lock Screen card through Notification Center instead.
       springboard.coordinate(withNormalizedOffset:CGVector(dx:0.1,dy:0.01))
         .press(forDuration:0.1,thenDragTo:springboard.coordinate(withNormalizedOffset:CGVector(dx:0.1,dy:0.8)))
+      // A fresh Simulator asks for consent inside the card. Until accepted,
+      // its arrows are visible but iOS does not dispatch them.
+      let allow = springboard.buttons["Allow"]
+      if allow.waitForExistence(timeout:3) { allow.tap() }
     }
     expand()
     let next = springboard.buttons["Следующий диалог"]
     XCTAssertTrue(next.waitForExistence(timeout:10), "Actual system Live Activity did not expose its next button")
     next.tap()
-    XCTAssertTrue(springboard.staticTexts["2 / 2"].waitForExistence(timeout:10), "Actual system card did not re-render the selected dialog")
+    let rendered = springboard.staticTexts["2 / 2"].waitForExistence(timeout:10)
     app.activate()
     XCTAssertTrue(app.staticTexts["widget-test:second"].waitForExistence(timeout:10), "System tap did not change the shared selection")
+    XCTAssertTrue(rendered, "Actual system card did not re-render the selected dialog")
     expand()
     let previous = springboard.buttons["Предыдущий диалог"]
     XCTAssertTrue(previous.waitForExistence(timeout:10))
