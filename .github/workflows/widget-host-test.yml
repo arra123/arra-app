@@ -21,6 +21,12 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
+      - uses: actions/cache/restore@v4
+        id: native-cache
+        with:
+          path: widgetDerivedData
+          key: widget-host-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: widget-host-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
       - name: Prepare actual native app and WidgetKit extension
         run: |
           npx expo prebuild --platform ios --no-install
@@ -35,7 +41,12 @@ jobs:
           widget_udid=$(xcrun simctl create ArraWidgetHost "$widget_type" "$widget_runtime")
           xcrun simctl boot "$widget_udid"
           xcrun simctl bootstatus "$widget_udid" -b
-          xcodebuild test -quiet -workspace ios/Arra.xcworkspace -scheme ArraWidgetUITests -destination "platform=iOS Simulator,id=$widget_udid" -resultBundlePath widget-host.xcresult CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= PROVISIONING_PROFILE= 2>&1 | tee widget-host.log
+          xcodebuild test -quiet -workspace ios/Arra.xcworkspace -scheme ArraWidgetUITests -derivedDataPath widgetDerivedData -destination "platform=iOS Simulator,id=$widget_udid" -resultBundlePath widget-host.xcresult CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= PROVISIONING_PROFILE= 2>&1 | tee widget-host.log
+      - uses: actions/cache/save@v4
+        if: always() && steps.native-cache.outputs.cache-hit != 'true'
+        with:
+          path: widgetDerivedData
+          key: widget-host-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

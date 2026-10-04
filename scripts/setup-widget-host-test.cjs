@@ -9,7 +9,7 @@ delegate = 'import SwiftUI\ninternal import ExpoWidgets\n' + delegate;
 const marker = '    let delegate = ReactNativeDelegate()';
 if (!delegate.includes(marker)) throw new Error('AppDelegate template changed');
 delegate = delegate.replace(marker, `    let widgetTestDefaults = UserDefaults(suiteName: WidgetsStorage.appGroupIdentifier)
-    if CommandLine.arguments.contains("--arra-widget-ui-test") || widgetTestDefaults?.bool(forKey: "arra-widget-ui-test") == true {
+    if #available(iOS 17.2, *), CommandLine.arguments.contains("--arra-widget-ui-test") || widgetTestDefaults?.bool(forKey: "arra-widget-ui-test") == true {
       widgetTestDefaults?.set(true, forKey: "arra-widget-ui-test")
       window = UIWindow(frame: UIScreen.main.bounds)
       window?.rootViewController = UIHostingController(rootView: ArraWidgetTestDriver())
