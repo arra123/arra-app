@@ -20,16 +20,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm ci
       - uses: actions/cache/restore@v4
         id: native-cache
         with:
-          path: widgetDerivedData
-          key: widget-host-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
-          restore-keys: widget-host-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+          path: |
+            widgetDerivedData
+            node_modules
+            ios/Pods
+          key: widget-host-sources-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            widget-host-sources-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+            widget-host-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+      - run: test -d node_modules/expo-widgets || npm ci
       - name: Prepare actual native app and WidgetKit extension
         run: |
           npx expo prebuild --platform ios --no-install
+          node scripts/check-dialog-widgets.mjs
           node scripts/setup-widget-host-test.cjs
           cd ios
           pod install
@@ -49,8 +55,11 @@ jobs:
       - uses: actions/cache/save@v4
         if: always() && steps.native-cache.outputs.cache-hit != 'true'
         with:
-          path: widgetDerivedData
-          key: widget-host-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          path: |
+            widgetDerivedData
+            node_modules
+            ios/Pods
+          key: widget-host-sources-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

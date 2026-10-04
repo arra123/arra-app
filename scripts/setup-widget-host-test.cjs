@@ -1,8 +1,8 @@
 // Diagnostic generated-project changes, never run by the production build.
 const fs = require('node:fs');
 const xcode = require('xcode');
-const podSource = 'node_modules/expo-widgets/ios/ArraDialogWidgets.swift';
-fs.appendFileSync(podSource, '\n' + fs.readFileSync('scripts/native-widget-driver.swift','utf8'));
+const appSource = 'ios/Arra/ArraDialogWidgets.swift';
+fs.appendFileSync(appSource, '\n' + fs.readFileSync('scripts/native-widget-driver.swift','utf8'));
 const delegatePath = 'ios/Arra/AppDelegate.swift';
 let delegate = fs.readFileSync(delegatePath,'utf8');
 delegate = 'import SwiftUI\ninternal import ExpoWidgets\n' + delegate;

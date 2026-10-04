@@ -39,6 +39,8 @@ final class WidgetInteractionTests: XCTestCase {
     expand()
     XCTAssertTrue(next.waitForExistence(timeout:10))
     next.tap()
+    XCTAssertTrue(springboard.staticTexts["2 / 2"].waitForExistence(timeout:10), "Cold intent did not update the system card before app activation")
+    XCTAssertNotEqual(app.state,.runningForeground,"Arrow must not open the app")
     app.activate()
     XCTAssertTrue(app.staticTexts["widget-test:second"].waitForExistence(timeout:10), "Cold app intent did not change selection")
   }

@@ -39,12 +39,12 @@ async function scenario(version = null, existing = 2) {
 const migrated = await scenario();
 await migrated.sync();
 assert.deepEqual(migrated.events,['end:old0','end:old1','start']);
-assert.equal(migrated.stored.get('arra-widget-renderer'),'4');
+assert.equal(migrated.stored.get('arra-widget-renderer'),'5');
 await migrated.sync();
 assert.equal(migrated.events.filter(e=>e==='start').length,1);
 migrated.removed(); await migrated.resume();
 assert.equal(migrated.events.filter(e=>e==='start').length,2,'OS-closed block restarts on foreground despite unchanged data');
-const restored = await scenario('4');await restored.sync();
+const restored = await scenario('5');await restored.sync();
 assert.deepEqual(restored.events,['end:old1','update:old0'],'reuse just one native block');
 const background = await scenario();background.background();await background.sync();
 assert.equal(background.events.length,0,'do not discard a block when iOS cannot start its replacement');

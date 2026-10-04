@@ -17,10 +17,7 @@ for(const id of [0,3,4,5,6,8,11,12,13,14,15,16,19]){
 JS
 preview_sdk=$(xcrun --sdk iphonesimulator --show-sdk-path)
 preview_arch=$(uname -m)
-xcrun swiftc -sdk "$preview_sdk" -target "$preview_arch-apple-ios17.0-simulator" -parse-as-library scripts/native-widget-preview.swift plugins/native/ArraDialogWidgets.swift -o "$preview_app/WidgetPreview"
-# Typecheck the main-app registration too, with Expo's explicit internal import.
-xcrun swiftc -sdk "$preview_sdk" -target "$preview_arch-apple-ios17.0-simulator" -parse-as-library -emit-module -module-name ExpoWidgets scripts/native-widget-preview.swift plugins/native/ArraDialogWidgets.swift -emit-module-path "$preview_dir/ExpoWidgets.swiftmodule"
-xcrun swiftc -sdk "$preview_sdk" -target "$preview_arch-apple-ios17.0-simulator" -I "$preview_dir" -enable-upcoming-feature InternalImportsByDefault -typecheck plugins/native/ArraWidgetIntents.swift
+xcrun swiftc -sdk "$preview_sdk" -target "$preview_arch-apple-ios17.0-simulator" -D ARRA_WIDGET_PREVIEW -parse-as-library scripts/native-widget-preview.swift plugins/native/ArraDialogWidgets.swift plugins/native/ArraWidgetIntents.swift -o "$preview_app/WidgetPreview"
 xcrun swiftc -sdk "$preview_sdk" -target "$preview_arch-apple-ios17.0-simulator" -typecheck plugins/native/NotificationService.swift
 /usr/libexec/PlistBuddy -c 'Add :CFBundleIdentifier string com.arratima.widgetpreview' -c 'Add :CFBundleExecutable string WidgetPreview' -c 'Add :CFBundleName string WidgetPreview' -c 'Add :CFBundlePackageType string APPL' -c 'Add :CFBundleVersion string 1' -c 'Add :CFBundleShortVersionString string 1.0' -c 'Add :MinimumOSVersion string 17.0' -c 'Add :LSRequiresIPhoneOS bool true' -c 'Add :UILaunchScreen dict' -c 'Add :UIDeviceFamily array' -c 'Add :UIDeviceFamily:0 integer 1' "$preview_app/Info.plist"
 /usr/libexec/PlistBuddy -c 'Add :ExpoWidgetsAppGroupIdentifier string group.com.arratima.widgetpreview' -c 'Add :NSSupportsLiveActivities bool true' "$preview_app/Info.plist"

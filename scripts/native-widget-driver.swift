@@ -46,6 +46,9 @@ public struct ArraWidgetTestDriver: View {
         selected = ArraSelection.selectedKey([:]) ?? "missing"
         ready = true
       } catch { selected = "ERROR: " + String(describing:error) }
-    }.onReceive(timer) { _ in selected = ArraSelection.selectedKey([:]) ?? "missing" }
+    }.onReceive(timer) { _ in
+      let next = ArraSelection.selectedKey([:]) ?? "missing"
+      if next != selected { selected = next }
+    }
   }
 }

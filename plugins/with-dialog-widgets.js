@@ -12,7 +12,19 @@ module.exports = function withDialogWidgets(config) {
   config = withDangerousMod(config, ['ios', async c => {
     const root = c.modRequest.projectRoot;
     const native = path.join(root, 'node_modules/expo-widgets/ios');
-    fs.copyFileSync(path.join(root, 'plugins/native/ArraDialogWidgets.swift'), path.join(native, 'ArraDialogWidgets.swift'));
+    // AppIntentsPackage cannot register our actions through Expo's static pod.
+    // Keep one source, compiled directly in both app and WidgetKit targets.
+    fs.rmSync(path.join(native, 'ArraDialogWidgets.swift'), { force: true });
+    for (const target of ['Arra', 'ExpoWidgetsTarget']) {
+      for (const file of ['ArraDialogWidgets.swift', 'ArraWidgetIntents.swift']) {
+        fs.copyFileSync(path.join(root, 'plugins/native', file), path.join(c.modRequest.platformProjectRoot, target, file));
+      }
+    }
+    const attributesPath = path.join(native, 'Widgets/WidgetLiveActivity.swift');
+    const attributes = replaceRequired(fs.readFileSync(attributesPath, 'utf8'),
+      'struct LiveActivityAttributes: ActivityAttributes {\n  public struct ContentState: Codable, Hashable {\n    var name: String\n    var props: String\n  }\n}',
+      'public struct LiveActivityAttributes: ActivityAttributes {\n  public init() {}\n  public struct ContentState: Codable, Hashable {\n    public var name: String\n    public var props: String\n    public init(name: String, props: String) { self.name = name; self.props = props }\n  }\n}', 'public ActivityKit attributes');
+    fs.writeFileSync(attributesPath, attributes);
     const factoryPath = path.join(native, 'LiveActivityFactory.swift');
     let factory = replaceRequired(fs.readFileSync(factoryPath, 'utf8'),
       'func getInstances() throws -> [LiveActivity] {\n    guard #available(iOS 16.1, *)',
@@ -26,22 +38,35 @@ module.exports = function withDialogWidgets(config) {
     fs.writeFileSync(factoryPath, factory);
     const indexPath = path.join(c.modRequest.platformProjectRoot, 'ExpoWidgetsTarget/index.swift');
     let index = replaceRequired(fs.readFileSync(indexPath, 'utf8'), 'WidgetLiveActivity()', 'ArraLiveActivity()', 'native activity');
-    if (!index.includes('ArraExtensionIntentsPackage')) index += '\nimport AppIntents\n@available(iOS 17.0, *)\nstruct ArraExtensionIntentsPackage: AppIntentsPackage {\n  static var includedPackages: [any AppIntentsPackage.Type] { [ArraWidgetsIntentsPackage.self] }\n}\n';
+    // Remove only our previous generated supplemental package.
+    index = index.replace(/\nimport AppIntents\n@available\(iOS 17\.0, \*\)\nstruct ArraExtensionIntentsPackage: AppIntentsPackage \{\n  static var includedPackages: \[any AppIntentsPackage.Type\] \{ \[ArraWidgetsIntentsPackage.self\] \}\n\}\n?/g, '\n');
     fs.writeFileSync(indexPath, index);
     const widgetPath = path.join(c.modRequest.platformProjectRoot, 'ExpoWidgetsTarget/ArraAgents.swift');
     const widget = replaceRequired(fs.readFileSync(widgetPath, 'utf8'), 'WidgetsEntryView(entry: entry)', 'ArraWidgetEntryView(props: entry.props ?? [:])', 'native home widget');
     fs.writeFileSync(widgetPath, widget);
-    fs.copyFileSync(path.join(root, 'plugins/native/ArraWidgetIntents.swift'), path.join(c.modRequest.platformProjectRoot, 'Arra/ArraWidgetIntents.swift'));
     return c;
   }]);
   return withXcodeProject(config, c => {
-    const file = 'Arra/ArraWidgetIntents.swift';
-    if (!c.modResults.hasFile(file)) {
-      const group = c.modResults.findPBXGroupKey({ name: 'Arra' });
-      if (!group) throw new Error('Arra source group is missing');
-      c.modResults.addSourceFile(file, { target: c.modResults.getFirstTarget().uuid }, group);
-    }
+    registerNativeSources(c.modResults);
     return c;
   });
 };
+function registerNativeSources(project) {
+  for (const name of ['Arra', 'ExpoWidgetsTarget']) {
+    const target = project.findTargetKey(name);
+    const group = project.findPBXGroupKey({ name }) || project.findPBXGroupKey({ path: name });
+    if (!target || !group) throw new Error(`${name} native target/group is missing`);
+    for (const filename of ['ArraDialogWidgets.swift', 'ArraWidgetIntents.swift']) {
+      const file = `${name}/${filename}`;
+      if (!project.hasFile(file)) project.addSourceFile(file, { target, sourceTree: 'SOURCE_ROOT' }, group);
+      // Expo's extension group already has a path. Anchor these full paths at
+      // the project root instead of resolving ExpoWidgetsTarget twice.
+      const refs = project.hash.project.objects.PBXFileReference;
+      for (const ref of Object.values(refs)) {
+        if (ref.path?.replaceAll('"', '') === file) ref.sourceTree = 'SOURCE_ROOT';
+      }
+    }
+  }
+}
 module.exports.replaceRequired = replaceRequired;
+module.exports.registerNativeSources = registerNativeSources;
