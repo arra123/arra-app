@@ -98,6 +98,17 @@ jobs:
           echo "ARRA_BUILD=$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/arra-info.plist")" >> "$GITHUB_ENV"
           echo "ARRA_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/arra-info.plist")" >> "$GITHUB_ENV"
 
+      - name: Require identical app source when reusing IPA
+        if: ${{ inputs.ipa_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IPA_RUN: ${{ inputs.ipa_run }}
+        run: |
+          set -euo pipefail
+          ipa_sha=$(gh run view "$IPA_RUN" --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)
+          git fetch --no-tags --depth=1 origin "$ipa_sha"
+          git diff --exit-code "$ipa_sha" "$GITHUB_SHA" -- plugins src app.json app.config.js app.config.ts package.json package-lock.json
+
       - name: Require matching WidgetKit native-source proof
         if: ${{ inputs.widget_host_run }}
         env:
@@ -113,9 +124,21 @@ jobs:
           host_workflow=$(gh run view "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --json workflowName --jq .workflowName)
           test "$host_workflow" = "widget-host-test"
           gh run watch "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
-          gh run view "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --log > "$RUNNER_TEMP/widget-host-proof.log"
-          grep -Eq 'testSystemDispatchFromLiveActivity.*passed' "$RUNNER_TEMP/widget-host-proof.log"
-          grep -Eq 'testOldActivityDoesNotHijackTargetSnapshot.*passed' "$RUNNER_TEMP/widget-host-proof.log"
+          gh run download "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --name widget-host-result --dir "$RUNNER_TEMP/widget-host-proof"
+          xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/widget-host-proof/widget-host.xcresult" > "$RUNNER_TEMP/widget-summary.json"
+          xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/widget-host-proof/widget-host.xcresult" > "$RUNNER_TEMP/widget-tests.json"
+          node <<'JS'
+          const fs=require('node:fs'),path=require('node:path');
+          const read=name=>JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP,name),'utf8'));
+          const summary=read('widget-summary.json'),tests=read('widget-tests.json'),passed=new Set();
+          function scan(value){if(!value||typeof value!=='object')return;if(value.result==='Passed'&&value.name)passed.add(value.name);for(const child of Object.values(value))scan(child);}
+          scan(tests);
+          if(summary.result!=='Passed'||summary.totalTestCount!==2||summary.failedTests!==0)throw new Error('Widget host did not pass both tests');
+          for(const name of ['testSystemDispatchFromLiveActivity','testOldActivityDoesNotHijackTargetSnapshot']) {
+            if(![...passed].some(v=>v.includes(name)))throw new Error('Missing named test: '+name);
+          }
+          console.log('Actual WidgetKit system and old-block tests passed:', [...passed]);
+          JS
 
       # straight to App Store Connect with Apple's own tool (the API key):
       # the free Expo submission queue kept a build waiting for an hour

@@ -32,6 +32,7 @@ jobs:
           scan(data);console.log(JSON.stringify({metrics:data.metrics,issues:issues.slice(0,20)},null,2));
           JS
           xcrun xcresulttool get test-results summary --path inspection/widget-host.xcresult > summary.json
+          xcrun xcresulttool get test-results tests --path inspection/widget-host.xcresult > tests.json
           xcrun xcresulttool export attachments --path inspection/widget-host.xcresult --output-path attachments
       - uses: actions/upload-artifact@v4
         with:
@@ -39,4 +40,5 @@ jobs:
           path: |
             result.json
             summary.json
+            tests.json
             attachments
