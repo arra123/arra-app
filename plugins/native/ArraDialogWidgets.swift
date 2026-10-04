@@ -60,23 +60,32 @@ public struct ArraCycleDialog: LiveActivityIntent {
   public static var openAppWhenRun = false
   @Parameter(title: "Направление") public var direction: Int
   @Parameter(title: "Текущий диалог") public var currentKey: String
-  public init() { direction = 1; currentKey = "" }
-  public init(direction: Int, currentKey: String) { self.direction = direction; self.currentKey = currentKey }
+  @Parameter(title: "Блок") public var activityID: String
+  public init() { direction = 1; currentKey = ""; activityID = "" }
+  public init(direction: Int, currentKey: String, activityID: String = "") { self.direction = direction; self.currentKey = currentKey; self.activityID = activityID }
 
   public func perform() async throws -> some IntentResult {
-    let activities = Activity<LiveActivityAttributes>.activities.filter { $0.content.state.name == "ArraRings" }
+    let activities = Activity<LiveActivityAttributes>.activities.filter { $0.content.state.name == "ArraRings" && ($0.activityState == .active || $0.activityState == .stale) }
     let timeline = WidgetsStorage.getArray(forKey: "__expo_widgets_ArraAgents_timeline")
     let entry = timeline?.last as? [String: Any]
     let widgetProps = entry?["props"] as? [String: Any] ?? [:]
-    let props = activities.first.map { ArraSelection.parse($0.content.state.props) } ?? widgetProps
+    let target = activities.first { $0.id == activityID }
+    // A Live Activity owns its own snapshot. A Home Widget owns its timeline;
+    // an unrelated/old Activity must not silently replace either one's list.
+    if !activityID.isEmpty && target == nil { return .result() }
+    let props = target.map { ArraSelection.parse($0.content.state.props) } ?? widgetProps
     let list = ArraSelection.agents(props)
     guard !list.isEmpty else { return .result() }
-    let old = list.firstIndex { ($0["key"] as? String) == currentKey } ?? ArraSelection.index(list, props: props)
+    // Serialized button parameters can lag during rapid taps; prefer the last
+    // saved selection rather than repeating the same move from a stale key.
+    let saved = ArraSelection.selectedKey([:])
+    let old = list.firstIndex { ($0["key"] as? String) == saved } ?? list.firstIndex { ($0["key"] as? String) == currentKey } ?? ArraSelection.index(list, props: props)
     let next = (old + (direction < 0 ? -1 : 1) + list.count) % list.count
     guard let selected = list[next]["key"] as? String else { return .result() }
     try ArraSelection.save(selected)
     for activity in activities {
       var updated = ArraSelection.parse(activity.content.state.props)
+      guard ArraSelection.agents(updated).contains(where: { ($0["key"] as? String) == selected }) else { continue }
       updated["selectedKey"] = selected
       updated["selectionRevision"] = Date().timeIntervalSince1970
       let data = try JSONSerialization.data(withJSONObject: updated)
@@ -104,8 +113,9 @@ public struct ArraCycleDialog: LiveActivityIntent {
 public struct ArraDialogCard: View {
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   private let props: [String: Any]
-  public init(props: [String: Any]) { self.props = props }
-  public init(json: String) { props = ArraSelection.parse(json) }
+  private let activityID: String
+  public init(props: [String: Any]) { self.props = props; activityID = "" }
+  public init(json: String, activityID: String = "") { props = ArraSelection.parse(json); self.activityID = activityID }
 
   public var body: some View {
     let list = ArraSelection.agents(props)
@@ -157,7 +167,7 @@ public struct ArraDialogCard: View {
 
   @available(iOS 17.0, *)
   private func cycleButton(_ direction: Int, key: String, enabled: Bool) -> some View {
-    Button(intent: ArraCycleDialog(direction: direction, currentKey: key)) {
+    Button(intent: ArraCycleDialog(direction: direction, currentKey: key, activityID: activityID)) {
       Image(systemName: direction < 0 ? "chevron.up" : "chevron.down").font(.system(size: 16, weight: .medium))
         .frame(width: 44, height: 44).contentShape(Rectangle())
     }.buttonStyle(.plain).disabled(!enabled).opacity(enabled ? 1 : 0.35)
@@ -206,11 +216,11 @@ public struct ArraLiveActivity: Widget {
   public init() {}
   public var body: some WidgetConfiguration {
     ActivityConfiguration(for: LiveActivityAttributes.self) { context in
-      ArraDialogCard(json: context.state.props)
+      ArraDialogCard(json: context.state.props, activityID: context.activityID)
         .activityBackgroundTint(Color(red: 0.125, green: 0.137, blue: 0.157))
     } dynamicIsland: { context in
       DynamicIsland {
-        DynamicIslandExpandedRegion(.center) { ArraDialogCard(json: context.state.props) }
+        DynamicIslandExpandedRegion(.center) { ArraDialogCard(json: context.state.props, activityID: context.activityID) }
       } compactLeading: {
         Text(arraNeedsAttention(context.state.props) ? "•" : "")
       } compactTrailing: { EmptyView() }

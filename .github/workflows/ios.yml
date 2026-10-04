@@ -10,6 +10,10 @@ on:
         description: 'Повторно отправить IPA из этого workflow run, без новой сборки'
         required: false
         type: string
+      widget_host_run:
+        description: 'Не загружать IPA в Apple до PASS системного теста WidgetKit этого же коммита'
+        required: false
+        type: string
 
 jobs:
   build:
@@ -62,7 +66,8 @@ jobs:
           npm install --prefix server --no-package-lock --ignore-scripts
           node scripts/check-widget-sync.mjs
           node scripts/check-dialog-widgets.mjs
-          node --test server/tests/live-activity.test.mjs
+          node scripts/check-audio-media.mjs
+          node --test server/tests/ara.test.mjs server/tests/live-activity.test.mjs
 
       - name: Build IPA (eas local)
         if: ${{ !inputs.ipa_run }}
@@ -92,6 +97,19 @@ jobs:
           unzip -p Arra.ipa Payload/Arra.app/Info.plist > "$RUNNER_TEMP/arra-info.plist"
           echo "ARRA_BUILD=$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/arra-info.plist")" >> "$GITHUB_ENV"
           echo "ARRA_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/arra-info.plist")" >> "$GITHUB_ENV"
+
+      - name: Require matching WidgetKit system-dispatch proof
+        if: ${{ inputs.widget_host_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOST_RUN: ${{ inputs.widget_host_run }}
+        run: |
+          set -euo pipefail
+          host_sha=$(gh run view "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)
+          test "$host_sha" = "$GITHUB_SHA"
+          host_workflow=$(gh run view "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --json workflowName --jq .workflowName)
+          test "$host_workflow" = "widget-host-test"
+          gh run watch "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
 
       # straight to App Store Connect with Apple's own tool (the API key):
       # the free Expo submission queue kept a build waiting for an hour
