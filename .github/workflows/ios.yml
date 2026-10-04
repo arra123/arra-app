@@ -14,6 +14,10 @@ on:
         description: 'Не загружать IPA в Apple до PASS системного теста той же нативной реализации WidgetKit'
         required: false
         type: string
+      native_preview_run:
+        description: 'Повторно использовать проверенный preview только идентичного SwiftUI кода'
+        required: false
+        type: string
 
 jobs:
   build:
@@ -172,7 +176,27 @@ jobs:
         with:
           node-version: '22'
       - name: Render production SwiftUI cards in iOS Simulator
+        if: ${{ !inputs.native_preview_run }}
         run: bash scripts/render-native-widgets.sh
+      - name: Require identical native preview source
+        if: ${{ inputs.native_preview_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIEW_RUN: ${{ inputs.native_preview_run }}
+        run: |
+          set -euo pipefail
+          preview_sha=$(gh run view "$PREVIEW_RUN" --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)
+          git fetch --no-tags --depth=1 origin "$preview_sha"
+          git diff --exit-code "$preview_sha" "$GITHUB_SHA" -- plugins src/widgets package.json package-lock.json app.json scripts/native-widget-preview.swift scripts/render-native-widgets.sh
+          preview_status=$(gh run view "$PREVIEW_RUN" --repo "$GITHUB_REPOSITORY" --json jobs --jq '.jobs[] | select(.name == "native-preview") | .conclusion')
+          test "$preview_status" = "success"
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.native_preview_run }}
+        with:
+          name: native-widget-evidence
+          run-id: ${{ inputs.native_preview_run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: native-widget-evidence
       - uses: actions/upload-artifact@v4
         with:
           name: native-widget-evidence
