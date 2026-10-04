@@ -18,6 +18,10 @@ export type Agent = {
   state: AgentState;
   task: string;
   stage?: string;
+  /** последние слова закончившего агента */
+  said?: string;
+  /** агент задал вопрос и ждёт ответа */
+  asking?: boolean;
   transcript: string;
   model: string;
   /** мс: с какого момента агент в текущем состоянии */

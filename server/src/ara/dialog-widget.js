@@ -8,13 +8,14 @@ export function dialogProps(agents, now = Date.now()) {
     return {
       key: a.key, title: String(a.title || a.project || 'Диалог').slice(0, 100),
       project: String(a.project || 'Arra').slice(0, 60), mascotId: a.mascotId || 0, number,
-      state: a.state === 'working' ? 'work' : a.state === 'waiting' ? 'wait' : a.state === 'error' ? 'error' : 'idle',
+      // green «done» when it has finished; yellow «wait» only when it really asks something
+      state: a.asking ? 'wait' : a.state === 'working' ? 'work' : a.state === 'waiting' ? 'done' : a.state === 'error' ? 'error' : 'idle',
       where: a.device === 'pc' ? 'ПК' : 'Ноутбук',
-      note: a.compacting ? 'Сжимает контекст' : a.state === 'working' ? String(a.stage || a.task || 'Выполняет задачу').replace(/\s+/g, ' ').trim().slice(0, 120) : a.state === 'waiting' ? 'Результат или вопрос — в диалоге' : a.state === 'error' ? (a.error || 'Откройте диалог, чтобы проверить ошибку') : 'Нет текущего действия',
+      note: a.compacting ? 'Сжимает контекст' : a.state === 'working' ? String(a.stage || a.task || 'Выполняет задачу').replace(/\s+/g, ' ').trim().slice(0, 120) : a.asking ? 'Задал вопрос — ответьте в диалоге' : a.state === 'waiting' ? (String(a.said || '').replace(/[#*`>]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 120) || 'Закончил') : a.state === 'error' ? (a.error || 'Откройте диалог, чтобы проверить ошибку') : 'Нет текущего действия',
       min: a.since ? Math.max(0, Math.round((now-a.since)/60000)) : 0,
     };
   });
-  return { layoutVersion: 2, agents: shown, working: agents.filter(a=>a.state==='working').length, waiting: agents.filter(a=>a.state==='waiting').length, updated: now };
+  return { layoutVersion: 2, agents: shown, working: agents.filter(a=>a.state==='working').length, waiting: agents.filter(a=>a.asking).length, updated: now };
 }
 
 /** ActivityKit caps the whole payload at 4KB; retain IDs, states and mascots. */

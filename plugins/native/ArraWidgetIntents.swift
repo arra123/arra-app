@@ -38,8 +38,8 @@ public struct ArraCycleDialog: LiveActivityIntent {
     let old = list.firstIndex { ($0["key"] as? String) == saved } ?? list.firstIndex { ($0["key"] as? String) == currentKey } ?? ArraSelection.index(list, props: props)
     let next = (old + (direction < 0 ? -1 : 1) + list.count) % list.count
     guard let selected = list[next]["key"] as? String else { return .result() }
-    try ArraSelection.save(selected)
-    for activity in activities {
+    // The block that was tapped changes first: it is what the finger waits for.
+    for activity in activities.sorted(by: { a, _ in a.id == activityID }) {
       var updated = ArraSelection.parse(activity.content.state.props)
       guard ArraSelection.agents(updated).contains(where: { ($0["key"] as? String) == selected }) else { continue }
       updated["selectedKey"] = selected
@@ -47,7 +47,9 @@ public struct ArraCycleDialog: LiveActivityIntent {
       let data = try JSONSerialization.data(withJSONObject: updated)
       let state = LiveActivityAttributes.ContentState(name: "ArraRings", props: String(decoding: data, as: UTF8.self))
       await activity.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(300)))
+      if activity.id == activityID { try ArraSelection.save(selected) }
     }
+    try ArraSelection.save(selected)
     // A reload with the same timeline is not a data change. Write the selection
     // into every entry too, so the archived view and its Link share that key.
     if let timeline = timeline as? [[String: Any]], let defaults = ArraSelection.defaults {

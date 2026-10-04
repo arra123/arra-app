@@ -67,6 +67,9 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
       idle: num(raw.idle) ?? 0,
       task: str(raw.task, 400),
       stage: raw.busy ? str(raw.said, 160) : '',
+      // what it said last and whether it asks: a finished agent is «done», not «a question»
+      said: raw.busy ? '' : str(raw.said, 160),
+      asking: !!(raw.ask || raw.asks),
       transcript: str(raw.transcript, 600),
       iconName: /^[\w.-]{1,80}\.png$/.test(String(raw.iconName || '')) ? raw.iconName : null,
       model: str(raw.model, 80),
