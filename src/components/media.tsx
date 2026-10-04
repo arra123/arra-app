@@ -132,6 +132,11 @@ function AudioPlayerView({ uri, name, onRetry }: { uri: string; name: string; on
   const player = useAudioPlayer({ uri, headers: ara.authHeaders() }, { updateInterval: 250 });
   const status = useAudioPlayerStatus(player);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    // iOS emits the failure once, then periodic status resets error to null.
+    // Keep retry visible until this player is replaced by a fresh remote file.
+    if (status.error) setError('Не удалось загрузить аудио. Повторите загрузку.');
+  }, [status.error]);
   const time = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
   async function toggle() {
     try {

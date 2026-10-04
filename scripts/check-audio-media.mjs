@@ -25,12 +25,15 @@ const events = [];
 let state;
 const mediaCode = ts.transpileModule(fs.readFileSync(new URL('../src/components/media.tsx',import.meta.url),'utf8'), {
   compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX},
-}).outputText + '\nexports.remoteFileCheck = useRemoteFile;';
+}).outputText + '\nexports.remoteFileCheck = useRemoteFile; exports.audioPlayerCheck = AudioPlayerView;';
 const mediaExports = {};
 const ara = {file:async()=>({url:'cached'}),forgetFile:(path,scope)=>events.push({path,scope})};
+let audioStatus = {};
 const modules = {
   '@/ara/client':{ara}, '@/ara/format':exports, '@/constants/theme':{Colors:{},Radius:{}},
-  'react':{useState:initial=>{state ??= initial;return [state,fn=>{state=fn(state);}];},useEffect:fn=>fn()},
+  'react':{useState:initial=>{state ??= initial;return [state,fn=>{state=typeof fn==='function'?fn(state):fn;}];},useEffect:fn=>fn()},
+  'react/jsx-runtime':{jsx:(type,props)=>({type,props}),jsxs:(type,props)=>({type,props})},
+  'expo-audio':{useAudioPlayer:()=>({}),useAudioPlayerStatus:()=>audioStatus},
   'react-native':{StyleSheet:{create:value=>value}},
 };
 vm.runInNewContext(mediaCode,{exports:mediaExports,require:name=>modules[name]??{}});
@@ -43,3 +46,11 @@ for (const scope of [{agentKey:'live:pc:1'},{chatId:'chat'}]) {
   assert.deepEqual(JSON.parse(JSON.stringify(events.at(-1))),{path:'/home/A-zhivo.mp3',scope});
 }
 console.log('Media retry: PASS (agent/chat cache invalidation and retry state)');
+ara.authHeaders = () => ({});
+state = undefined;
+audioStatus = {error:'Decode failed',currentTime:0,duration:0};
+mediaExports.audioPlayerCheck({uri:'audio',name:'voice.mp3',onRetry:()=>{}});
+audioStatus = {error:null,currentTime:0,duration:0};
+const failed = mediaExports.audioPlayerCheck({uri:'audio',name:'voice.mp3',onRetry:()=>{}});
+assert.match(failed.props.error,/Повторите загрузку/);
+console.log('Audio failure: PASS (retry stays visible after transient iOS status error)');
