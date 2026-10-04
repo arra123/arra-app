@@ -24,6 +24,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           INSPECT_RUN: ${{ inputs.run_id || '37189757888' }}
         run: |
+          gh run watch "$INSPECT_RUN" --repo "$GITHUB_REPOSITORY" --interval 30
           gh run download "$INSPECT_RUN" --repo "$GITHUB_REPOSITORY" --name widget-host-result --dir inspection
           xcrun xcresulttool get object --legacy --format json --path inspection/widget-host.xcresult > result.json
           node <<'JS'
