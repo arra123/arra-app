@@ -1,4 +1,5 @@
 // Appended to the real ExpoWidgets pod only by the Simulator integration job.
+@available(iOS 17.2, *)
 public struct ArraWidgetTestDriver: View {
   @State private var ready = false
   @State private var selected = ""

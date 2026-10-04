@@ -10,7 +10,10 @@ final class WidgetInteractionTests: XCTestCase {
     let springboard = XCUIApplication(bundleIdentifier:"com.apple.springboard")
     func expand() {
       XCUIDevice.shared.press(.home)
-      springboard.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.025)).press(forDuration:1.5)
+      // The working state deliberately has no permanent Dynamic Island. Show
+      // the actual Lock Screen card through Notification Center instead.
+      springboard.coordinate(withNormalizedOffset:CGVector(dx:0.1,dy:0.01))
+        .press(forDuration:0.1,thenDragTo:springboard.coordinate(withNormalizedOffset:CGVector(dx:0.1,dy:0.8)))
     }
     expand()
     let next = springboard.buttons["Следующий диалог"]
@@ -26,6 +29,7 @@ final class WidgetInteractionTests: XCTestCase {
     app.activate()
     XCTAssertTrue(app.staticTexts["widget-test:first"].waitForExistence(timeout:10))
     // The intent must also work when no app process remains alive.
+    app.launchArguments = ["--arra-widget-ui-test"]
     app.terminate()
     expand()
     XCTAssertTrue(next.waitForExistence(timeout:10))
