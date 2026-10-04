@@ -39,7 +39,10 @@ function useRemoteFile(path: string, scope: FileScope) {
   }, [path, scopeKey, state.attempt]);
   return {
     ...state,
-    retry: () => setState((s) => ({ ...s, attempt: s.attempt + 1 })),
+    retry: () => {
+      ara.forgetFile(path, 'agentKey' in scope ? { agentKey: scopeKey } : { chatId: scopeKey });
+      setState((s) => ({ ...s, attempt: s.attempt + 1 }));
+    },
     /** Ссылка не загрузилась: файл на сервере мог устареть — один раз просим компьютер заново. */
     broken: () => {
       ara.forgetFile(path, 'agentKey' in scope ? { agentKey: scopeKey } : { chatId: scopeKey });

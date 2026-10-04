@@ -11,7 +11,7 @@ on:
         required: false
         type: string
       widget_host_run:
-        description: 'Не загружать IPA в Apple до PASS системного теста WidgetKit этого же коммита'
+        description: 'Не загружать IPA в Apple до PASS системного теста той же нативной реализации WidgetKit'
         required: false
         type: string
 
@@ -98,7 +98,7 @@ jobs:
           echo "ARRA_BUILD=$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$RUNNER_TEMP/arra-info.plist")" >> "$GITHUB_ENV"
           echo "ARRA_VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$RUNNER_TEMP/arra-info.plist")" >> "$GITHUB_ENV"
 
-      - name: Require matching WidgetKit system-dispatch proof
+      - name: Require matching WidgetKit native-source proof
         if: ${{ inputs.widget_host_run }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -106,10 +106,16 @@ jobs:
         run: |
           set -euo pipefail
           host_sha=$(gh run view "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)
-          test "$host_sha" = "$GITHUB_SHA"
+          # A later JS audio/docs correction may reuse native proof, but never
+          # proof from different widget code, native plugins or SDK dependencies.
+          git fetch --no-tags --depth=1 origin "$host_sha"
+          git diff --exit-code "$host_sha" "$GITHUB_SHA" -- plugins src/widgets app.json app.config.js app.config.ts package.json package-lock.json scripts/native-widget-driver.swift scripts/native-widget-host-tests.swift scripts/native-widget-preview.swift scripts/setup-widget-host-test.cjs .github/workflows/widget-host-test.yml
           host_workflow=$(gh run view "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --json workflowName --jq .workflowName)
           test "$host_workflow" = "widget-host-test"
           gh run watch "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
+          gh run view "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --log > "$RUNNER_TEMP/widget-host-proof.log"
+          grep -Eq 'testSystemDispatchFromLiveActivity.*passed' "$RUNNER_TEMP/widget-host-proof.log"
+          grep -Eq 'testOldActivityDoesNotHijackTargetSnapshot.*passed' "$RUNNER_TEMP/widget-host-proof.log"
 
       # straight to App Store Connect with Apple's own tool (the API key):
       # the free Expo submission queue kept a build waiting for an hour
