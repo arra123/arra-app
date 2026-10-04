@@ -30,12 +30,13 @@ xcrun simctl boot "$preview_udid"
 xcrun simctl bootstatus "$preview_udid" -b
 xcrun simctl install "$preview_udid" "$preview_app"
 xcrun simctl launch "$preview_udid" com.arratima.widgetpreview interaction
-sleep 3
 preview_data=$(xcrun simctl get_app_container "$preview_udid" com.arratima.widgetpreview data)
+# the first launch on a cold Simulator can take long: wait for the report, up to a minute
+for _ in $(seq 60); do [ -f "$preview_data/Documents/interaction.json" ] && break; sleep 1; done
 cp "$preview_data/Documents/interaction.json" native-widget-evidence/interaction.json
 node -e 'const r=require("./native-widget-evidence/interaction.json"); console.log(JSON.stringify(r)); if(r.checks.length<9 || r.checks.some(c=>!c.passed)) process.exit(1)'
 xcrun simctl terminate "$preview_udid" com.arratima.widgetpreview
-for preview_state in normal long question empty large; do
+for preview_state in normal long question error done idle empty large; do
   xcrun simctl launch "$preview_udid" com.arratima.widgetpreview "$preview_state"
   sleep 2
   xcrun simctl io "$preview_udid" screenshot "native-widget-evidence/$preview_state.png"

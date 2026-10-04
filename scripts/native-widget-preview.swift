@@ -17,8 +17,8 @@ enum WidgetsStorage {
     let long = mode == "long"
     return ["updated":Date().timeIntervalSince1970 * 1000, "agents": [["key":"live:pc:123", "project":"Помощник", "where":"ПК", "number":2, "mascotId":14,
       "title":long ? "Очень длинное название диалога о проверке всех семидесяти семи товаров" : "Обновление Arra на iPhone",
-      "note":mode == "question" ? "Выбирает расположение блока. Нужен ваш ответ." : "Проверяет виджеты и уведомления с маскотом",
-      "state":mode == "question" ? "wait" : "work"],
+      "note":mode == "question" ? "Выбирает расположение блока. Нужен ваш ответ." : mode == "error" ? "Сборка упала: не найден профиль подписи" : mode == "done" ? "Сборка 135 в TestFlight" : "Проверяет виджеты и уведомления с маскотом",
+      "state":mode == "question" ? "wait" : mode == "error" ? "error" : mode == "done" ? "done" : mode == "idle" ? "idle" : "work"],
       ["key":"live:pc:456", "title":"Проверка", "project":"Помощник", "mascotId":3, "number":3, "state":"idle"]]]
   }
   var body: some Scene {
