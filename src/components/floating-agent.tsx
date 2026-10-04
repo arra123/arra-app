@@ -16,8 +16,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { awaitedHelper, currentActivity, statusLine } from '@/ara/format';
 import type { Agent, PlanItem, SubAgent, Transcript } from '@/ara/types';
 import { HelpersStrip } from '@/components/agent-cards';
-import { AraMascot } from '@/components/ara-mascot';
-import { ProjectMascot } from '@/components/project-mascot';
+import { ProjectMascot, stateLook } from '@/components/project-mascot';
 import { Appear } from '@/components/glass-menu';
 import { PlanCard } from '@/components/transcript';
 import { Spinner, T } from '@/components/ui';
@@ -264,7 +263,7 @@ export function FloatingAgent({ agent, transcript, plan, helpers, now, stopping,
               it is doing. At the right edge the layout is mirrored, so the
               mascot always stands at the screen's edge and the words inside. */}
           <View style={[styles.capsule, sideJS ? styles.capsuleRight : null]}>
-            <ProjectMascot id={agent.mascotId} size={42} mood={state === 'working' ? 'thinking' : 'idle'} />
+            <ProjectMascot id={agent.mascotId} size={42} {...stateLook(state)} still={false} />
             <View style={[styles.words, { alignItems: sideJS ? 'flex-end' : 'flex-start' }]}>
               <T v="footnote" weight="600" color={state === 'waiting' ? Colors.waiting : state === 'error' ? Colors.error : Colors.text} numberOfLines={1}>
                 {saying}
@@ -331,7 +330,7 @@ function AgentSheet({ agent, transcript, plan, helpers, now, onClose }: {
       <Appear from={14} duration={200} style={[styles.sheet, { paddingBottom: insets.bottom + 14 }]}>
         <View style={styles.grabber} />
         <View style={styles.sheetHead}>
-          <ProjectMascot id={agent.mascotId} size={40} mood={agent.state === 'working' ? 'thinking' : 'idle'} interactive />
+          <ProjectMascot id={agent.mascotId} size={40} {...stateLook(agent.state)} still={false} interactive />
           <View style={{ flex: 1, gap: 2 }}>
             <T v="headline" weight="700" numberOfLines={1}>{agent.project}</T>
             <T v="footnote" color={color} numberOfLines={2}>{statusLine(agent, transcript, now)}</T>

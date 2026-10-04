@@ -113,7 +113,7 @@ function RollSplash({ ready, onDone }: { ready: boolean; onDone?: () => void }) 
   return (
     <Animated.View pointerEvents={ready && minDone ? 'none' : 'auto'} style={[StyleSheet.absoluteFill, styles.root, root]}>
       <View style={styles.center} onLayout={() => SplashScreen.hideAsync().catch(() => {})}>
-        <Animated.View style={mascot}><AraMascot size={SIZE} mood={mood} still /></Animated.View>
+        <Animated.View style={mascot}><AraMascot size={SIZE} mood={mood} still={mood === 'idle'} /></Animated.View>
       </View>
     </Animated.View>
   );
@@ -160,7 +160,7 @@ function WaveSplash({ ready, onDone }: { ready: boolean; onDone?: () => void }) 
     // sparks burst out once
     sparks.set(withDelay(380, withTiming(1, { duration: 1100, easing: Easing.out(Easing.cubic) })));
     title.set(withDelay(300, withTiming(1, { duration: 700 })));
-    const joy = setTimeout(() => { setMood('happy'); haptic.select(); }, 430);
+    const joy = setTimeout(() => { setMood('hello'); haptic.select(); }, 430);
     const min = setTimeout(() => setMinDone(true), 1900);
     return () => {
       clearTimeout(joy);
@@ -189,16 +189,6 @@ function WaveSplash({ ready, onDone }: { ready: boolean; onDone?: () => void }) 
     opacity: 0.35 + glow.get() * 0.65,
     transform: [{ scale: 1 + glow.get() * 0.1 }],
   }));
-  // the hand is a little white mitten at the right side, turning on its wrist
-  const handStyle = useAnimatedStyle(() => ({
-    opacity: hand.get(),
-    transform: [
-      { translateX: SIZE * 0.52 },
-      { translateY: SIZE * 0.02 - hand.get() * SIZE * 0.18 },
-      { rotate: `${20 + wave.get() * 22}deg` },
-      { scale: 0.6 + hand.get() * 0.4 },
-    ],
-  }));
   const helloStyle = useAnimatedStyle(() => ({
     opacity: hello.get(),
     transform: [{ translateY: -SIZE * 0.72 - hello.get() * 10 }, { translateX: SIZE * 0.62 }, { scale: 0.7 + hello.get() * 0.3 }],
@@ -216,8 +206,7 @@ function WaveSplash({ ready, onDone }: { ready: boolean; onDone?: () => void }) 
         </Animated.View>
         {Array.from({ length: SPARKS }, (_, i) => <Spark key={i} i={i} t={sparks} />)}
         <Animated.View style={mascot}>
-          <Animated.View style={[styles.hand, handStyle]} />
-          <AraMascot size={SIZE} mood={mood} still />
+          <AraMascot size={SIZE} mood={mood} still={mood === 'idle'} />
           <Animated.View style={[styles.hello, helloStyle]}>
             <T v="subhead" weight="700" color={Colors.background}>привет!</T>
           </Animated.View>
@@ -273,14 +262,6 @@ const styles = StyleSheet.create({
   disc: { position: 'absolute', backgroundColor: '#ffffff' },
   spark: { position: 'absolute', width: 8, height: 8, borderRadius: 4, backgroundColor: '#ffffff' },
   sparkSmall: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#cfd6ff' },
-  hand: {
-    position: 'absolute',
-    alignSelf: 'center',
-    width: SIZE * 0.2,
-    height: SIZE * 0.3,
-    borderRadius: SIZE * 0.1,
-    backgroundColor: '#f4f4f7',
-  },
   hello: {
     position: 'absolute',
     alignSelf: 'center',

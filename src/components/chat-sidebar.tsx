@@ -15,7 +15,7 @@ import { openAgentScreen } from '@/components/chat-list';
 import { Segmented } from '@/components/segmented';
 import type { Limits } from '@/ara/types';
 import { AraMascot } from '@/components/ara-mascot';
-import { AgentNumber, ProjectMascot } from '@/components/project-mascot';
+import { AgentNumber, ProjectMascot, stateLook } from '@/components/project-mascot';
 import { Press, StatusDot, T } from '@/components/ui';
 import { Colors } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
@@ -124,15 +124,15 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
                       <T v="headline" weight="700" numberOfLines={1} style={{ flex: 1 }}>{agent.project}</T>
                     </View>}
                     <Pressable onPress={go(() => openAgentScreen(agent.key))}
-                      onLongPress={() => Alert.alert('Маскот проекта', agent.project, [
-                        ...[[0,'tito'],[3,'Искра'],[4,'Камушек'],[5,'Облачко'],[6,'Желе'],[8,'Мох'],[11,'Грибок'],[12,'Пельмешек'],[13,'Котобоб'],[14,'Луна'],[15,'Рожки'],[16,'Галька'],[19,'Черничка']].map(([id, name]) => ({
-                          text: String(name), onPress: () => { ara.request({ type: 'ara.mascot', agentKey: agent.key, mascotId: id }).catch((e) => Alert.alert('Не удалось сменить маскот', String(e.message))); },
+                      onLongPress={() => Alert.alert('Цвет маскота', agent.project, [
+                        ...[[0,'Белый'],[3,'Жёлтый'],[4,'Фиолетовый'],[5,'Голубой'],[6,'Розовый'],[8,'Зелёный'],[11,'Красный'],[12,'Оранжевый'],[13,'Бирюзовый'],[14,'Синий']].map(([id, name]) => ({
+                          text: String(name), onPress: () => { ara.request({ type: 'ara.mascot', agentKey: agent.key, mascotId: id }).catch((e) => Alert.alert('Не удалось сменить цвет', String(e.message))); },
                         })), { text: 'Отмена', style: 'cancel' },
                       ])}
                       accessibilityRole="button" accessibilityLabel={`${agentNumber(agent, state.agents)}, ${agent.title || agent.project}`}
                       style={({ pressed }) => [styles.agent, pressed && styles.chatPressed]}>
                       <AgentNumber number={agentNumber(agent, state.agents)} mascotId={agent.mascotId} />
-                      <ProjectMascot id={agent.mascotId} size={30} still />
+                      <ProjectMascot id={agent.mascotId} size={30} {...stateLook(agent.state)} />
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <T v="body" numberOfLines={1} style={styles.agentTitle}>{agent.title || agent.task || agent.project}</T>
                         <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{agent.project}</T>

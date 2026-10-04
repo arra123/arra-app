@@ -16,7 +16,7 @@ import type { Agent, DeviceId, RecentSession } from '@/ara/types';
 import { chats, useCurrentChatId } from '@/ara/chats';
 import { openChat, openNewChat } from '@/components/chat-list';
 import { ChatSidebar } from '@/components/chat-sidebar';
-import { AgentNumber, ProjectMascot } from '@/components/project-mascot';
+import { AgentNumber, ProjectMascot, stateLook } from '@/components/project-mascot';
 import { GlassMenu, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
 import { IconButton, Press, StatusDot, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
@@ -263,7 +263,7 @@ function AgentRow({ agent, number, pinned, first, now }: { agent: Agent; number:
           accessibilityLabel={`${number}, ${AGENT_LABEL[agent.agent]} ${agent.project}, ${meta.label}${pinned ? ', закреплён' : ''}`}
           accessibilityHint="Долгое нажатие — действия, свайп влево — закрыть">
           <AgentNumber number={number} mascotId={agent.mascotId} />
-          <ProjectMascot id={agent.mascotId} size={34} still />
+          <ProjectMascot id={agent.mascotId} size={34} {...stateLook(agent.state)} />
           <View style={styles.rowText}>
             <View style={styles.rowTitle}>
               {pinned ? <SymbolView name="pin.fill" size={10} tintColor={Colors.textTertiary} /> : null}

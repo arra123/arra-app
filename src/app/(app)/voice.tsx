@@ -19,9 +19,9 @@ const STATUS: Record<TalkPhase, string> = {
 
 const MOOD: Record<TalkPhase, MascotMood> = {
   starting: 'idle',
-  listening: 'idle',
+  listening: 'listening',
   thinking: 'thinking',
-  speaking: 'happy',
+  speaking: 'speaking',
   stopped: 'idle',
 };
 
