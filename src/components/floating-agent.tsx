@@ -19,7 +19,7 @@ import { HelpersStrip } from '@/components/agent-cards';
 import { ProjectMascot, stateLook } from '@/components/project-mascot';
 import { Appear } from '@/components/glass-menu';
 import { PlanCard } from '@/components/transcript';
-import { Spinner, T } from '@/components/ui';
+import { Spinner, StatusDot, T } from '@/components/ui';
 import { Colors, Radius } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -236,7 +236,7 @@ export function FloatingAgent({ agent, transcript, plan, helpers, now, stopping,
   }));
 
   const state = agent.state;
-  const tint = state === 'waiting' ? Colors.waiting : state === 'error' ? Colors.error : Colors.textSecondary;
+  const tint = state === 'waiting' ? Colors.done : state === 'error' ? Colors.error : Colors.textSecondary;
   // На агентике только план и помощники; статус и минуты — в шапке
   const done = plan.filter((p) => p.status === 'completed').length;
   const active = helpers.filter((h) => h.active);
@@ -265,11 +265,11 @@ export function FloatingAgent({ agent, transcript, plan, helpers, now, stopping,
           <View style={[styles.capsule, sideJS ? styles.capsuleRight : null]}>
             <ProjectMascot id={agent.mascotId} size={42} {...stateLook(state)} still={false} />
             <View style={[styles.words, { alignItems: sideJS ? 'flex-end' : 'flex-start' }]}>
-              <T v="footnote" weight="600" color={state === 'waiting' ? Colors.waiting : state === 'error' ? Colors.error : Colors.text} numberOfLines={1}>
+              <T v="footnote" weight="600" color={state === 'waiting' ? Colors.done : state === 'error' ? Colors.error : Colors.text} numberOfLines={1}>
                 {saying}
               </T>
               <View style={styles.sub}>
-                {state === 'working' || stopping ? <Spinner size={9} color={Colors.working} /> : null}
+                {state === 'working' || stopping ? <StatusDot state="working" size={8} /> : null}
                 {plan.length ? (
                   <T v="tiny" weight="600" color={Colors.textSecondary} style={{ fontVariant: ['tabular-nums'] }}>
                     план {done}/{plan.length}
@@ -321,7 +321,7 @@ function AgentSheet({ agent, transcript, plan, helpers, now, onClose }: {
   const helper = agent.state === 'working' ? awaitedHelper(agent, transcript, now) : null;
   const doing = agent.state === 'working' && !helper ? currentActivity(agent, transcript) : '';
   const activeHelpers = helpers.filter((h) => h.active);
-  const color = agent.state === 'waiting' ? Colors.waiting : agent.state === 'error' ? Colors.error : Colors.text;
+  const color = agent.state === 'waiting' ? Colors.done : agent.state === 'error' ? Colors.error : Colors.text;
   return (
     <Modal visible transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
       <Appear from={0} style={StyleSheet.absoluteFill}>

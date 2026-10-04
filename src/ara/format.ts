@@ -6,7 +6,7 @@ import type { Agent, AgentKind, AgentState, DeviceId, Limit, Limits, SubAgent, T
 
 export const STATE_META: Record<AgentState, { label: string; color: string }> = {
   working: { label: 'работает', color: Colors.working },
-  waiting: { label: 'ждёт ответа', color: Colors.waiting },
+  waiting: { label: 'закончил', color: Colors.done },
   error: { label: 'прервался', color: Colors.error },
   old: { label: 'давно', color: Colors.old },
 };

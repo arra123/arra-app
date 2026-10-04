@@ -20,6 +20,7 @@ import Animated, {
   Easing,
   useAnimatedStyle,
   useSharedValue,
+  type SharedValue,
   withRepeat,
   withSequence,
   withSpring,
@@ -186,30 +187,34 @@ export function IconButton({ icon, onPress, size = 40, color = Colors.text, labe
 
 // ---------- статус ----------
 
-/** Цветная точка статуса; у работающего агента мягко пульсирует. */
+/**
+ * Статус агента, один код везде (tito, остров, телефон): три серые прыгающие точки —
+ * работает; зелёная — закончил; красная — остановился; серая — давно молчит.
+ */
 export function StatusDot({ state, size = 8 }: { state: AgentState; size?: number }) {
-  const pulse = useSharedValue(0);
-  const color = STATE_META[state].color;
+  const t = useSharedValue(0);
+  const working = state === 'working';
   useEffect(() => {
-    if (state === 'working') {
-      pulse.set(withRepeat(withSequence(withTiming(1, { duration: 900, easing: Easing.out(Easing.quad) }), withTiming(0, { duration: 0 })), -1));
-    } else {
-      cancelAnimation(pulse);
-      pulse.set(withTiming(0, { duration: 200 }));
-    }
-    return () => cancelAnimation(pulse);
-  }, [state, pulse]);
-  const halo = useAnimatedStyle(() => ({
-    opacity: 0.55 * (1 - pulse.get()),
-    transform: [{ scale: 1 + pulse.get() * 1.4 }],
-  }));
-  const dot = useAnimatedStyle(() => ({ backgroundColor: withTiming(color, { duration: 300 }) }));
+    if (!working) return;
+    t.set(withRepeat(withTiming(1, { duration: 1200, easing: Easing.linear }), -1));
+    return () => cancelAnimation(t);
+  }, [working, t]);
+  if (!working) return <View style={{ width: size, height: size, borderRadius: size, backgroundColor: STATE_META[state].color }} />;
+  const dot = size * 0.5;
   return (
-    <View style={{ width: size, height: size }}>
-      <Animated.View style={[StyleSheet.absoluteFill, { borderRadius: size, backgroundColor: color }, halo]} />
-      <Animated.View style={[StyleSheet.absoluteFill, { borderRadius: size }, dot]} />
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: dot * 0.5, height: size }}>
+      {[0, 1, 2].map((i) => <JumpDot key={i} i={i} t={t} size={dot} />)}
     </View>
   );
+}
+
+function JumpDot({ i, t, size }: { i: number; t: SharedValue<number>; size: number }) {
+  const style = useAnimatedStyle(() => {
+    const p = (t.get() - i * 0.14 + 1) % 1;
+    const up = p < 0.42 ? Math.sin((p / 0.42) * Math.PI) : 0;
+    return { opacity: 0.5 + up * 0.5, transform: [{ translateY: -up * size * 0.8 }] };
+  });
+  return <Animated.View style={[{ width: size, height: size, borderRadius: size, backgroundColor: Colors.working }, style]} />;
 }
 
 const LOGOS = {
