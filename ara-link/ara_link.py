@@ -17,6 +17,7 @@ import contextlib
 import hashlib
 import json
 import shutil
+import subprocess
 import logging
 import os
 import re
@@ -157,6 +158,8 @@ class AraLink:
         self.transcripts: dict[str, dict] = {}  # key -> последняя переписка (для проверки путей)
         self.ask_paths: dict[str, set[str]] = {}  # chatId -> пути к медиа из ответов Ары
         self.sessions: dict[str, Any] = {}
+        self.local_errors: dict[str, str] = {}
+        self.local_error_task: asyncio.Task | None = None
         self.wake = asyncio.Event()
         self.tasks: set[asyncio.Task] = set()
         self.stopping = False
@@ -206,10 +209,11 @@ class AraLink:
         with contextlib.suppress(Exception):
             await ws.send(json.dumps(event, ensure_ascii=False))
 
-    def spawn(self, coro) -> None:
+    def spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
+        return task
 
     def remote(self, device: str | None) -> bool:
         """Агент живёт на ПК, а мы — на ноутбуке: ходим через ara-pc / ssh."""
@@ -225,7 +229,8 @@ class AraLink:
         except (OSError, ValueError):
             mascots = {}
         for item in live + (data.get("recent") or []):
-            item["mascotId"] = mascots.get(f"{item.get('device') or 'laptop'}:{item.get('cwd') or ''}", 0)
+            cwd = item.get('cwd') or ''
+            item["mascotId"] = mascots.get(cwd, mascots.get(f"laptop:{cwd}", mascots.get(f"pc:{cwd}", 0)))
         # ara-sessions names machines from where it runs: its own agents
         # "laptop", the other computer's "pc". On the PC that is the other way
         # round, so the names are swapped (the server keeps each agent from
@@ -237,6 +242,8 @@ class AraLink:
         for agent in live:
             agent.setdefault("device", self.device)
         self.sessions = data
+        if self.local_error_task is None or self.local_error_task.done():
+            self.local_error_task = self.spawn(self.notify_local_errors(live))
         # subscription limits: the script caches for a minute, ask as rarely
         if time.monotonic() - getattr(self, "limits_at", -1e9) > 60:
             self.limits_at = time.monotonic()
@@ -284,6 +291,26 @@ class AraLink:
         except Exception as error:  # noqa: BLE001
             sent.pop(path, None)
             log.debug("иконка %s: %s", path, error)
+
+    async def notify_local_errors(self, agents: list[dict]) -> None:
+        current = {}
+        for agent in agents:
+            if agent.get("device") != self.device or agent.get("state") != "error":
+                continue
+            key = str(agent.get("term") or "") + ":" + str(agent.get("transcript") or "")
+            reason = agent.get("error") or "Агент остановился с ошибкой. Откройте диалог."
+            current[key] = reason
+            if self.local_errors.get(key) == reason:
+                continue
+            event = {"agent": agent.get("agent") or "Агент", "kind": "error",
+                     "title": (agent.get("title") or agent.get("project") or "Агент") + " · ошибка",
+                     "body": reason, "terminal_pid": agent.get("term"), "device": self.device}
+            code, _, _ = await self.run(
+                [str(Path.home() / ".local/bin/agent-notify"), "--remote-event"],
+                stdin=json.dumps(event, ensure_ascii=False), timeout=12, env=graphical_env())
+            if code != 0:
+                current.pop(key, None)  # Retry on the next snapshot, not silently lost.
+        self.local_errors = current
 
     async def send_fresh_snapshot(self) -> None:
         try:
@@ -419,6 +446,45 @@ class AraLink:
         if isinstance(result, dict) and result.get("ok") is False:
             raise RuntimeError(result.get("error") or "Терминал не подтвердил отправку")
 
+    async def cmd_move(self, msg: dict) -> dict:
+        """Move a dialog up or down inside its project: tito's own order, shared by every screen."""
+        agent = msg.get("agent") or {}
+        steps = msg.get("steps")
+        if type(steps) is not int or not steps:
+            raise RuntimeError("Некуда перемещать")
+        if agent.get("device") != self.device:
+            raise RuntimeError("Порядок меняется на том компьютере, где открыт диалог")
+        live = list(self.sessions.get("live") or [])
+        here = next((i for i, a in enumerate(live) if a.get("term") == agent.get("term") and a.get("device") == self.device), None)
+        if here is None:
+            raise RuntimeError("Диалог уже закрыт")
+        mine = live[here]
+        group = [i for i, a in enumerate(live) if a.get("cwd") == mine.get("cwd") and a.get("device") == mine.get("device")]
+        at = group.index(here)
+        to = max(0, min(len(group) - 1, at + steps))
+        if to == at:
+            return {}
+        order = group[:]
+        order.insert(to, order.pop(at))
+        moved = live[:]
+        for slot, source in zip(group, order):
+            moved[slot] = live[source]
+        path = Path.home() / ".local/share/notch-island/ara-ui.json"
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        # tito names machines from where it runs: its own dialogs are «laptop», the other computer's «pc»
+        data["dialogOrder"] = [f"{'laptop' if a.get('device') == self.device else 'pc'}:{a.get('agent')}:{a.get('transcript') or a.get('term')}" for a in moved]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as file:
+            json.dump(data, file, ensure_ascii=False)
+        os.replace(file.name, path)
+        self.sessions["live"] = moved
+        return {}
+
     async def cmd_mascot(self, msg: dict) -> dict:
         agent = msg.get("agent") or {}
         ident = msg.get("mascotId")
@@ -436,12 +502,18 @@ class AraLink:
             data = {}
         if not isinstance(data, dict):
             raise RuntimeError("Повреждён список маскотов")
-        data[f"laptop:{cwd}"] = ident
+        data.pop(f"laptop:{cwd}", None)
+        data.pop(f"pc:{cwd}", None)
+        data[cwd] = ident
         path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as file:
             json.dump(data, file, ensure_ascii=False)
             temporary = file.name
         os.replace(temporary, path)
+        # the other computer keeps the same file
+        subprocess.Popen([str(Path.home() / ".config/quickshell/ara/scripts/ara-pc"), "put", str(path)],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
         await self.send_fresh_snapshot()
         return {"mascotId": ident}
 
@@ -848,6 +920,8 @@ class AraLink:
             self.spawn(self.reply(msg, self.cmd_model))
         elif kind == "ara.mascot":
             self.spawn(self.reply(msg, self.cmd_mascot))
+        elif kind == "ara.move":
+            self.spawn(self.reply(msg, self.cmd_move))
         elif kind == "ara.close":
             self.spawn(self.reply(msg, self.cmd_close))
         elif kind == "ara.key":

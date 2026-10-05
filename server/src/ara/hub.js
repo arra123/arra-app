@@ -391,6 +391,7 @@ export function createHub(deps = {}) {
       case 'ara.close':
       case 'ara.key':
       case 'ara.mascot':
+      case 'ara.move':
       case 'ara.model': {
         if (!item || item.term == null) {
           emit(socket, { type: 'ara.result', reqId: entry.reqId, ok: false, error: 'Агент уже закрыт' });
@@ -410,6 +411,11 @@ export function createHub(deps = {}) {
             }
             payload.effort = msg.effort;
           }
+        }
+        // the dialog moves up or down inside its project; the computer keeps the order
+        if (msg.type === 'ara.move') {
+          payload.agent.cwd = item.cwd;
+          payload.steps = Math.max(-20, Math.min(20, Math.trunc(Number(msg.steps) || 0)));
         }
         if (msg.type === 'ara.mascot') {
           payload.agent.cwd = item.cwd;

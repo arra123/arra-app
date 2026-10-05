@@ -2,7 +2,7 @@ import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useRef, useState, type ReactNode } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { Easing, FadeIn, FadeInDown, FadeOut, LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -227,6 +227,9 @@ function AgentRow({ agent, number, pinned, first, now }: { agent: Agent; number:
   const sections: MenuSection[] = [
     [
       { label: pinned ? 'Открепить' : 'Закрепить сверху', icon: pinned ? 'pin.slash' : 'pin', onPress: () => pins.toggle(agent.key) },
+      // the order is tito's own: it changes on the computer and comes back to every device
+      { label: 'Переместить выше', icon: 'arrow.up', onPress: () => ara.request({ type: 'ara.move', agentKey: agent.key, steps: -1 }).then(() => haptic.success()).catch((e) => Alert.alert('Не удалось переместить', String(e?.message || e))) },
+      { label: 'Переместить ниже', icon: 'arrow.down', onPress: () => ara.request({ type: 'ara.move', agentKey: agent.key, steps: 1 }).then(() => haptic.success()).catch((e) => Alert.alert('Не удалось переместить', String(e?.message || e))) },
       { label: 'Скопировать путь', icon: 'doc.on.doc', onPress: () => Clipboard.setStringAsync(agent.cwd).then(() => haptic.success()) },
       ...(agent.state === 'working' ? [{ label: 'Остановить', icon: 'stop.circle' as const, onPress: () => stopAgent(agent).catch(() => {}) }] : []),
     ],
