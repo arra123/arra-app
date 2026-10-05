@@ -4,7 +4,8 @@ import { useEffect } from 'react';
 import { ara } from '@/ara/client';
 import { Colors } from '@/constants/theme';
 import { getToken } from '@/lib/api';
-import { registerForPush } from '@/lib/push';
+import { watchPushRegistration } from '@/lib/push';
+import { syncWidgets } from '@/widgets/sync';
 import { usePushOpen } from '@/lib/use-push-open';
 
 export default function AppLayout() {
@@ -16,9 +17,11 @@ export default function AppLayout() {
     getToken().then((token) => {
       if (alive && token) ara.start(token);
     });
-    registerForPush();
+    const stopPush = watchPushRegistration();
+    syncWidgets([]);
     return () => {
       alive = false;
+      stopPush();
       ara.stop();
     };
   }, []);

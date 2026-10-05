@@ -10,18 +10,9 @@ on:
         description: 'Повторно отправить IPA из этого workflow run, без новой сборки'
         required: false
         type: string
-      widget_host_run:
-        description: 'Не загружать IPA в Apple до PASS системного теста той же нативной реализации WidgetKit'
-        required: false
-        type: string
-      native_preview_run:
-        description: 'Повторно использовать проверенный preview только идентичного SwiftUI кода'
-        required: false
-        type: string
 
 jobs:
   build:
-    needs: native-preview
     permissions:
       contents: read
       actions: read
@@ -114,37 +105,6 @@ jobs:
           git fetch --no-tags --depth=1 origin "$ipa_sha"
           git diff --exit-code "$ipa_sha" "$GITHUB_SHA" -- plugins src app.json app.config.js app.config.ts package.json package-lock.json
 
-      - name: Require matching WidgetKit native-source proof
-        if: ${{ inputs.widget_host_run }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HOST_RUN: ${{ inputs.widget_host_run }}
-        run: |
-          set -euo pipefail
-          host_sha=$(gh run view "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)
-          # A later JS audio/docs correction may reuse native proof, but never
-          # proof from different widget code, native plugins or SDK dependencies.
-          git fetch --no-tags --depth=1 origin "$host_sha"
-          git diff --exit-code "$host_sha" "$GITHUB_SHA" -- plugins src/widgets app.json app.config.js app.config.ts package.json package-lock.json scripts/native-widget-driver.swift scripts/native-widget-host-tests.swift scripts/native-widget-preview.swift scripts/setup-widget-host-test.cjs .github/workflows/widget-host-test.yml
-          host_workflow=$(gh run view "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --json workflowName --jq .workflowName)
-          test "$host_workflow" = "widget-host-test"
-          gh run watch "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
-          gh run download "$HOST_RUN" --repo "$GITHUB_REPOSITORY" --name widget-host-result --dir "$RUNNER_TEMP/widget-host-proof"
-          xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/widget-host-proof/widget-host.xcresult" > "$RUNNER_TEMP/widget-summary.json"
-          xcrun xcresulttool get test-results tests --path "$RUNNER_TEMP/widget-host-proof/widget-host.xcresult" > "$RUNNER_TEMP/widget-tests.json"
-          node <<'JS'
-          const fs=require('node:fs'),path=require('node:path');
-          const read=name=>JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP,name),'utf8'));
-          const summary=read('widget-summary.json'),tests=read('widget-tests.json'),passed=new Set();
-          function scan(value){if(!value||typeof value!=='object')return;if(value.result==='Passed'&&value.name)passed.add(value.name);for(const child of Object.values(value))scan(child);}
-          scan(tests);
-          if(summary.result!=='Passed'||summary.totalTestCount!==2||summary.failedTests!==0)throw new Error('Widget host did not pass both tests');
-          for(const name of ['testSystemDispatchFromLiveActivity','testOldActivityDoesNotHijackTargetSnapshot']) {
-            if(![...passed].some(v=>v.includes(name)))throw new Error('Missing named test: '+name);
-          }
-          console.log('Actual WidgetKit system and old-block tests passed:', [...passed]);
-          JS
-
       # straight to App Store Connect with Apple's own tool (the API key):
       # the free Expo submission queue kept a build waiting for an hour
       - name: Upload to App Store Connect (altool)
@@ -164,42 +124,3 @@ jobs:
         run: |
           node scripts/asc-add-latest-to-group.mjs "$ARRA_BUILD"
           node scripts/check-release.mjs "$ARRA_VERSION"
-
-  native-preview:
-    runs-on: macos-15
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Render production SwiftUI cards in iOS Simulator
-        if: ${{ !inputs.native_preview_run }}
-        run: bash scripts/render-native-widgets.sh
-      - name: Require identical native preview source
-        if: ${{ inputs.native_preview_run }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREVIEW_RUN: ${{ inputs.native_preview_run }}
-        run: |
-          set -euo pipefail
-          preview_sha=$(gh run view "$PREVIEW_RUN" --repo "$GITHUB_REPOSITORY" --json headSha --jq .headSha)
-          git fetch --no-tags --depth=1 origin "$preview_sha"
-          git diff --exit-code "$preview_sha" "$GITHUB_SHA" -- plugins src/widgets package.json package-lock.json app.json scripts/native-widget-preview.swift scripts/render-native-widgets.sh
-          preview_status=$(gh run view "$PREVIEW_RUN" --repo "$GITHUB_REPOSITORY" --json jobs --jq '.jobs[] | select(.name == "native-preview") | .conclusion')
-          test "$preview_status" = "success"
-      - uses: actions/download-artifact@v4
-        if: ${{ inputs.native_preview_run }}
-        with:
-          name: native-widget-evidence
-          run-id: ${{ inputs.native_preview_run }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: native-widget-evidence
-      - uses: actions/upload-artifact@v4
-        with:
-          name: native-widget-evidence
-          path: native-widget-evidence
-          if-no-files-found: error

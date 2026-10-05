@@ -90,4 +90,4 @@ export const Fonts = {
 };
 
 /** Номер сборки JS — показывается в настройках. Увеличивать при каждом выкате OTA. */
-export const APP_BUILD = 200;
+export const APP_BUILD = 201;

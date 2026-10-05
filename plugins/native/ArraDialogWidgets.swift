@@ -229,25 +229,41 @@ public struct ArraDialogCard: View {
 
 public struct ArraWidgetEntryView: View {
   @Environment(\.widgetFamily) private var family
-  private let props: [String: Any]
-  public init(props: [String: Any]) { self.props = props }
+  private let destination = URL(string: "arra://ask?fresh=1")!
+  public init(props: [String: Any]) {}
   public var body: some View {
     if #available(iOS 17.0, *) {
-      content.containerBackground(Color(red: 0.125, green: 0.137, blue: 0.157), for: .widget)
-    } else { content.background(Color.black) }
+      content.containerBackground(Color(red: 0.039, green: 0.039, blue: 0.047), for: .widget)
+        .widgetURL(destination)
+    } else { content.background(Color.black).widgetURL(destination) }
   }
   @ViewBuilder private var content: some View {
-    let list = ArraSelection.agents(props)
-    let agent = list.isEmpty ? [:] : list[ArraSelection.index(list, props: props)]
-    if family == .systemMedium { ArraDialogCard(props: props) }
-    else {
-      Link(destination: ArraSelection.url(props)) {
-        VStack(alignment: .leading, spacing: 6) {
-          ArraBall(mascot: agent["mascotId"] as? Int ?? 0, state: agent["state"] as? String ?? "idle", size: family == .systemSmall ? 46 : 22)
-          Text(agent["title"] as? String ?? "Откройте Arra").font(.caption.weight(.semibold)).lineLimit(2)
-          if family == .systemSmall { Text(agent["note"] as? String ?? "Нет открытых диалогов").font(.caption2).foregroundStyle(.secondary).lineLimit(2) }
-        }
-      }.widgetURL(ArraSelection.url(props))
+    switch family {
+    case .accessoryInline:
+      Label("Новый разговор", systemImage: "square.and.pencil")
+    case .accessoryCircular:
+      Image(systemName: "square.and.pencil").font(.title2)
+        .accessibilityLabel("Новый разговор с Arra")
+    case .accessoryRectangular:
+      Label("Новый разговор", systemImage: "square.and.pencil")
+        .font(.headline).lineLimit(1).minimumScaleFactor(0.75)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    default:
+      Link(destination: destination) {
+        VStack(alignment: .leading, spacing: 14) {
+          Text("Arra").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.white.opacity(0.5))
+          HStack(spacing: 10) {
+            Image(systemName: "square.and.pencil").font(.system(size: 21, weight: .medium))
+            Text("Новый разговор").font(.system(size: family == .systemSmall ? 13 : 17, weight: .semibold))
+              .lineLimit(1).minimumScaleFactor(0.7)
+            if family == .systemMedium { Spacer(minLength: 0) }
+          }
+          .foregroundStyle(Color.white)
+          .padding(.vertical, 14).padding(.horizontal, 10)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.1)))
+        }.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+      }.accessibilityLabel("Начать новый разговор с Arra")
     }
   }
 }

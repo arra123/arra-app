@@ -18,7 +18,7 @@ import { APP_BUILD, Colors, Fonts, Radius, ScreenPadding } from '@/constants/the
 import { api, API_URL } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { haptic } from '@/lib/haptics';
-import { registerForPush } from '@/lib/push';
+import { pushRegistrationStatus, registerForPush } from '@/lib/push';
 
 type TokenRow = { id: string; name: string; role: string | null; online: boolean; last_seen: string | null };
 type Issued = { device: DeviceId; token: string };
@@ -30,6 +30,7 @@ export default function Settings() {
   const [tokens, setTokens] = useState<TokenRow[] | null>(null);
   const [issuing, setIssuing] = useState<DeviceId | null>(null);
   const [issued, setIssued] = useState<Issued | null>(null);
+  const [testingPush, setTestingPush] = useState(false);
   const [push, setPush] = useState<'granted' | 'denied' | 'undetermined' | null>(null);
 
   const load = useCallback(() => {
@@ -78,8 +79,25 @@ export default function Settings() {
       Linking.openSettings();
       return;
     }
-    await registerForPush();
+    try { await registerForPush(); }
+    catch { Alert.alert('Уведомления не подключены', pushRegistrationStatus()); }
     load();
+  }
+
+  async function testPush() {
+    setTestingPush(true);
+    try {
+      if (!await registerForPush()) {
+        Alert.alert('Уведомления выключены', 'Разреши уведомления для Arra в настройках iOS.', [
+          { text: 'Отмена', style: 'cancel' }, { text: 'Настройки', onPress: () => Linking.openSettings() },
+        ]);
+        return;
+      }
+      await api('/push/test', { body: {}, timeoutMs: 45000 });
+      haptic.success();
+      Alert.alert('Проверка отправлена', 'Должен появиться баннер «Arra · проверка уведомлений». Если его нет, проверь разрешение на баннеры и режим фокусирования в iOS.');
+    } catch (error: any) { Alert.alert('Проверка не отправлена', error?.message || pushRegistrationStatus()); }
+    finally { setTestingPush(false); load(); }
   }
 
   const copy = (text: string) => Clipboard.setStringAsync(text).then(() => haptic.success());
@@ -159,7 +177,7 @@ export default function Settings() {
             <IconTile name="bell.badge" color="#ff453a" />
             <View style={{ flex: 1 }}>
               <T v="callout" weight="600">Агент закончил</T>
-              <T v="caption" color={Colors.textSecondary}>Пуш, когда агент закончил или ждёт ответа</T>
+              <T v="caption" color={Colors.textSecondary}>Когда работа завершена или агент остановился</T>
             </View>
             {push === 'granted' ? (
               <SymbolView name="checkmark.circle.fill" size={20} tintColor={Colors.success} />
@@ -169,6 +187,14 @@ export default function Settings() {
               </Press>
             )}
           </View>
+          <Press onPress={testPush} disabled={testingPush} style={[styles.row, styles.rowBorder]} accessibilityLabel="Проверить доставку уведомлений">
+            <IconTile name="paperplane" color="#0a84ff" />
+            <View style={{ flex: 1 }}>
+              <T v="callout" weight="600">Проверить уведомления</T>
+              <T v="caption" color={Colors.textSecondary}>{testingPush ? 'Отправляем проверку…' : pushRegistrationStatus()}</T>
+            </View>
+            {testingPush ? <ActivityIndicator color={Colors.textSecondary} /> : <SymbolView name="chevron.right" size={13} tintColor={Colors.textTertiary} />}
+          </Press>
         </Section>
 
         <Section title="Аккаунт">

@@ -138,7 +138,7 @@ test('хаб: снимок → состояние телефону, push при 
   await hub.deviceMessage('u1', 'L', finished);
   assert.equal(pushes.length, 1);
   assert.equal(pushes[0][0], 'u1');
-  assert.match(pushes[0][1], /helper · ждёт ответа/);
+  assert.match(pushes[0][1], /helper · завершил работу/);
   assert.deepEqual(pushes[0][3], { type: 'ara.agent', agentKey: 'live:laptop:58872', state: 'waiting', mascotId: 0, project: 'helper', agentNumber: 1 });
   assert.equal(phone.last('ara.state').agents[0].since, 1_060_000);
 });

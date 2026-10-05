@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 
 import { api } from '@/lib/api';
 
@@ -22,20 +22,50 @@ if (Platform.OS !== 'web') {
   });
 }
 
-/** Разрешение на уведомления + Expo push-токен на сервер. Тихо, без падений. */
-export async function registerForPush() {
-  if (!Device.isDevice || Platform.OS === 'web') return;
-  try {
-    const current = await Notifications.getPermissionsAsync();
-    let granted = current.granted;
-    if (!granted && current.canAskAgain) granted = (await Notifications.requestPermissionsAsync()).granted;
-    if (!granted) return;
+let registration: Promise<boolean> | null = null;
+let registeredToken = '';
+let status = 'Подключаем уведомления…';
+export function pushRegistrationStatus() { return status; }
+
+/** Permission and server registration are separate: retry transient failures. */
+export function registerForPush(requestPermission = true): Promise<boolean> {
+  if (!Device.isDevice || Platform.OS === 'web') return Promise.resolve(false);
+  if (registration) return registration;
+  registration = (async () => {
+    let permission = await Notifications.getPermissionsAsync();
+    if (!permission.granted && permission.canAskAgain && requestPermission) {
+      permission = await Notifications.requestPermissionsAsync({ ios: { allowAlert: true, allowSound: true, allowBadge: true } });
+    }
+    const allowed = permission.granted || permission.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL;
+    if (!allowed) { status = 'Уведомления выключены в iOS'; return false; }
     const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
     const { data } = await Notifications.getExpoPushTokenAsync({ projectId });
-    await api('/push/token', { body: { token: data, platform: Platform.OS } });
-  } catch {
-    // нет сети или симулятор — попробуем при следующем запуске
-  }
+    if (data !== registeredToken) {
+      await api('/push/token', { body: { token: data, platform: Platform.OS }, timeoutMs: 15000 });
+      registeredToken = data;
+    }
+    status = permission.ios?.allowsAlert === false ? 'Доставка подключена · баннеры выключены в iOS' : 'Доставка подключена';
+    return true;
+  })().catch((error) => {
+    status = 'Не удалось подключить доставку · повторим при восстановлении связи';
+    throw error;
+  }).finally(() => { registration = null; });
+  return registration;
+}
+
+export function watchPushRegistration() {
+  if (!Device.isDevice || Platform.OS === 'web') return () => {};
+  const retry = () => { registerForPush(false).catch(() => {}); };
+  registeredToken = '';
+  registerForPush().catch(() => {});
+  const appState = AppState.addEventListener('change', state => {
+    if (state === 'active') { registeredToken = ''; retry(); }
+  });
+  const token = Notifications.addPushTokenListener(() => { registeredToken = ''; retry(); });
+  const timer = setInterval(() => {
+    if (AppState.currentState === 'active' && !registeredToken) retry();
+  }, 30000);
+  return () => { appState.remove(); token.remove(); clearInterval(timer); registeredToken = ''; };
 }
 
 /** Ключ агента из нажатого уведомления. */

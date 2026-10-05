@@ -17,7 +17,7 @@ const activity = (_props: ActivityProps) => {
 };
 const widget = (_props: RingsProps) => {
   'widget';
-  return <Text>Откройте Arra, чтобы обновить диалоги</Text>;
+  return <Text>Новый разговор</Text>;
 };
 export const ringsActivity = createLiveActivity<ActivityProps>('ArraRings', activity);
 export const ringsWidget = createWidget<RingsProps>('ArraAgents', widget);

@@ -6,7 +6,6 @@ import { createPrivateKey, sign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { query } from '../db.js';
-import { dialogProps, compactDialogProps } from './dialog-widget.js';
 
 const TOPIC = 'com.arratima.aura.push-type.liveactivity';
 const CREDENTIALS = process.env.APNS_CREDENTIALS_PATH || '/opt/noda/credentials/apns.json';
@@ -95,12 +94,9 @@ export function startPayload(props, now = Date.now()) {
   };
 }
 
-export async function saveStartToken(userId, token, layoutVersion = 1) {
-  await query(
-    `INSERT INTO ara_live_start (user_id, token, layout_version) VALUES ($1, $2, $3)
-     ON CONFLICT (user_id) DO UPDATE SET token = $2, layout_version = $3, updated_at = now()`,
-    [userId, token, layoutVersion],
-  );
+// Compatibility with old clients: a retired push-to-start token is never saved.
+export async function saveStartToken(userId) {
+  await query('DELETE FROM ara_live_start WHERE user_id = $1', [userId]);
 }
 
 function send(token, payload, priority = '5') {
@@ -138,80 +134,37 @@ export async function saveActivityToken(userId, token, layoutVersion = 1) {
      ON CONFLICT (token) DO UPDATE SET user_id = $2, layout_version = $3, updated_at = now()`,
     [token, userId, layoutVersion],
   );
-  // A newly registered activity must receive current data even if nothing
-  // changed since a push to an older activity.
-  const agents = latest.get(userId);
-  if (agents) pushRings(userId, agents, { force: true }).catch((error) => {
-    console.warn('Arra Live Activity refresh:', error.code || error.name);
-  });
+  retired.delete(userId);
+  return disableActivities(userId);
 }
 
-const lastSent = new Map(); // userId -> { body, at, delivered }
-const started = new Map(); // userId -> { keys: Set of agent keys the block was started for, at }
-const pending = new Map();
+const retired = new Set();
+const retiring = new Map();
 
+/** End existing cards through APNs, including phones still running old builds. */
+export function disableActivities(userId, { force = false } = {}) {
+  if (retiring.has(userId)) return retiring.get(userId);
+  if (retired.has(userId) && !force) return Promise.resolve();
+  const task = (async () => {
+    await saveStartToken(userId);
+    const { rows } = await query('SELECT token FROM ara_live_activities WHERE user_id = $1', [userId]);
+    const payload = activityPayload({ agents: [], working: 0, waiting: 0, updated: Date.now() });
+    let complete = true;
+    for (const { token } of rows) {
+      const status = await send(token, payload, '10');
+      if (status === 200 || status === 400 || status === 410) {
+        await query('DELETE FROM ara_live_activities WHERE token = $1', [token]);
+      } else complete = false; // Retry on the next snapshot if APNs is unavailable.
+    }
+    if (complete) retired.add(userId);
+  })().finally(() => retiring.delete(userId));
+  retiring.set(userId, task);
+  return task;
+}
+
+// Legacy exports: snapshots only retire cards, never start/update them.
+export function pushRings(userId) { return disableActivities(userId); }
+export function rememberAgents() {}
 export function activityNeedsUpdate(previous, body, now = Date.now()) {
   return !previous || !previous.delivered || previous.body !== body || now - previous.at >= 120_000;
 }
-
-/**
- * Version 2 shows all open dialogs. Version 1 retains the old, 15-minute
- * result-only behavior for phones that have not installed the native update.
- * Changes are coalesced; unchanged live data gets a freshness heartbeat.
- */
-export async function pushRings(userId, agents, { force = false } = {}) {
-  latest.set(userId, agents);
-  const legacy = callingProps(agents);
-  const dialogs = compactDialogProps(dialogProps(agents));
-  const body = JSON.stringify({ ...dialogs, updated: 0 });
-  const prev = lastSent.get(userId);
-  if (!force && !activityNeedsUpdate(prev, body)) return;
-  // Apple rations these: not more than every 20 s per user
-  if (prev && Date.now() - prev.at < 20_000 && !force) {
-    if (!pending.has(userId)) pending.set(userId, setTimeout(() => {
-      pending.delete(userId);
-      pushRings(userId, latest.get(userId) || []).catch(() => {});
-    }, 20_000 - (Date.now() - prev.at)));
-    return;
-  }
-  const attempt = { body, at: Date.now(), delivered: false };
-  lastSent.set(userId, attempt);
-  const { rows } = await query('SELECT token, layout_version FROM ara_live_activities WHERE user_id = $1', [userId]);
-  let alive = 0;
-  for (const { token, layout_version } of rows) {
-    const payload = activityPayload(layout_version === 2 ? dialogs : legacy);
-    // Actual changes are visible updates; the periodic freshness refresh can
-    // use Apple's low-priority delivery and avoid spending its update budget.
-    const status = await send(token, payload, force || prev?.body !== body ? '10' : '5');
-    if (status === 200) alive += 1;
-    // 410: the activity is over (ended or removed): forget its token
-    if (status === 410 || status === 400) await query('DELETE FROM ara_live_activities WHERE token = $1', [token]).catch(() => {});
-  }
-  attempt.delivered = alive > 0;
-  if (!agents.length) { started.delete(userId); attempt.delivered = true; return; }
-  // nobody shows it yet: start it from here, once per agent that began to wait
-  if (alive === 0) {
-    const row = await query('SELECT token, layout_version FROM ara_live_start WHERE user_id = $1', [userId]).then((r) => r.rows[0]).catch(() => null);
-    if (!row) return;
-    const props = row.layout_version === 2 ? dialogs : legacy;
-    if (!props.agents.length || (row.layout_version !== 2 && !props.waiting)) return;
-    const was = started.get(userId);
-    const keys = row.layout_version === 2 ? agents.map(a => a.key) : props.agents.filter(a => a.state !== 'work').map(a => a.key);
-    const fresh = keys.filter(key => !was || !was.keys.has(key));
-    if (!fresh.length) return;
-    const payload = startPayload(props);
-    if (row.layout_version === 2) payload.aps.alert = { title: 'Arra · открытые диалоги', body: 'Маскоты и текущая работа агентов' };
-    const status = await send(row.token, payload, '10');
-    if (status === 200) { started.set(userId, { keys: new Set(keys), at: Date.now() }); attempt.delivered = true; }
-    else if (status === 410 || status === 400) await query('DELETE FROM ara_live_start WHERE user_id = $1', [userId]).catch(() => {});
-  }
-}
-
-// Refresh freshness even when the actual work/state has not changed.
-const latest = new Map(); // userId -> agents
-export function rememberAgents(userId, agents) { latest.set(userId, agents); }
-setInterval(() => {
-  for (const [userId, agents] of latest) {
-    if (lastSent.has(userId)) pushRings(userId, agents).catch(() => {});
-  }
-}, 60_000).unref?.();

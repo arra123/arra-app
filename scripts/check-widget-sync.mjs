@@ -8,6 +8,7 @@ const code = ts.transpileModule(fs.readFileSync(new URL('../src/widgets/sync.ios
 }).outputText;
 async function scenario(version = null, existing = 2) {
   const events = [], stored = new Map(version ? [['arra-widget-renderer',version]] : []);
+  let snapshots = 0, calls = 0, fail = false;
   let active = 'active', resume, instances;
   const make = name => {
     const result = {
@@ -21,8 +22,8 @@ async function scenario(version = null, existing = 2) {
   const deps = {
     'react-native': {AppState:{get currentState(){return active;},addEventListener:(_n,fn)=>{resume=fn;}}},
     'expo-secure-store': {getItemAsync:async key=>stored.get(key)??null,setItemAsync:async(key,value)=>stored.set(key,value)},
-    '@/lib/api': {api:async()=>({})}, 'expo-widgets':{addPushToStartTokenListener(){}},
-    './arra-widgets.ios':{ringsWidget:{updateSnapshot(){}},ringsActivity:{getInstances:()=>instances,
+    '@/lib/api': {api:async(path, options)=>{assert.equal(path,'/push/activity');assert.equal(options.method,'DELETE');calls++;if(fail)throw Error('offline');return {};}}, 'expo-widgets':{addPushToStartTokenListener(){}},
+    './arra-widgets.ios':{ringsWidget:{updateSnapshot(props){assert.deepEqual(JSON.parse(JSON.stringify(props.agents)),[]);snapshots++;}},ringsActivity:{getInstances:()=>instances,
       start(){events.push('start');const value=make('new');instances.push(value);return value;}}},
     './props':{ringsProps:agents=>({agents,working:agents.length,waiting:0,updated:0})},
     '../../shared/dialog-widget':{compactDialogProps:props=>props},
@@ -34,20 +35,27 @@ async function scenario(version = null, existing = 2) {
   return {events,stored, sync:async()=>{exports.syncWidgets([{key:'live:pc:1'}]);await flush();},
     resume:async()=>{resume('active');await flush();},
     background:()=>{active='background';}, foreground:()=>{active='active';},
-    removed:()=>{instances=[];}, status:()=>exports.widgetStatus()};
+    fail: value=>{fail=value;}, snapshots:()=>snapshots, calls:()=>calls, status:()=>exports.widgetStatus()};
 }
 const migrated = await scenario();
 await migrated.sync();
-assert.deepEqual(migrated.events,['end:old0','end:old1','start']);
-assert.equal(migrated.stored.get('arra-widget-renderer'),'5');
+assert.deepEqual(migrated.events,['end:old0','end:old1']);
+assert.equal(migrated.snapshots(),1);
+assert.equal(migrated.calls(),1);
 await migrated.sync();
-assert.equal(migrated.events.filter(e=>e==='start').length,1);
-migrated.removed(); await migrated.resume();
-assert.equal(migrated.events.filter(e=>e==='start').length,2,'OS-closed block restarts on foreground despite unchanged data');
+await migrated.resume();
+assert.equal(migrated.snapshots(),1,'static shortcut does not follow messages');
+assert.equal(migrated.calls(),2,'foreground cleans up registrations from older builds');
+assert.ok(!migrated.events.includes('start'),'never restart cards');
 const restored = await scenario('5');await restored.sync();
-assert.deepEqual(restored.events,['end:old1','update:old0'],'reuse just one native block');
+assert.deepEqual(restored.events,['end:old0','end:old1'],'all previous renderers are retired');
 const background = await scenario();background.background();await background.sync();
-assert.equal(background.events.length,0,'do not discard a block when iOS cannot start its replacement');
+assert.equal(background.events.length,0);
 background.foreground();await background.resume();
-assert.deepEqual(background.events,['end:old0','end:old1','start']);
-console.log('Widget lifecycle: PASS (migration, one block, unchanged foreground, background safety)');
+assert.deepEqual(background.events,['end:old0','end:old1']);
+const offline = await scenario();offline.fail(true);await offline.sync();
+assert.match(offline.status(),/повторится/);
+offline.fail(false);await offline.sync();
+assert.equal(offline.calls(),2,'failed migration retries without needing a new app launch');
+assert.match(offline.status(),/лента отключена/);
+console.log('Widget lifecycle: PASS (retirement, no restart, static shortcut, foreground/offline retry)');

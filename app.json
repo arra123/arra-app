@@ -20,7 +20,7 @@
       "supportsTablet": false,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "NSSupportsLiveActivitiesFrequentUpdates": true,
+        "NSSupportsLiveActivitiesFrequentUpdates": false,
         "CFBundleDisplayName": "Arra",
         "NSCameraUsageDescription": "Arra снимает фото, чтобы отправить его агенту на компьютер.",
         "NSMicrophoneUsageDescription": "Arra записывает голос, чтобы продиктовать сообщение агенту или Arra.",
@@ -103,15 +103,16 @@
         "expo-widgets",
         {
           "enablePushNotifications": true,
-          "frequentUpdates": true,
+          "frequentUpdates": false,
           "widgets": [
             {
               "name": "ArraAgents",
-              "displayName": "Arra · агенты",
-              "description": "Маскот, текущее действие и переключение между открытыми диалогами",
+              "displayName": "Arra · новый разговор",
+              "description": "Одна кнопка — сразу новый чат с Arra",
               "supportedFamilies": [
                 "systemSmall",
                 "systemMedium",
+                "accessoryInline",
                 "accessoryCircular",
                 "accessoryRectangular"
               ],

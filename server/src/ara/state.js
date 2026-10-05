@@ -206,7 +206,7 @@ export function pushText(transition) {
   const { agent, to } = transition;
   const who = agent.agent === 'codex' ? 'Codex' : 'Claude';
   const where = agent.device === 'pc' ? 'ПК' : 'ноутбук';
-  const title = to === 'error' ? `${agent.project} · прервался` : `${agent.project} · ждёт ответа`;
+  const title = to === 'error' ? `${agent.project} · прервался` : `${agent.project} · ${agent.asking ? 'ждёт ответа' : 'завершил работу'}`;
   const lead = to === 'error' ? `${who} остановился с ошибкой (${where})` : `${who} закончил (${where})`;
   const detail = to === 'error' ? (agent.error || agent.task) : agent.task;
   const body = detail ? `${lead}: ${detail}`.slice(0, 180) : lead;
