@@ -73,6 +73,8 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
       transcript: str(raw.transcript, 600),
       iconName: /^[\w.-]{1,80}\.png$/.test(String(raw.iconName || '')) ? raw.iconName : null,
       model: str(raw.model, 80),
+      // the place the computer gave it: tito's own order, the one its numbers follow
+      seq: live.length,
     });
   }
   const recent = [];
@@ -136,7 +138,7 @@ export function mergeHosts(hosts) {
 
   const deviceOrder = (d) => DEVICES.indexOf(d);
   const agentList = [...agents.values()].map((v) => v.agent)
-    .sort((a, b) => deviceOrder(a.device) - deviceOrder(b.device) || (a.ws ?? 99) - (b.ws ?? 99) || a.term - b.term);
+    .sort((a, b) => deviceOrder(a.device) - deviceOrder(b.device) || (a.seq ?? 0) - (b.seq ?? 0) || a.term - b.term);
   const recentList = [...recent.values()].map((v) => v.item)
     .sort((a, b) => (b.mtime || 0) - (a.mtime || 0))
     .slice(0, 40);

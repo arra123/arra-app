@@ -23,7 +23,8 @@ import { FloatingAgent } from '@/components/floating-agent';
 import { WeekRing } from '@/components/limits';
 import { MenuTrigger, type MenuSection } from '@/components/glass-menu';
 import { PlanCard, TranscriptRow, UserBubble } from '@/components/transcript';
-import { Glass, Press, ProjectIcon, Spinner, T } from '@/components/ui';
+import { ProjectMascot, stateLook } from '@/components/project-mascot';
+import { Glass, Press, ProjectIcon, StatusDot, T } from '@/components/ui';
 import { Colors, Radius } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -338,12 +339,12 @@ export default function AgentScreen() {
   ) : agent.compacting ? (
     <T v="caption" color={Colors.textSecondary} numberOfLines={1}>сжатие контекста…</T>
   ) : agent.state === 'waiting' ? (
-    <T v="caption" weight="600" color={Colors.waiting} numberOfLines={1}>
-      {doneAt ? `ждёт · ${shortAgo(now - doneAt)}` : 'ждёт ответа'}
+    <T v="caption" weight="600" color={Colors.done} numberOfLines={1}>
+      {doneAt ? `закончил · ${shortAgo(now - doneAt)}` : 'закончил'}
     </T>
   ) : agent.state === 'working' ? (
     <View style={styles.shortStatus}>
-      <Spinner size={10} />
+      <StatusDot state="working" size={8} />
       <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{workFrom ? shortAgo(now - workFrom) : 'работает'}</T>
     </View>
   ) : agent.state === 'error' ? (
@@ -354,7 +355,9 @@ export default function AgentScreen() {
 
   const title = (
     <View style={styles.title}>
-      {item ? <ProjectIcon iconName={item.iconName} agent={item.agent} size={32} /> : null}
+      {/* the project's ball, alive: it thinks while the agent works */}
+      {agent ? <ProjectMascot id={agent.mascotId} size={34} {...stateLook(agent.state)} still={false} />
+        : item ? <ProjectIcon iconName={item.iconName} agent={item.agent} size={32} /> : null}
       <View style={{ flexShrink: 1, minWidth: 0 }}>
         {/* what it is doing, like in the panel; the project is in the line below */}
         <T v="subhead" weight="700" numberOfLines={1}>{(item && 'title' in item && item.title) || item?.project || (recent ? recent.title : 'Агент')}</T>

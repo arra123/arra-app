@@ -142,13 +142,25 @@ public struct ArraDialogCard: View {
     let note = agent["note"] as? String ?? "Откройте агента в Arra"
     // the eyes move a little with every new step: left, centre, right
     let look = CGFloat(note.utf8.reduce(0) { ($0 + Int($1)) % 3 }) - 1
-    HStack(spacing: 12) {
+    HStack(spacing: 14) {
+      // under the ball: «+» opens a new conversation with Arra at once, the microphone on
+      VStack(spacing: 8) {
+        Link(destination: ArraSelection.url(props)) {
+          ArraBall(mascot: mascot, state: state, size: accessible ? 44 : 64, look: state == "error" || state == "idle" ? 0 : look)
+        }.buttonStyle(.plain).accessibilityHidden(true)
+        if !accessible {
+          Link(destination: URL(string: "arra://ask?fresh=1&voice=1")!) {
+            HStack(spacing: 4) {
+              Image(systemName: "plus").font(.system(size: 12, weight: .bold))
+              Image(systemName: "mic.fill").font(.system(size: 11, weight: .semibold))
+            }
+            .frame(width: 64, height: 30).background(Capsule().fill(Color.white.opacity(0.14))).contentShape(Rectangle())
+          }.buttonStyle(.plain).accessibilityLabel("Новый разговор с Arra")
+        }
+      }
       Link(destination: ArraSelection.url(props)) {
-        HStack(spacing: 14) {
-          ArraBall(mascot: mascot, state: state, size: accessible ? 44 : 74, look: state == "error" || state == "idle" ? 0 : look)
-          content(state: state, number: number, project: project, title: title, note: note, mascot: mascot, accessible: accessible)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+        content(state: state, number: number, project: project, title: title, note: note, mascot: mascot, accessible: accessible)
+          .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
       }.buttonStyle(.plain).accessibilityLabel("Открыть диалог: \(project), \(number). \(title). \(note). \(label)")
       VStack(spacing: 0) {
         if #available(iOS 17.0, *) {
