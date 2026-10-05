@@ -1,0 +1,42 @@
+name: widget-result
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Run with widget-host-result artifact'
+        default: '37189757888'
+        type: string
+jobs:
+  inspect:
+    runs-on: macos-15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Read Xcode result without rebuilding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INSPECT_RUN: ${{ inputs.run_id || '37189757888' }}
+        run: |
+          gh run watch "$INSPECT_RUN" --repo "$GITHUB_REPOSITORY" --interval 30
+          gh run download "$INSPECT_RUN" --repo "$GITHUB_REPOSITORY" --name widget-host-result --dir inspection
+          xcrun xcresulttool get object --legacy --format json --path inspection/widget-host.xcresult > result.json
+          node <<'JS'
+          const fs=require('node:fs'),data=JSON.parse(fs.readFileSync('result.json','utf8')),issues=[];
+          function scan(v){if(!v||typeof v!=='object')return;if(v.message?._value && /IssueSummary/.test(v._type?._name||'') && !/warning/i.test(v.issueType?._value||''))issues.push({type:v.issueType?._value,test:v.testCaseName?._value,message:v.message._value});for(const child of Object.values(v))scan(child);}
+          scan(data);console.log(JSON.stringify({metrics:data.metrics,issues:issues.slice(0,20)},null,2));
+          JS
+          xcrun xcresulttool get test-results summary --path inspection/widget-host.xcresult > summary.json
+          xcrun xcresulttool get test-results tests --path inspection/widget-host.xcresult > tests.json
+          xcrun xcresulttool export attachments --path inspection/widget-host.xcresult --output-path attachments
+      - uses: actions/upload-artifact@v4
+        with:
+          name: widget-result-json
+          path: |
+            result.json
+            summary.json
+            tests.json
+            attachments

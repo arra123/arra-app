@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Arra · виджет агентов — варианты</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400..700,0..1,0&display=block" rel="stylesheet">
+<style>
+  :root {
+    --text: #f5f5f7; --sub: rgba(235,235,245,.6); --faint: rgba(235,235,245,.34);
+    --blue: #0a84ff; --cyan: #64d2ff; --purple: #bf5af2; --orange: #ff9f0a; --green: #30d158; --yellow: #ffd60a; --pink: #ff375f;
+    --spring: cubic-bezier(.2, 1.25, .35, 1); --ease: cubic-bezier(.22, .9, .25, 1);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #000; color: var(--text); overflow: hidden;
+    font-family: Inter, -apple-system, system-ui, sans-serif; font-feature-settings: 'tnum' 1, 'cv11' 1; -webkit-font-smoothing: antialiased; letter-spacing: -.01em; }
+  .ms { font-family: 'Material Symbols Rounded'; font-variation-settings: 'FILL' 1, 'wght' 600; line-height: 1; }
+  .screen { position: absolute; inset: 0; overflow: hidden; }
+
+  /* iOS 26-like wallpaper: a slow mesh of colour, a little grain */
+  .wall { position: absolute; inset: -25%; filter: saturate(1.2) blur(10px);
+    background: radial-gradient(40% 30% at 25% 30%, #4b3aa8, transparent 70%), radial-gradient(38% 34% at 80% 45%, #0b6b8f, transparent 70%),
+                radial-gradient(50% 40% at 50% 95%, #6b2a6f, transparent 70%), radial-gradient(30% 25% at 70% 10%, #1d2e7a, transparent 70%), #05050a;
+    animation: mesh 22s ease-in-out infinite alternate; }
+  @keyframes mesh { 50% { transform: rotate(8deg) scale(1.08) translate(2%, -2%); } 100% { transform: rotate(-6deg) scale(1.04) translate(-3%, 2%); } }
+  .grain { position: absolute; inset: 0; opacity: .07; mix-blend-mode: overlay; pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E"); }
+
+  .lock { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; padding-top: 60px; transition: opacity .5s var(--ease), filter .5s; }
+  .date { font-size: 18px; font-weight: 600; color: rgba(255,255,255,.8); }
+  .clock { font-size: 104px; font-weight: 800; letter-spacing: -.045em; line-height: .95; margin-top: 2px;
+    background: linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,255,255,.62)); -webkit-background-clip: text; color: transparent; }
+  .dimmed { opacity: .35; filter: blur(2px); }
+
+  /* the Live Activity: iOS material, 24 pt corners, springs in from below */
+  .la { position: absolute; left: 12px; right: 12px; bottom: 92px; border-radius: 26px; padding: 15px 16px;
+    background: rgba(22,22,26,.55); backdrop-filter: blur(40px) saturate(1.8); -webkit-backdrop-filter: blur(40px) saturate(1.8);
+    border: .5px solid rgba(255,255,255,.12); box-shadow: 0 24px 60px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.06);
+    animation: la-in .9s var(--spring) both .25s; }
+  @keyframes la-in { from { opacity: 0; transform: translateY(46px) scale(.94); filter: blur(8px); } }
+  .t1 { font-size: 16px; font-weight: 700; letter-spacing: -.02em; }
+  .t2 { font-size: 13px; color: var(--sub); margin-top: 2px; }
+  .cap { font-size: 11px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; }
+  .big { font-size: 30px; font-weight: 800; letter-spacing: -.04em; }
+
+  /* Arra */
+  .mascot { width: 30px; height: 20px; border-radius: 10px; background: #f4f4f7; position: relative; flex: none; box-shadow: 0 0 16px rgba(255,255,255,.3); }
+  .mascot::before, .mascot::after { content: ''; position: absolute; top: 5px; width: 3.5px; height: 8px; border-radius: 2px; background: #16171b; animation: blink 4.2s infinite; }
+  .mascot::before { left: 9px } .mascot::after { right: 9px }
+  .mascot.s { width: 22px; height: 15px; border-radius: 7.5px } .mascot.s::before, .mascot.s::after { top: 4px; width: 3px; height: 6px }
+  .mascot.s::before { left: 6.5px } .mascot.s::after { right: 6.5px }
+  .mascot.bob { animation: bob 1.4s ease-in-out infinite; }
+  @keyframes blink { 0%, 93%, 100% { transform: scaleY(1) } 96% { transform: scaleY(.1) } }
+  @keyframes bob { 50% { transform: translateY(-2.5px) } }
+
+  /* ============================================ variant 1: one ring (Timer) */
+  .v1 { display: flex; align-items: center; gap: 14px; }
+  .ring-big { width: 62px; height: 62px; flex: none; position: relative; display: grid; place-items: center; }
+  .ring-big svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .ring-big .track { stroke: rgba(255,255,255,.1) }
+  .ring-big .val { stroke: url(#g1); stroke-linecap: round; transition: stroke-dashoffset 1s var(--ease); filter: drop-shadow(0 0 6px rgba(10,132,255,.6)); }
+  .v1 .mid { flex: 1; min-width: 0 }
+  .v1 .right { text-align: right }
+  .avatars { display: flex; margin-top: 8px; }
+  .avatars span { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; font-size: 13px; color: #fff; margin-right: -5px; border: 2px solid rgba(22,22,26,.9); }
+
+  /* ============================================ variant 2: delivery track */
+  .track2 { position: relative; height: 30px; margin: 16px 4px 4px; }
+  .track2 .line { position: absolute; left: 0; right: 0; top: 13px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.1); }
+  .track2 .fill { position: absolute; left: 0; top: 13px; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--blue), var(--cyan)); width: 0; transition: width 1.4s var(--ease); box-shadow: 0 0 10px rgba(100,210,255,.6); }
+  .track2 .stop { position: absolute; top: 9px; width: 12px; height: 12px; margin-left: -6px; border-radius: 6px; background: #2a2a2e; border: 2px solid rgba(255,255,255,.18); transition: background .4s, border-color .4s, transform .4s var(--spring); }
+  .track2 .stop.on { background: var(--cyan); border-color: var(--cyan); transform: scale(1.15); }
+  .track2 .rider { position: absolute; top: -1px; margin-left: -15px; transition: left 1.4s var(--ease); }
+  .steps { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); margin: 2px 0 0; }
+  .steps b { font-weight: 600; color: var(--text); }
+
+  /* ============================================ variant 3: activity rings */
+  .rings { display: flex; justify-content: space-between; gap: 6px; margin-top: 14px; }
+  .r3 { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .r3 .ring { width: 58px; height: 58px; position: relative; display: grid; place-items: center; }
+  .r3 svg { position: absolute; inset: 0; transform: rotate(-90deg); overflow: visible; }
+  .r3 .track { stroke-opacity: .18 }
+  .r3 .val { stroke-linecap: round; transition: stroke-dashoffset 1.6s var(--ease); }
+  .r3 .ic { font-size: 20px; }
+  .r3 .n { font-size: 12px; font-weight: 600; max-width: 76px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .r3 .m { font-size: 11px; color: var(--sub); margin-top: -4px; }
+
+  /* ============================================ variant 4: clean list */
+  .list { margin-top: 12px; display: flex; flex-direction: column; }
+  .li { display: flex; align-items: center; gap: 11px; padding: 9px 0; border-top: .5px solid rgba(255,255,255,.08); opacity: 0; animation: li-in .6s var(--spring) forwards; }
+  .li:first-child { border-top: 0 }
+  @keyframes li-in { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+  .tile { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-size: 16px; color: #fff; flex: none; }
+  .li .mid { flex: 1; min-width: 0 } .li .t { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+  .li .s { font-size: 12px; color: var(--sub) }
+  .state { font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 5px; }
+  .dotlive { width: 7px; height: 7px; border-radius: 4px; background: var(--cyan); box-shadow: 0 0 0 0 rgba(100,210,255,.7); animation: ping 1.6s infinite; }
+  @keyframes ping { 70% { box-shadow: 0 0 0 7px rgba(100,210,255,0) } 100% { box-shadow: 0 0 0 0 rgba(100,210,255,0) } }
+
+  /* ============================================ Dynamic Island */
+  .island { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); background: #000; overflow: hidden; z-index: 5;
+    width: 206px; height: 37px; border-radius: 19px; transition: width .6s var(--spring), height .6s var(--spring), border-radius .6s var(--spring); }
+  .island.x { width: 414px; height: 170px; border-radius: 46px; }
+  .island .c { position: absolute; inset: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 11px; transition: opacity .2s; }
+  .island.x .c { opacity: 0 }
+  .island .e { position: absolute; inset: 0; padding: 48px 22px 16px; opacity: 0; transition: opacity .3s .2s; }
+  .island.x .e { opacity: 1 }
+  .mini { width: 20px; height: 20px; }
+  .mini svg { transform: rotate(-90deg) }
+
+  .toast { position: absolute; top: 52px; left: 10px; right: 10px; z-index: 4; border-radius: 24px; padding: 12px 14px; display: flex; gap: 11px; align-items: center;
+    background: rgba(38,38,42,.7); backdrop-filter: blur(34px) saturate(1.6); border: .5px solid rgba(255,255,255,.12); transform: translateY(calc(-100% - 80px)) scale(.96); transition: transform .7s var(--spring); }
+  .toast.on { transform: none }
+
+  .bar { position: absolute; left: 12px; right: 12px; bottom: 10px; display: flex; gap: 6px; z-index: 9; }
+  .bar button { flex: 1; font: 600 12px Inter; color: var(--sub); background: rgba(255,255,255,.08); border: 0; border-radius: 12px; padding: 8px 0; backdrop-filter: blur(20px); }
+  .bar button.on { color: #000; background: #f5f5f7; }
+  .scenes { position: absolute; left: 0; right: 0; bottom: 52px; display: flex; justify-content: center; gap: 6px; z-index: 9; }
+  .scenes b { width: 7px; height: 7px; border-radius: 4px; background: rgba(255,255,255,.3); transition: width .35s var(--spring), background .3s; cursor: pointer; }
+  .scenes b.on { width: 20px; background: #fff; }
+  .hint { position: absolute; left: 0; right: 0; bottom: 66px; text-align: center; font-size: 12px; color: var(--faint); z-index: 9; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+  <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#64d2ff"/><stop offset="1" stop-color="#0a84ff"/></linearGradient>
+</defs></svg>
+<div class="screen" id="screen">
+  <div class="wall"></div><div class="grain"></div>
+
+  <div class="island" id="island">
+    <div class="c"><div class="mascot s bob"></div>
+      <div style="display:flex;align-items:center;gap:7px;font:700 14px Inter"><span id="iN">42:18</span>
+        <div class="mini"><svg viewBox="0 0 20 20" width="20" height="20"><circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="3"/><circle id="iR" cx="10" cy="10" r="8" fill="none" stroke="#64d2ff" stroke-width="3" stroke-linecap="round" stroke-dasharray="50.3" stroke-dashoffset="20"/></svg></div>
+      </div></div>
+    <div class="e" id="islandE"></div>
+  </div>
+
+  <div class="toast" id="toast"><div class="mascot"></div>
+    <div style="flex:1;min-width:0"><div class="t1" style="font-size:14px">Input lag на ПК — готово</div><div class="t2">helper · 25 мин · «Замерил: 8 мс, всё в норме»</div></div>
+    <span class="ms" style="color:var(--green);font-size:24px">check_circle</span></div>
+
+  <div class="lock" id="lock">
+    <div class="date" id="date"></div>
+    <div class="clock" id="clock"></div>
+    <div class="la" id="la"></div>
+  </div>
+
+  <div class="hint" id="hint"></div>
+  <div class="scenes" id="scenes"></div>
+  <div class="bar" id="bar"></div>
+</div>
+
+<script>
+const A = [
+  { t: 'Доработка системы', p: 'helper', c: 'var(--blue)', g: 'tune', s: 'work', min: 42, of: 60 },
+  { t: 'Альфа-липоевая кислота', p: '14_visual-system', c: 'var(--purple)', g: 'grid_view', s: 'work', min: 18, of: 60 },
+  { t: 'СДМ-Банк: карта', p: 'helper', c: 'var(--orange)', g: 'credit_card', s: 'wait', min: 7, of: 60 },
+  { t: 'Input lag на ПК', p: 'helper', c: 'var(--green)', g: 'sports_esports', s: 'done', min: 25, of: 25 },
+];
+const $ = id => document.getElementById(id);
+const circ = r => 2 * Math.PI * r;
+const stateOf = s => s === 'work' ? '<span class="dotlive"></span><span style="color:var(--cyan)">работает</span>'
+  : s === 'wait' ? '<span class="ms" style="color:var(--yellow);font-size:14px">front_hand</span><span style="color:var(--yellow)">ждёт тебя</span>'
+  : '<span class="ms" style="color:var(--green);font-size:14px">check_circle</span><span style="color:var(--green)">готово</span>';
+
+const V = {
+  // 1 — one ring, like the Timer: the main agent, the others as small icons
+  ring: {
+    name: 'Кольцо',
+    card: () => `<div class="v1">
+      <div class="ring-big"><svg viewBox="0 0 62 62" width="62" height="62"><circle class="track" cx="31" cy="31" r="27" fill="none" stroke-width="6"/>
+        <circle class="val" id="v1r" cx="31" cy="31" r="27" fill="none" stroke-width="6" stroke-dasharray="${circ(27)}" stroke-dashoffset="${circ(27)}"/></svg>
+        <div class="mascot bob"></div></div>
+      <div class="mid"><div class="t1">2 работают · 1 ждёт</div><div class="t2">сейчас: Доработка системы</div>
+        <div class="avatars">${A.map(a => `<span class="ms" style="background:${a.c}">${a.g}</span>`).join('')}</div></div>
+      <div class="right"><div class="big" id="tm">42:18</div><div class="cap">в работе</div></div></div>`,
+    after() { requestAnimationFrame(() => setTimeout(() => $('v1r').style.strokeDashoffset = circ(27) * .3, 400)); },
+    island: () => `<div style="display:flex;align-items:center;gap:12px"><div class="mascot bob"></div><div><div class="t1">Доработка системы</div><div class="t2">правит файлы · 42 мин</div></div><div style="margin-left:auto" class="big">70%</div></div>
+      <div style="margin-top:16px;height:6px;border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden"><div style="width:70%;height:100%;border-radius:3px;background:linear-gradient(90deg,#0a84ff,#64d2ff)"></div></div>`,
+  },
+  // 2 — delivery: Arra rides a track through the stages, like a courier on a map
+  track: {
+    name: 'Доставка',
+    card: () => `<div style="display:flex;align-items:center;gap:12px">
+        <span class="tile ms" style="background:var(--blue);width:34px;height:34px;border-radius:10px;font-size:19px">tune</span>
+        <div style="flex:1;min-width:0"><div class="t1">Доработка системы</div><div class="t2">Правит файлы · шаг 18 из 30</div></div>
+        <div style="text-align:right"><div class="big" style="font-size:24px" id="tm">42:18</div><div class="cap">идёт</div></div></div>
+      <div class="track2"><div class="line"></div><div class="fill" id="fill"></div>
+        ${[0, 33, 66, 100].map((x, i) => `<div class="stop" id="st${i}" style="left:${x}%"></div>`).join('')}
+        <div class="rider" id="rider" style="left:0%"><div class="mascot bob"></div></div></div>
+      <div class="steps"><span>начал</span><span>думает</span><b>правит</b><span>готово</span></div>`,
+    after() {
+      const go = p => { $('fill').style.width = p + '%'; $('rider').style.left = p + '%'; [0, 33, 66, 100].forEach((x, i) => $('st' + i).classList.toggle('on', p >= x)); };
+      go(0); setTimeout(() => go(58), 500);
+    },
+    island: () => `<div style="display:flex;align-items:center;gap:10px"><div class="mascot bob"></div><div class="t1">Правит файлы</div><div class="t2" style="margin:0 0 0 auto">шаг 18 из 30</div></div>
+      <div class="track2" style="margin-top:14px"><div class="line"></div><div class="fill" style="width:58%"></div><div class="rider" style="left:58%"><div class="mascot s"></div></div></div>`,
+  },
+  // 3 — activity rings: each agent a ring filling up with its time
+  rings: {
+    name: 'Кольца',
+    card: () => `<div style="display:flex;align-items:center;gap:10px"><div class="mascot bob"></div><div class="t1">Arra</div><div class="t2" style="margin:0">· 4 агента на ПК</div><div class="cap" style="margin-left:auto">сегодня</div></div>
+      <div class="rings">${A.map((a, i) => `<div class="r3"><div class="ring"><svg viewBox="0 0 58 58" width="58" height="58">
+        <circle class="track" cx="29" cy="29" r="24" fill="none" stroke="${a.c}" stroke-width="7"/>
+        <circle class="val" id="r3_${i}" cx="29" cy="29" r="24" fill="none" stroke="${a.c}" stroke-width="7" stroke-dasharray="${circ(24)}" stroke-dashoffset="${circ(24)}" style="filter:drop-shadow(0 0 5px ${a.c})"/></svg>
+        <span class="ms ic" style="color:${a.c}">${a.s === 'done' ? 'check' : a.s === 'wait' ? 'front_hand' : a.g}</span></div>
+        <div class="n">${a.t}</div><div class="m">${a.min} мин</div></div>`).join('')}</div>`,
+    after() { A.forEach((a, i) => setTimeout(() => $('r3_' + i).style.strokeDashoffset = circ(24) * (1 - a.min / a.of), 350 + i * 120)); },
+    island: () => `<div style="display:flex;align-items:center;gap:10px"><div class="mascot bob"></div><div class="t1">2 работают · 1 ждёт · 1 готово</div></div>
+      <div style="display:flex;gap:10px;margin-top:18px">${A.map(a => `<div style="flex:1;height:8px;border-radius:4px;background:${a.c};opacity:${a.s === 'done' ? .45 : 1}"></div>`).join('')}</div>`,
+  },
+  // 4 — a clean list, one line per agent
+  list: {
+    name: 'Список',
+    card: () => `<div style="display:flex;align-items:center;gap:10px"><div class="mascot bob"></div><div><div class="t1">Arra</div><div class="t2">2 работают · 1 ждёт тебя</div></div>
+        <div style="margin-left:auto;text-align:right"><div class="big" style="font-size:24px" id="tm">42:18</div><div class="cap">в работе</div></div></div>
+      <div class="list">${A.map((a, i) => `<div class="li" style="animation-delay:${.45 + i * .08}s"><span class="tile ms" style="background:${a.c}">${a.g}</span>
+        <div class="mid"><div class="t">${a.t}</div><div class="s">${a.p} · ${a.min} мин</div></div><div class="state">${stateOf(a.s)}</div></div>`).join('')}</div>`,
+    after() {},
+    island: () => `<div style="display:flex;align-items:center;gap:10px"><div class="mascot bob"></div><div class="t1">СДМ-Банк ждёт тебя</div></div>
+      <div class="t2" style="margin-top:10px">«Назови последние 4 цифры карты и ФИО»</div>
+      <div style="display:flex;gap:8px;margin-top:14px"><div style="flex:1;text-align:center;padding:9px;border-radius:14px;background:#f5f5f7;color:#000;font-weight:700;font-size:13px">Ответить</div><div style="flex:1;text-align:center;padding:9px;border-radius:14px;background:rgba(255,255,255,.12);font-weight:600;font-size:13px">Позже</div></div>`,
+  },
+};
+const order = ['ring', 'track', 'rings', 'list'];
+let v = new URLSearchParams(location.search).get('v') || 'ring';
+if (!V[v]) v = 'ring';
+
+function render() {
+  const la = $('la');
+  la.style.animation = 'none'; la.offsetHeight; la.style.animation = '';
+  la.innerHTML = V[v].card();
+  $('islandE').innerHTML = V[v].island();
+  V[v].after();
+  $('bar').innerHTML = order.map(k => `<button class="${k === v ? 'on' : ''}" onclick="event.stopPropagation();pick('${k}')">${V[k].name}</button>`).join('');
+}
+function pick(k) { v = k; history.replaceState(null, '', '?v=' + k); render(); show(0); }
+
+// the clock and the running time
+const pad = n => String(n).padStart(2, '0');
+let secs = 42 * 60 + 18;
+function tick() {
+  const d = new Date();
+  $('clock').textContent = d.getHours() + ':' + pad(d.getMinutes());
+  $('date').textContent = d.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+  secs++;
+  const t = Math.floor(secs / 60) + ':' + pad(secs % 60);
+  $('iN').textContent = t;
+  const tm = $('tm'); if (tm) tm.textContent = t;
+  $('iR').setAttribute('stroke-dashoffset', 50.3 * (1 - ((secs % 90) / 90)));
+}
+tick(); setInterval(tick, 1000);
+
+// scenes: the card on the lock screen; the island opened; an agent finished
+const scenes = [
+  { hint: 'Экран блокировки', go() { $('island').classList.remove('x'); $('toast').classList.remove('on'); $('lock').classList.remove('dimmed'); } },
+  { hint: 'Dynamic Island: долгое нажатие', go() { $('island').classList.add('x'); $('toast').classList.remove('on'); $('lock').classList.add('dimmed'); } },
+  { hint: 'Агент закончил', go() { $('island').classList.remove('x'); $('lock').classList.remove('dimmed'); setTimeout(() => $('toast').classList.add('on'), 200); } },
+];
+let cur = 0, timer;
+function show(i) {
+  cur = (i + scenes.length) % scenes.length; scenes[cur].go();
+  $('hint').textContent = scenes[cur].hint + ' · тап — дальше';
+  $('scenes').innerHTML = scenes.map((_, k) => `<b class="${k === cur ? 'on' : ''}" onclick="event.stopPropagation();show(${k});restart()"></b>`).join('');
+}
+function restart() { clearInterval(timer); timer = setInterval(() => show(cur + 1), 6500); }
+$('screen').addEventListener('click', () => { show(cur + 1); restart(); });
+render(); show(0); restart();
+</script>
+</body>
+</html>

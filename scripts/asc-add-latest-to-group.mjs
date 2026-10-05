@@ -1,9 +1,14 @@
 // Добавляет последний загруженный билд в бета-группу «Внутренние».
 // eas submit заливает билд в App Store Connect, но НЕ кладёт его в группу тестировщиков —
 // без этого билд не виден в TestFlight. Запускать после каждого `eas submit`:
-//   node scripts/asc-add-latest-to-group.mjs
+//   node scripts/asc-add-latest-to-group.mjs <точный номер новой сборки>
 import crypto from 'crypto';
 import fs from 'fs';
+
+const expectedBuild = process.argv[2];
+if (!/^\d+$/.test(expectedBuild || '')) {
+  throw new Error('Укажи точный номер сборки: node scripts/asc-add-latest-to-group.mjs 127');
+}
 
 const KEY_ID = '63Y56V3L2D';
 const ISS = '63274269-2c9e-473b-a82d-c8c68c3718ab';
@@ -31,15 +36,24 @@ let build = null;
 let r;
 let j;
 for (let attempt = 0; attempt < 30; attempt++) {
-  r = await api(`/v1/builds?filter[app]=${APP}&sort=-uploadedDate&limit=1&fields[builds]=version,processingState`);
+  r = await api(`/v1/builds?filter[app]=${APP}&filter[version]=${expectedBuild}&sort=-uploadedDate&limit=1&fields[builds]=version,processingState`);
   j = await r.json();
+  if (!r.ok) throw new Error(`Apple HTTP ${r.status}: ${JSON.stringify(j.errors || [])}`);
   build = j.data?.[0];
-  if (!build) { console.error('Билды не найдены'); process.exit(1); }
+  if (!build) {
+    console.log(`Сборка ${expectedBuild} ещё не появилась в Apple — ждём`);
+    await sleep(30000);
+    continue;
+  }
   const st = build.attributes.processingState;
   console.log(`Билд ${build.attributes.version}: ${st}`);
   if (st === 'VALID') break;
   if (st === 'FAILED' || st === 'INVALID') { console.error('Обработка билда не удалась'); process.exit(1); }
   await sleep(30000); // PROCESSING — ждём 30 с
+}
+if (build?.attributes.processingState !== 'VALID') {
+  console.error(`Сборка ${expectedBuild} не обработана Apple за время ожидания`);
+  process.exit(1);
 }
 
 // 2. Группа «Внутренние»

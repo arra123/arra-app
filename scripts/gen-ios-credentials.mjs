@@ -9,7 +9,7 @@ const KEY_ID = process.env.ASC_KEY_ID;
 const ISSUER_ID = process.env.ASC_ISSUER_ID;
 const P8_PATH = process.env.ASC_P8_PATH;
 const BUNDLE_ID = process.env.BUNDLE_ID || 'com.aura.app';
-const APP_NAME = 'Aura';
+const APP_NAME = 'Arra';
 const P12_PASSWORD = 'aura-dist';
 
 const dir = resolve(process.cwd(), 'credentials');
