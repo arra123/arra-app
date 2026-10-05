@@ -22,6 +22,8 @@ export type Agent = {
   said?: string;
   /** агент задал вопрос и ждёт ответа */
   asking?: boolean;
+  /** сколько его помощников работает прямо сейчас */
+  helpers?: number;
   transcript: string;
   model: string;
   /** мс: с какого момента агент в текущем состоянии */

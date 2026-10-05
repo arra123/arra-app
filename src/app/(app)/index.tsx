@@ -46,6 +46,8 @@ export function WorkList() {
   const q = query.trim().toLowerCase();
   const match = (...parts: (string | undefined)[]) => !q || parts.some((p) => p?.toLowerCase().includes(q));
   const agents = state.agents.filter((a) => match(a.project, a.task, a.title, a.cwd));
+  const busyAgents = state.agents.filter((a) => a.state === 'working' || (a.helpers || 0) > 0).length;
+  const busyHelpers = state.agents.reduce((n, a) => n + (a.helpers || 0), 0);
   const recent = state.recent.filter((r) => match(r.project, r.title, r.cwd));
   const anyOnline = state.devices.laptop.online || state.devices.pc.online;
 
@@ -143,6 +145,15 @@ export function WorkList() {
           <IconButton icon="line.3.horizontal" label="Меню" onPress={() => setSidebar(true)} />
           <View style={styles.topTitle} pointerEvents="none">
             <T v="headline" weight="700">Работа</T>
+            {/* green: agents at work (and the ones waiting for their helpers); blue: the helpers */}
+            {busyAgents || busyHelpers ? (
+              <View style={styles.topCounts}>
+                <View style={[styles.countDot, { backgroundColor: Colors.done }]} />
+                <T v="caption" weight="700" style={{ fontVariant: ['tabular-nums'] }}>{busyAgents}</T>
+                {busyHelpers ? <View style={[styles.countDot, { backgroundColor: Colors.helper, marginLeft: 6 }]} /> : null}
+                {busyHelpers ? <T v="caption" weight="700" style={{ fontVariant: ['tabular-nums'] }}>{busyHelpers}</T> : null}
+              </View>
+            ) : null}
           </View>
           <IconButton icon="square.and.pencil" label="Новый агент" onPress={() => router.push('/new')} />
         </View>
@@ -276,7 +287,7 @@ function AgentRow({ agent, number, pinned, first, now }: { agent: Agent; number:
           </View>
           <View style={styles.rowRight}>
             {since ? <T v="caption" color={Colors.textTertiary}>{since}</T> : null}
-            <StatusDot state={agent.state} />
+            <StatusDot state={agent.state} helpers={agent.helpers} />
           </View>
         </Press>
       </ReanimatedSwipeable>
@@ -327,6 +338,8 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
   },
   topTitle: { flex: 1, alignItems: 'center' },
+  topCounts: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
+  countDot: { width: 7, height: 7, borderRadius: 4 },
   fade: { position: 'absolute', top: 0, left: 0, right: 0 },
   edgeSwipe: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 24, zIndex: 4 },
   banner: {

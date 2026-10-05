@@ -191,9 +191,11 @@ export function IconButton({ icon, onPress, size = 40, color = Colors.text, labe
  * Статус агента, один код везде (tito, остров, телефон): три серые прыгающие точки —
  * работает; зелёная — закончил; красная — остановился; серая — давно молчит.
  */
-export function StatusDot({ state, size = 8 }: { state: AgentState; size?: number }) {
+export function StatusDot({ state, size = 8, helpers = 0 }: { state: AgentState; size?: number; helpers?: number }) {
   const t = useSharedValue(0);
-  const working = state === 'working';
+  // its helpers work while it stands: the same dots, in blue
+  const viaHelpers = state !== 'working' && state !== 'error' && helpers > 0;
+  const working = state === 'working' || viaHelpers;
   useEffect(() => {
     if (!working) return;
     t.set(withRepeat(withTiming(1, { duration: 1200, easing: Easing.linear }), -1));
@@ -203,18 +205,18 @@ export function StatusDot({ state, size = 8 }: { state: AgentState; size?: numbe
   const dot = size * 0.5;
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: dot * 0.5, height: size }}>
-      {[0, 1, 2].map((i) => <JumpDot key={i} i={i} t={t} size={dot} />)}
+      {[0, 1, 2].map((i) => <JumpDot key={i} i={i} t={t} size={dot} color={viaHelpers ? Colors.helper : Colors.working} />)}
     </View>
   );
 }
 
-function JumpDot({ i, t, size }: { i: number; t: SharedValue<number>; size: number }) {
+function JumpDot({ i, t, size, color }: { i: number; t: SharedValue<number>; size: number; color: string }) {
   const style = useAnimatedStyle(() => {
     const p = (t.get() - i * 0.14 + 1) % 1;
     const up = p < 0.42 ? Math.sin((p / 0.42) * Math.PI) : 0;
     return { opacity: 0.5 + up * 0.5, transform: [{ translateY: -up * size * 0.8 }] };
   });
-  return <Animated.View style={[{ width: size, height: size, borderRadius: size, backgroundColor: Colors.working }, style]} />;
+  return <Animated.View style={[{ width: size, height: size, borderRadius: size, backgroundColor: color }, style]} />;
 }
 
 const LOGOS = {

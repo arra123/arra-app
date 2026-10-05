@@ -137,7 +137,7 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
                         <T v="body" numberOfLines={1} style={styles.agentTitle}>{agent.title || agent.task || agent.project}</T>
                         <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{agent.project}</T>
                       </View>
-                      <StatusDot state={agent.state} />
+                      <StatusDot state={agent.state} helpers={agent.helpers} />
                     </Pressable>
                     </View>
                   )) : <T v="subhead" color={Colors.textSecondary} style={styles.empty}>Агентов нет</T>}

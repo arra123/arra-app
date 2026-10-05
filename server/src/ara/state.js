@@ -70,6 +70,8 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
       // what it said last and whether it asks: a finished agent is «done», not «a question»
       said: raw.busy ? '' : str(raw.said, 160),
       asking: !!(raw.ask || raw.asks),
+      // its helpers at work (sub-agents, Codex without a terminal): it stands and waits for them
+      helpers: Math.max(0, Math.min(99, Math.trunc(Number(raw.helpers) || 0))),
       transcript: str(raw.transcript, 600),
       iconName: /^[\w.-]{1,80}\.png$/.test(String(raw.iconName || '')) ? raw.iconName : null,
       model: str(raw.model, 80),
