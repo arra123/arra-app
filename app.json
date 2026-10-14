@@ -117,6 +117,17 @@
                 "accessoryRectangular"
               ],
               "contentMarginsDisabled": true
+            },
+            {
+              "name": "ArraClip",
+              "displayName": "Буфер на ПК",
+              "description": "Одно нажатие — скопированное уходит на компьютер",
+              "supportedFamilies": [
+                "systemSmall",
+                "accessoryCircular",
+                "accessoryRectangular"
+              ],
+              "contentMarginsDisabled": true
             }
           ]
         }

@@ -44,6 +44,10 @@ module.exports = function withDialogWidgets(config) {
     const widgetPath = path.join(c.modRequest.platformProjectRoot, 'ExpoWidgetsTarget/ArraAgents.swift');
     const widget = replaceRequired(fs.readFileSync(widgetPath, 'utf8'), 'WidgetsEntryView(entry: entry)', 'ArraWidgetEntryView(props: entry.props ?? [:])', 'native home widget');
     fs.writeFileSync(widgetPath, widget);
+    // «Буфер на ПК»: a plain link to arra://clip, the app reads the clipboard
+    const clipPath = path.join(c.modRequest.platformProjectRoot, 'ExpoWidgetsTarget/ArraClip.swift');
+    const clip = replaceRequired(fs.readFileSync(clipPath, 'utf8'), 'WidgetsEntryView(entry: entry)', 'ArraClipWidgetView()', 'native clipboard widget');
+    fs.writeFileSync(clipPath, clip);
     return c;
   }]);
   return withXcodeProject(config, c => {

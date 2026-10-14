@@ -268,6 +268,41 @@ public struct ArraWidgetEntryView: View {
   }
 }
 
+/// «Буфер на ПК»: widgets cannot read the clipboard, so the tap opens arra://clip
+/// and the app sends what is copied to the computer.
+public struct ArraClipWidgetView: View {
+  @Environment(\.widgetFamily) private var family
+  private let destination = URL(string: "arra://clip")!
+  public init() {}
+  public var body: some View {
+    if #available(iOS 17.0, *) {
+      content.containerBackground(Color(red: 0.039, green: 0.039, blue: 0.047), for: .widget)
+        .widgetURL(destination)
+    } else { content.background(Color.black).widgetURL(destination) }
+  }
+  @ViewBuilder private var content: some View {
+    switch family {
+    case .accessoryCircular:
+      Image(systemName: "doc.on.clipboard").font(.title2)
+        .accessibilityLabel("Отправить буфер на компьютер")
+    case .accessoryRectangular:
+      Label("Буфер на ПК", systemImage: "doc.on.clipboard")
+        .font(.headline).lineLimit(1).minimumScaleFactor(0.75)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    default:
+      VStack(alignment: .leading, spacing: 0) {
+        Image(systemName: "doc.on.clipboard").font(.system(size: 26, weight: .medium))
+        Spacer(minLength: 0)
+        Text("Буфер").font(.system(size: 17, weight: .semibold))
+        Text("на компьютер").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.white.opacity(0.5))
+      }
+      .foregroundStyle(Color.white)
+      .padding(16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+      .accessibilityLabel("Отправить буфер на компьютер")
+    }
+  }
+}
+
 func arraActivityURL(_ json: String) -> URL { ArraSelection.url(ArraSelection.parse(json)) }
 func arraNeedsAttention(_ json: String) -> Bool {
   ArraSelection.agents(ArraSelection.parse(json)).contains { ["wait", "error"].contains($0["state"] as? String ?? "") }
