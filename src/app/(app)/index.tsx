@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useRef, useState, type ReactNode } from 'react';
 import { Alert, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -16,6 +16,7 @@ import type { Agent, DeviceId, RecentSession } from '@/ara/types';
 import { chats, useCurrentChatId } from '@/ara/chats';
 import { openChat, openNewChat } from '@/components/chat-list';
 import { ChatSidebar } from '@/components/chat-sidebar';
+import { AraChat } from '@/components/ara-chat';
 import { AgentNumber, ProjectMascot, stateLook } from '@/components/project-mascot';
 import { GlassMenu, type MenuAnchor, type MenuSection } from '@/components/glass-menu';
 import { IconButton, Press, StatusDot, T } from '@/components/ui';
@@ -396,7 +397,14 @@ const styles = StyleSheet.create({
   },
 });
 
-/** Start with project agents. A conversation opens only by an explicit choice. */
+/** Open a conversation immediately; the drawer is the chat picker. */
 export default function Home() {
-  return <WorkList />;
+  const state = useAra();
+  const currentId = useCurrentChatId();
+  if (state.loaded && state.agents.length) {
+    // the PC comes first, as in the panel
+    const first = state.agents.find((a) => a.device === 'pc') || state.agents[0];
+    return <Redirect href={{ pathname: '/agent/[key]', params: { key: first.key } }} />;
+  }
+  return <AraChat id={currentId || chats.ensureCurrent()} />;
 }

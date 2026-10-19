@@ -1,16 +1,16 @@
 import { router } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import ReanimatedDrawerLayout, { DrawerKeyboardDismissMode, DrawerType, type DrawerLayoutMethods } from 'react-native-gesture-handler/ReanimatedDrawerLayout';
 import Animated, { interpolate, useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { chats, useChats, type Chat } from '@/ara/chats';
-import { agentNumber, ago, DEVICE_META } from '@/ara/format';
+import { agentNumber, ago, DEVICE_META, STATE_META } from '@/ara/format';
 import { useAra, useNow } from '@/ara/hooks';
 import { ara } from '@/ara/client';
-import type { DeviceId } from '@/ara/types';
+import type { Agent, DeviceId } from '@/ara/types';
 import { openAgentScreen } from '@/components/chat-list';
 import { Segmented } from '@/components/segmented';
 import type { Limits } from '@/ara/types';
@@ -21,7 +21,7 @@ import { Colors } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
 type Props = {
-  children: ReactNode; open: boolean; currentId: string; mode: 'work' | 'chat'; limits?: Limits | null;
+  children: ReactNode; open: boolean; currentId: string; currentAgentKey?: string; mode: 'work' | 'chat'; limits?: Limits | null;
   onOpen: () => void; onClose: () => void; onSelect: (id: string) => void; onNew: () => void;
   onWork?: () => void; onTalk?: () => void;
 };
@@ -36,21 +36,24 @@ function DrawerSurface({ progress, children }: { progress: SharedValue<number>; 
   return <Animated.View style={[styles.surface, style]}>{children}</Animated.View>;
 }
 
-export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, onClose, onSelect, onNew, onWork, onTalk }: Props) {
+export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, limits, onOpen, onClose, onSelect, onNew, onWork, onTalk }: Props) {
   const insets = useSafeAreaInsets();
   const { width: screenW } = useWindowDimensions();
-  const width = Math.min(370, Math.round(screenW * 0.86));
+  const width = Math.min(420, screenW - 56);
   const drawer = useRef<DrawerLayoutMethods>(null);
+  const pendingNavigation = useRef<(() => void) | null>(null);
   const list = useChats();
   const state = useAra();
   const now = useNow(30_000);
   // «Работа | Чат» lives here: the panel shows the agents or the dialogs;
   // it opens on the side of the screen it was opened from
   const [tab, setTab] = useState<'work' | 'chat'>(mode);
+  const [search, setSearch] = useState('');
+  const query = search.trim().toLocaleLowerCase();
   useEffect(() => { if (open) setTab(mode); }, [open, mode]);
 
   useEffect(() => {
-    if (open) drawer.current?.openDrawer({ animationSpeed: 1 });
+    if (open) { Keyboard.dismiss(); drawer.current?.openDrawer({ animationSpeed: 1 }); }
     else drawer.current?.closeDrawer({ animationSpeed: 1 });
   }, [open]);
 
@@ -58,7 +61,39 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
     .filter((chat) => chat.messages.length || chat.id === currentId)
     .sort((a, b) => b.updatedAt - a.updatedAt), [list, currentId]);
 
-  const go = (action: () => void) => () => { haptic.select(); onClose(); setTimeout(action, 210); };
+  const closePanel = () => { Keyboard.dismiss(); onClose(); drawer.current?.closeDrawer({ animationSpeed: 1 }); };
+  const go = (action: () => void) => () => {
+    if (pendingNavigation.current) return;
+    haptic.select();
+    pendingNavigation.current = action;
+    closePanel();
+    // the drawer reports its close; if it never does, the tap still goes through
+    // instead of locking every later tap in the panel
+    setTimeout(() => { if (pendingNavigation.current === action) finishClose(); }, 600);
+  };
+  // «Новый диалог» in «Работа» starts an agent (as in tito), in «Чат» a talk with Arra
+  const current = state.agents.find((a) => a.key === currentAgentKey);
+  const newAgent = (params: { device?: DeviceId; dir?: string; agent?: string } = {}) => () =>
+    router.push({ pathname: '/new', params: {
+      device: params.device || current?.device || (state.devices.pc.online || !state.devices.laptop.online ? 'pc' : 'laptop'),
+      ...(params.dir || (!params.device && current?.cwd) ? { dir: params.dir || current?.cwd } : {}),
+      ...(params.agent || current?.agent ? { agent: params.agent || current?.agent } : {}),
+    } });
+  const [recentOpen, setRecentOpen] = useState(false);
+  const groups = (device: DeviceId) => {
+    const byProject = new Map<string, Agent[]>();
+    for (const a of state.agents) {
+      if (a.device !== device || (query && !`${a.title} ${a.task} ${a.project}`.toLocaleLowerCase().includes(query))) continue;
+      byProject.set(a.cwd, [...(byProject.get(a.cwd) || []), a]);
+    }
+    return [...byProject.values()];
+  };
+  const finishClose = () => {
+    onClose();
+    const action = pendingNavigation.current;
+    pendingNavigation.current = null;
+    action?.();
+  };
   const remove = (chat: Chat) => {
     haptic.press();
     Alert.alert('Удалить диалог?', chat.title, [
@@ -70,9 +105,9 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
   const navigation = (
     <View style={[styles.panel, { width, paddingTop: insets.top + 8 }]} accessibilityLabel="Панель Arra">
       <View style={styles.head}>
-        <View style={styles.brand}><AraMascot size={26} still /><T v="title" weight="800" style={styles.brandTitle}>Arra</T></View>
+        <View style={styles.brand}><AraMascot size={26} still /><T v="title" weight="800" style={styles.brandTitle}>{tab === 'work' ? 'Агенты' : 'Чаты'}</T></View>
         <View style={styles.headActions}>
-          <Press onPress={go(onNew)} feedback="tap" style={styles.headButton} accessibilityLabel="Новый диалог">
+          <Press onPress={go(tab === 'work' ? newAgent() : onNew)} feedback="tap" style={styles.headButton} accessibilityLabel={tab === 'work' ? 'Новый агент' : 'Новый диалог'}>
             <SymbolView name="square.and.pencil" size={18} tintColor={Colors.text} weight="semibold" />
           </Press>
           <Press onPress={go(() => router.push('/settings'))} feedback="tap" style={styles.headButton} accessibilityLabel="Настройки">
@@ -86,10 +121,26 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
         value={tab}
         onChange={setTab}
         glass={false}
+        size="large"
         style={styles.tabs}
       />
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="none" indicatorStyle="white">
+      {tab === 'work' ? <View style={styles.workBar}>
+        <View style={styles.search}>
+          <SymbolView name="magnifyingglass" size={16} tintColor={Colors.textSecondary} />
+          <TextInput value={search} onChangeText={setSearch} placeholder="Поиск" placeholderTextColor={Colors.textSecondary}
+            accessibilityLabel="Поиск агента или проекта" autoCorrect={false} returnKeyType="search" onSubmitEditing={Keyboard.dismiss} style={styles.searchInput} />
+          {search ? <Press onPress={() => setSearch('')} style={styles.clearSearch} accessibilityLabel="Очистить поиск">
+            <SymbolView name="xmark.circle.fill" size={18} tintColor={Colors.textSecondary} />
+          </Press> : null}
+        </View>
+        <Press onPress={go(newAgent())} feedback="tap" style={styles.newPill} accessibilityLabel="Новый диалог">
+          <SymbolView name="plus" size={13} tintColor={Colors.text} weight="bold" />
+          <T v="subhead" weight="600" numberOfLines={1}>Новый диалог</T>
+        </Press>
+      </View> : null}
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" indicatorStyle="white">
         {tab === 'chat' ? (
           <>
             <T v="headline" weight="700" style={styles.section}>Диалоги</T>
@@ -97,7 +148,7 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
               const active = chat.id === currentId && mode === 'chat';
               const streaming = chat.messages.some((message) => message.streaming);
               return (
-                <Pressable key={chat.id} onPress={active ? onClose : go(() => onSelect(chat.id))}
+                <Pressable key={chat.id} onPress={active ? closePanel : go(() => onSelect(chat.id))}
                   onLongPress={chat.messages.length ? () => remove(chat) : undefined} delayLongPress={350}
                   accessibilityRole="button" accessibilityState={{ selected: active }}
                   accessibilityLabel={`${chat.messages.length ? chat.title : 'Новый диалог'}${active ? ', открыт' : ''}${streaming ? ', Arra отвечает' : ''}`}
@@ -111,43 +162,65 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
           </>
         ) : (
           <>
+            {/* one card per computer, as in tito: the PC on top, the laptop below */}
             {(['pc', 'laptop'] as DeviceId[]).map((device) => {
-              const agents = state.agents.filter((a) => a.device === device).sort((a, b) => a.cwd.localeCompare(b.cwd));
-              if (!agents.length && !state.devices[device].online) return null;
+              const projects = groups(device);
+              if (!projects.length && query) return null;
+              const online = state.devices[device].online;
               return (
-                <View key={device}>
-                  <T v="headline" weight="700" style={styles.section}>{DEVICE_META[device].label}</T>
-                  {agents.length ? agents.map((agent, index) => (
-                    <View key={agent.key}>
-                    {(!index || agents[index - 1].cwd !== agent.cwd) && <View style={[styles.section, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
-                      <ProjectMascot id={agent.mascotId} size={28} still />
-                      <T v="headline" weight="700" numberOfLines={1} style={{ flex: 1 }}>{agent.project}</T>
-                    </View>}
-                    <Pressable onPress={go(() => openAgentScreen(agent.key))}
+                <View key={device} style={styles.device}>
+                  <View style={styles.deviceHead}>
+                    <SymbolView name={DEVICE_META[device].icon} size={17} tintColor={Colors.textSecondary} />
+                    <T v="callout" weight="700" style={{ flex: 1 }}>{DEVICE_META[device].label}</T>
+                    <View style={[styles.onlineDot, { backgroundColor: online ? Colors.done : Colors.textTertiary }]}
+                      accessibilityLabel={online ? 'в сети' : 'не в сети'} />
+                  </View>
+                  {projects.map((agents) => (
+                    <View key={agents[0].cwd} style={styles.project}>
+                      <View style={styles.projectHead}>
+                        <ProjectMascot id={agents[0].mascotId} size={24} still />
+                        <T v="callout" weight="700" numberOfLines={1} style={{ flex: 1 }}>{agents[0].project}</T>
+                        <Press onPress={go(newAgent({ device, dir: agents[0].cwd, agent: agents[0].agent }))} feedback="tap" style={styles.projectAdd}
+                          accessibilityLabel={`Новый диалог в ${agents[0].project}`}>
+                          <SymbolView name="plus" size={15} tintColor={Colors.textSecondary} weight="semibold" />
+                        </Press>
+                      </View>
+                      {agents.map((agent) => (
+                    <Pressable key={agent.key} onPress={agent.key === currentAgentKey ? closePanel : go(() => openAgentScreen(agent.key))}
                       onLongPress={() => Alert.alert('Цвет маскота', agent.project, [
                         ...[[0,'Белый'],[3,'Жёлтый'],[4,'Фиолетовый'],[5,'Голубой'],[6,'Розовый'],[8,'Зелёный'],[11,'Красный'],[12,'Оранжевый'],[13,'Бирюзовый'],[14,'Синий']].map(([id, name]) => ({
                           text: String(name), onPress: () => { ara.request({ type: 'ara.mascot', agentKey: agent.key, mascotId: id }).catch((e) => Alert.alert('Не удалось сменить цвет', String(e.message))); },
                         })), { text: 'Отмена', style: 'cancel' },
                       ])}
-                      accessibilityRole="button" accessibilityLabel={`${agentNumber(agent, state.agents)}, ${agent.title || agent.project}`}
-                      style={({ pressed }) => [styles.agent, pressed && styles.chatPressed]}>
-                      <AgentNumber number={agentNumber(agent, state.agents)} mascotId={agent.mascotId} />
-                      <ProjectMascot id={agent.mascotId} size={30} {...stateLook(agent.state)} />
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <T v="body" numberOfLines={1} style={styles.agentTitle}>{agent.title || agent.task || agent.project}</T>
-                        <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{agent.project}</T>
+                      accessibilityRole="button" accessibilityLabel={`${agentNumber(agent, state.agents)}, ${agent.title || agent.project}, ${STATE_META[agent.state].label}`} accessibilityState={{ selected: agent.key === currentAgentKey }}
+                      style={({ pressed }) => [styles.agent, agent.key === currentAgentKey && styles.chatActive, pressed && styles.chatPressed]}>
+                      <View style={styles.agentPortrait}>
+                        <ProjectMascot id={agent.mascotId} size={34} {...stateLook(agent.asking ? 'waiting' : agent.helpers && agent.state !== 'error' ? 'working' : agent.state)} />
+                        <View style={styles.numberBadge}><AgentNumber number={agentNumber(agent, state.agents)} mascotId={agent.mascotId} /></View>
                       </View>
-                      <StatusDot state={agent.state} helpers={agent.helpers} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <T v="body" numberOfLines={2} style={styles.agentTitle}>{agent.title || agent.task || agent.project}</T>
+                        <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{agent.asking ? 'нужен твой ответ' : agent.helpers ? `работает помощник · ${agent.helpers}` : STATE_META[agent.state].label}</T>
+                      </View>
+                      {agent.asking ? <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: Colors.waiting }} /> : <StatusDot state={agent.state} helpers={agent.helpers} size={12} />}
                     </Pressable>
+                      ))}
                     </View>
-                  )) : <T v="subhead" color={Colors.textSecondary} style={styles.empty}>Агентов нет</T>}
+                  ))}
+                  {!projects.length ? <T v="subhead" color={Colors.textSecondary} style={styles.deviceEmpty}>{online ? 'Агентов нет' : 'Не в сети'}</T> : null}
                 </View>
               );
             })}
-            {state.recent.length ? (
+            {query && !state.agents.some(a => `${a.title} ${a.task} ${a.project}`.toLocaleLowerCase().includes(query)) ? <T color={Colors.textSecondary} style={styles.empty}>Агенты не найдены</T> : null}
+            {state.recent.length && !query ? (
               <>
-                <T v="headline" weight="700" style={styles.section}>Недавние</T>
-                {state.recent.slice(0, 10).map((item) => (
+                <Press onPress={() => setRecentOpen((v) => !v)} feedback="select" style={styles.recentHead}
+                  accessibilityRole="button" accessibilityState={{ expanded: recentOpen }} accessibilityLabel="Недавние">
+                  <T v="headline" weight="700" style={{ flex: 1 }}>Недавние</T>
+                  <T v="subhead" color={Colors.textTertiary}>{Math.min(10, state.recent.length)}</T>
+                  <SymbolView name={recentOpen ? 'chevron.down' : 'chevron.right'} size={13} tintColor={Colors.textTertiary} weight="semibold" />
+                </Press>
+                {recentOpen ? state.recent.slice(0, 10).map((item) => (
                   <Pressable key={item.key} onPress={go(() => openAgentScreen(item.key))}
                     accessibilityRole="button" accessibilityLabel={item.title || item.project}
                     style={({ pressed }) => [styles.agent, pressed && styles.chatPressed]}>
@@ -155,7 +228,7 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
                     <T v="subhead" numberOfLines={1} style={{ flex: 1 }}>{item.title || item.project}</T>
                     {item.mtime ? <T v="caption" color={Colors.textTertiary}>{ago(item.mtime * 1000, now)}</T> : null}
                   </Pressable>
-                ))}
+                )) : null}
               </>
             ) : null}
           </>
@@ -168,10 +241,10 @@ export function ChatSidebar({ children, open, currentId, mode, limits, onOpen, o
 
   return (
     <ReanimatedDrawerLayout ref={drawer} drawerWidth={width} drawerType={DrawerType.BACK}
-      keyboardDismissMode={DrawerKeyboardDismissMode.NONE} drawerBackgroundColor={Colors.background}
+      keyboardDismissMode={DrawerKeyboardDismissMode.ON_DRAG} drawerBackgroundColor={Colors.background}
       overlayColor="rgba(0,0,0,0.12)" edgeWidth={40} minSwipeDistance={12} animationSpeed={1}
-      onDrawerOpen={() => { haptic.select(); onOpen(); }}
-      onDrawerClose={() => { if (open) haptic.select(); onClose(); }}
+      onDrawerOpen={() => { Keyboard.dismiss(); haptic.select(); onOpen(); }}
+      onDrawerClose={finishClose}
       renderNavigationView={() => navigation}>
       {(progress) => <DrawerSurface progress={progress!}>{children}</DrawerSurface>}
     </ReanimatedDrawerLayout>
@@ -185,10 +258,25 @@ const styles = StyleSheet.create({
   brand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   brandTitle: { fontSize: 24 },
   headActions: { flexDirection: 'row', gap: 4 },
-  headButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.card },
+  headButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.card },
   section: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 8 },
   tabs: { marginHorizontal: 16, marginTop: 6 },
-  agent: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 8, paddingHorizontal: 12, minHeight: 54, borderRadius: 14 },
+  workBar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginTop: 12 },
+  search: { flex: 1, minWidth: 0, paddingLeft: 12, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, backgroundColor: Colors.card },
+  newPill: { height: 44, paddingHorizontal: 14, borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: Colors.cardPressed, borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.hairline },
+  device: { marginHorizontal: 8, marginTop: 12, paddingBottom: 6, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.hairline, backgroundColor: Colors.card, overflow: 'hidden' },
+  deviceHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 8, paddingHorizontal: 8, height: 46, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.separator },
+  onlineDot: { width: 8, height: 8, borderRadius: 4 },
+  deviceEmpty: { paddingHorizontal: 16, paddingVertical: 14 },
+  project: { marginTop: 6 },
+  projectHead: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 16, paddingRight: 6, height: 40 },
+  projectAdd: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  recentHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 8, marginTop: 14, paddingHorizontal: 12, minHeight: 48, borderRadius: 14 },
+  searchInput: { flex: 1, height: 44, color: Colors.text, fontSize: 15, minWidth: 0 },
+  clearSearch: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  agent: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 8, paddingHorizontal: 12, minHeight: 70, paddingVertical: 10, borderRadius: 14 },
+  agentPortrait: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  numberBadge: { position: 'absolute', bottom: -2, right: -2, paddingHorizontal: 3, borderRadius: 8, backgroundColor: Colors.background },
   agentTitle: { fontSize: 16 },
   chat: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 8, paddingHorizontal: 12, minHeight: 48, borderRadius: 14 },
   chatTitle: { flex: 1, fontSize: 17 },

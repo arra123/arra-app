@@ -11,6 +11,7 @@ import { ara } from '@/ara/client';
 import { AGENT_LABEL, baseName, DEVICE_META, shortPath } from '@/ara/format';
 import { useAra } from '@/ara/hooks';
 import type { AgentKind, DeviceId } from '@/ara/types';
+import { openAgentScreen } from '@/components/chat-list';
 import { AgentIcon, Press, T } from '@/components/ui';
 import { Colors, Radius, ScreenPadding, Type } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
@@ -34,7 +35,7 @@ export default function NewAgent() {
   const insets = useSafeAreaInsets();
   const state = useAra();
   const [agent, setAgent] = useState<AgentKind>(params.agent === 'codex' ? 'codex' : 'claude');
-  const [device, setDevice] = useState<DeviceId>(params.device === 'pc' ? 'pc' : state.devices.laptop.online || !state.devices.pc.online ? 'laptop' : 'pc');
+  const [device, setDevice] = useState<DeviceId>(params.device === 'laptop' ? 'laptop' : params.device === 'pc' || state.devices.pc.online || !state.devices.laptop.online ? 'pc' : 'laptop');
   const [dir, setDir] = useState(params.dir || '');
   const [custom, setCustom] = useState(false);
   const [query, setQuery] = useState('');
@@ -82,13 +83,19 @@ export default function NewAgent() {
     if (fresh) {
       haptic.success();
       router.dismiss();
-      setTimeout(() => router.push({ pathname: '/agent/[key]', params: { key: fresh.key } }), 350);
+      // the new dialog takes the place of the open screen, like a tap in the panel
+      setTimeout(() => openAgentScreen(fresh.key), 350);
     }
   }, [state.agents, phase, device, agent, dir]);
 
   useEffect(() => {
     if (phase !== 'waiting') return;
-    const timer = setTimeout(() => router.dismiss(), 20_000);
+    // the terminal opened but no agent showed up: say so instead of closing silently
+    const timer = setTimeout(() => {
+      setPhase('idle');
+      haptic.error();
+      Alert.alert('Агент не появился', 'Терминал открыт, но агент не ответил за 30 секунд');
+    }, 30_000);
     return () => clearTimeout(timer);
   }, [phase]);
 
@@ -125,7 +132,7 @@ export default function NewAgent() {
 
         <Label>Где</Label>
         <View style={styles.cards}>
-          {(['laptop', 'pc'] as DeviceId[]).map((d, i) => {
+          {(['pc', 'laptop'] as DeviceId[]).map((d, i) => {
             const on = state.devices[d].online;
             const active = device === d;
             const count = deviceAgents(d);

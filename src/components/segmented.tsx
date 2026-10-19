@@ -22,15 +22,15 @@ export function Segmented<V extends string>({
   options: Option<V>[];
   value: V;
   onChange: (value: V) => void;
-  size?: 'regular' | 'small';
+  size?: 'regular' | 'small' | 'large';
   glass?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   const [width, setWidth] = useState(0);
   const index = Math.max(0, options.findIndex((o) => o.value === value));
-  const pad = 3;
+  const height = size === 'small' ? 30 : size === 'large' ? 48 : 36;
+  const pad = size === 'large' ? 4 : 3;
   const segment = width ? (width - pad * 2) / options.length : 0;
-  const height = size === 'small' ? 30 : 36;
 
   const pill = useAnimatedStyle(() => ({
     width: segment,
@@ -54,9 +54,9 @@ export function Segmented<V extends string>({
               haptic.select();
               onChange(option.value);
             }}
-            style={styles.segment}>
-            {option.icon ? <SymbolView name={option.icon} size={size === 'small' ? 12 : 14} tintColor={color} weight="semibold" /> : null}
-            <T v={size === 'small' ? 'footnote' : 'subhead'} weight="600" color={color} numberOfLines={1} maxFontSizeMultiplier={1.2}>
+            style={[styles.segment, size === 'large' && { gap: 8 }]}>
+            {option.icon ? <SymbolView name={option.icon} size={size === 'small' ? 12 : size === 'large' ? 17 : 14} tintColor={color} weight="semibold" /> : null}
+            <T v={size === 'small' ? 'footnote' : size === 'large' ? 'body' : 'subhead'} weight="600" color={color} numberOfLines={1} maxFontSizeMultiplier={1.2}>
               {option.label}
             </T>
           </Pressable>
