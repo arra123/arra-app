@@ -7,7 +7,7 @@ import { syncWidgets } from '@/widgets/sync';
 // off: the server sends «agent finished» (see notifyFinished)
 const NOTIFY_ON_PHONE = false;
 
-import type { Agent, AraState, FileScope, RemoteFile, Transcript } from './types';
+import type { Agent, AraState, DeviceId, FileScope, RemoteFile, Transcript } from './types';
 
 type Listener = () => void;
 type Pending = { resolve: (value: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
@@ -44,6 +44,7 @@ class AraClient {
   private listeners = new Set<Listener>();
   private transcripts = new Map<string, Transcript>();
   private transcriptListeners = new Set<Listener>();
+  private conversationListeners = new Set<(data: any) => void>();
   private pending = new Map<string, Pending>();
   private asks = new Map<string, AskHandlers>();
   private files = new Map<string, Promise<RemoteFile>>();
@@ -201,6 +202,9 @@ class AraClient {
 
   private handle(msg: any) {
     switch (msg?.type) {
+      case 'ara.conversations':
+        this.conversationListeners.forEach(listener => listener(msg));
+        return;
       case 'ara.state':
         this.notifyFinished(msg.agents || []);
         this.setState({
@@ -291,6 +295,11 @@ class AraClient {
     return this.token ? { Authorization: `Bearer ${this.token}` } : {};
   }
 
+  subscribeConversations = (listener: (data: any) => void) => {
+    this.conversationListeners.add(listener);
+    return () => this.conversationListeners.delete(listener);
+  };
+
   subscribeTranscripts = (listener: Listener) => {
     this.transcriptListeners.add(listener);
     return () => this.transcriptListeners.delete(listener);
@@ -300,6 +309,8 @@ class AraClient {
 
   /** Экран агента открыт — компьютер шлёт переписку при каждом изменении. */
   watch(key: string) {
+    this.transcripts.delete(key);
+    this.transcriptListeners.forEach((listener) => listener());
     this.watchers.push(key);
     this.send({ type: 'ara.subscribe', agentKey: key });
     return () => {
@@ -340,6 +351,10 @@ class AraClient {
    * Нажать клавиши в терминале агента (вопрос Claude с вариантами).
    * Сервер принимает не больше 8 клавиш за раз — длинную серию шлём частями.
    */
+  chooseOption(agentKey: string, menuId: string, selection: number) {
+    return this.request({ type: 'ara.key', agentKey, menuId, selection });
+  }
+
   async pressKeys(agentKey: string, keys: string[]) {
     for (let i = 0; i < keys.length; i += 8) {
       if (i) await new Promise((r) => setTimeout(r, 250));
@@ -375,7 +390,7 @@ class AraClient {
   }
 
   ask(
-    params: { chatId: string; prompt: string; history: { role: string; text: string }[]; style: string; model: string },
+    params: { chatId: string; prompt: string; device?: DeviceId; attachments?: string[]; history: { role: string; text: string }[]; style: string; model: string },
     onDelta: (text: string) => void,
     onAction?: (action: Record<string, unknown>) => void,
   ): Promise<void> {

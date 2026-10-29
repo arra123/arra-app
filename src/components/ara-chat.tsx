@@ -8,6 +8,7 @@ import { chats, useChat, type AskModel, type ChatMessage } from '@/ara/chats';
 import { mediaPaths } from '@/ara/format';
 import { useAra } from '@/ara/hooks';
 import { uploadPhoto, type LocalPhoto } from '@/ara/upload';
+import { useVideoReviews, uploadVideoReviews } from '@/ara/video-reviews';
 import { AraMascot } from '@/components/ara-mascot';
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { ChatSidebar } from '@/components/chat-sidebar';
@@ -74,6 +75,7 @@ function switchTo(next: string) {
  */
 export function AraChat({ id, autoFocus = false, voiceRequest }: { id: string; autoFocus?: boolean; voiceRequest?: string }) {
   const chat = useChat(id);
+  const videoReviews = useVideoReviews({ chatId: id });
   const state = useAra();
   const [sidebar, setSidebar] = useState(false);
   const inputRef = useRef<TextInput>(null);
@@ -88,9 +90,10 @@ export function AraChat({ id, autoFocus = false, voiceRequest }: { id: string; a
 
   async function send(text: string, photos: LocalPhoto[]) {
     const device = state.devices.laptop.online ? 'laptop' : 'pc';
-    const uploads = Promise.all(photos.map((photo) => uploadPhoto(photo, { device })));
+    const reviews = await uploadVideoReviews({ chatId: id }, videoReviews, device);
+    const uploads = Promise.all(photos.map((photo) => uploadPhoto(photo, { device, chatId: id }))).then(paths => [...reviews, ...paths]);
     // Вопрос и локальные превью появляются сразу; загрузка и ответ идут фоном.
-    void chats.send(id, text, uploads, photos.filter((p) => p.mime.startsWith('image/')).map((p) => p.uri));
+    void chats.send(id, text, uploads, photos.map((p) => p.uri), { device, attachments: photos });
   }
 
   function retry(answerIndex: number) {
@@ -99,7 +102,11 @@ export function AraChat({ id, autoFocus = false, voiceRequest }: { id: string; a
     if (question?.role !== 'user' || !answer) return;
     // Иначе неудавшийся вопрос попал бы в историю и Arra увидела бы его дважды
     chats.dropExchange(id, answer.id);
-    chats.send(id, question.text, question.images || [], question.localImages || []);
+    const device = state.devices.laptop.online ? 'laptop' : 'pc';
+    const originals = question.attachments || [];
+    const paths = question.images?.length && (!question.device || question.device === device)
+      ? question.images : Promise.all(originals.map(photo => uploadPhoto(photo, { device, chatId: id })));
+    void chats.send(id, question.text, paths, question.localImages || [], { device, attachments: originals });
   }
 
   function remove() {
@@ -187,6 +194,7 @@ export function AraChat({ id, autoFocus = false, voiceRequest }: { id: string; a
         // written at the bottom left, next to a small Arra, like in tito
         title={null}
         bareTitle
+        overlaySpace={status ? 42 : 0}
         overlay={({ bottom }) => <AraStatus text={status} busy={busy} bottom={bottom} />}
         left={left}
         right={right}
@@ -212,6 +220,7 @@ export function AraChat({ id, autoFocus = false, voiceRequest }: { id: string; a
         }
         composer={(onHeight) => (
           <Composer
+            reviewScope={{ chatId: id }}
             inputRef={inputRef}
             autoFocus={autoFocus}
             voiceRequest={voiceRequest}

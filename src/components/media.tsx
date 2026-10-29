@@ -2,8 +2,8 @@ import { Image } from 'expo-image';
 import { setAudioModeAsync, useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { SymbolView } from 'expo-symbols';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { useEffect, useState, useRef } from 'react';
+import { ActivityIndicator, Modal, StyleSheet, useWindowDimensions, View, type GestureResponderEvent } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   FadeIn,
@@ -19,7 +19,9 @@ import { ara } from '@/ara/client';
 import { baseName, isAudioPath } from '@/ara/format';
 import type { FileScope, RemoteFile } from '@/ara/types';
 import { IconButton, Press, T } from '@/components/ui';
+import { MenuTrigger } from '@/components/glass-menu';
 import { Colors, Radius } from '@/constants/theme';
+import { setVideoReview, type VideoReview } from '@/ara/video-reviews';
 
 /** Файл с компьютера: просим ara-link загрузить его на сервер и получаем ссылку. */
 function useRemoteFile(path: string, scope: FileScope) {
@@ -115,9 +117,9 @@ export function RemoteVideo({ path, scope, size }: { path: string; scope: FileSc
     ? <AudioPlayerView uri={file.url} name={baseName(path)} onRetry={retry} />
     : <View style={styles.audio}><ActivityIndicator color={Colors.textSecondary} /><T v="caption">Загружаю {baseName(path)}…</T></View>;
   return (
-    <View style={[styles.video, { width: w, height: w * 0.5625 }]}>
+    <View style={[styles.video, { width: w, height: w * 0.5625 + 44 }]}>
       {file ? (
-        <VideoPlayerView uri={file.url} />
+        <VideoPlayerView uri={file.url} path={path} scope={scope} />
       ) : (
         <View style={styles.videoLoading}>
           <ActivityIndicator color={Colors.textSecondary} />
@@ -161,20 +163,83 @@ function AudioPlayerView({ uri, name, onRetry }: { uri: string; name: string; on
   </View>;
 }
 
-function VideoPlayerView({ uri }: { uri: string }) {
+function VideoPlayerView({ uri, path, scope }: { uri: string; path?: string; scope?: FileScope }) {
+  const dimensions = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const [open, setOpen] = useState(false);
+  const [drawing, setDrawing] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [strokes, setStrokes] = useState<VideoReview['strokes']>([]);
+  const [size, setSize] = useState<[number, number]>([1, 1]);
+  const review = useRef<VideoReview | null>(null);
+  const strokeRef = useRef<VideoReview['strokes']>([]);
   const player = useVideoPlayer({ uri, headers: ara.authHeaders() }, (p) => {
     p.loop = false;
+    p.preservesPitch = true;
   });
+  function annotate() {
+    player.pause(); setOpen(true); setDrawing(true); setStrokes([]); strokeRef.current = [];
+    review.current = {id: `${Date.now().toString(16).padStart(16, '0')}${Math.floor(Math.random() * 0xffffffff).toString(16).padStart(16, '0')}`,
+      source: path || uri, seconds: player.currentTime, size, strokes: []};
+  }
+  function save() {
+    if (scope && review.current) setVideoReview(scope, {...review.current, size, strokes: strokeRef.current});
+  }
+  function point(event: GestureResponderEvent): [number, number] {
+    return [Math.max(0, Math.min(1, event.nativeEvent.locationX / size[0])), Math.max(0, Math.min(1, event.nativeEvent.locationY / size[1]))];
+  }
+  function update(next: VideoReview['strokes']) { strokeRef.current = next; setStrokes(next); }
+  const video = (editing: boolean) => <View style={{ flex: 1 }} onLayout={e => editing && setSize([e.nativeEvent.layout.width, e.nativeEvent.layout.height])}>
+    <VideoView player={player} style={StyleSheet.absoluteFill} nativeControls={!drawing} contentFit="contain"
+      fullscreenOptions={{ enable: !drawing }} allowsPictureInPicture={!drawing} />
+    {!drawing ? <MenuTrigger label={`Скорость видео ${playbackRate}×, изменить`}
+      sections={[{ title: 'Скорость видео', items: [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map(rate => ({
+        label: `${rate}×`, checked: rate === playbackRate,
+        onPress: () => { player.playbackRate = rate; setPlaybackRate(rate); },
+      })) }]}
+      style={{ position: 'absolute', top: 8, right: 8, minWidth: 52, minHeight: 44, borderRadius: 12,
+        alignItems: 'center', justifyContent: 'center', backgroundColor: '#000b' }}>
+      <T v="footnote" color="#fff">{playbackRate}×</T>
+    </MenuTrigger> : null}
+    {editing && drawing ? <View style={StyleSheet.absoluteFill} accessibilityLabel="Рисунок на остановленном кадре"
+      onStartShouldSetResponder={() => true} onMoveShouldSetResponder={() => true} onResponderTerminationRequest={() => false}
+      onResponderGrant={e => update([...strokeRef.current, [point(e)]])}
+      onResponderMove={e => {
+        const s = strokeRef.current;
+        if (s.length && s[s.length - 1].length < 10000) update([...s.slice(0, -1), [...s[s.length - 1], point(e)]]);
+      }} onResponderRelease={save} onResponderTerminate={save}>
+      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+        {strokes.flatMap((stroke, si) => stroke.map((p, pi) => {
+          const previous = stroke[Math.max(0, pi - 1)];
+          const dx = (p[0] - previous[0]) * size[0], dy = (p[1] - previous[1]) * size[1];
+          const length = Math.max(3, Math.hypot(dx, dy));
+          return <View key={`${si}:${pi}`} style={{ position: 'absolute', left: (p[0] + previous[0]) / 2 * size[0] - length / 2,
+            top: (p[1] + previous[1]) / 2 * size[1] - 1.5, width: length, height: 3, borderRadius: 2, backgroundColor: '#ff514f',
+            transform: [{ rotate: `${Math.atan2(dy, dx)}rad` }] }} />;
+        }))}
+      </View>
+    </View> : null}
+  </View>;
   return (
     <Animated.View entering={FadeIn.duration(200)} style={StyleSheet.absoluteFill}>
-      <VideoView
-        player={player}
-        style={StyleSheet.absoluteFill}
-        nativeControls
-        contentFit="contain"
-        fullscreenOptions={{ enable: true }}
-        allowsPictureInPicture
-      />
+      {!open ? video(false) : <View style={{ flex: 1 }} />}
+      {scope && path ? <Press onPress={annotate} style={{ height: 44, justifyContent: 'center', paddingHorizontal: 12 }} accessibilityLabel="Поставить видео на паузу и нарисовать правку">
+        <T v="caption">Пауза и рисунок на кадре</T>
+      </Press> : null}
+      <Modal visible={open} onRequestClose={() => { save(); setOpen(false); setDrawing(false); }} animationType="fade">
+        <View style={{ flex: 1, backgroundColor: Colors.background, paddingTop: insets.top, paddingBottom: insets.bottom }}>
+          <View style={{ height: Math.max(180, dimensions.height - insets.top - insets.bottom - 144) }}>{video(true)}</View>
+          <View style={{ padding: 16, gap: 12 }}>
+            <T v="caption">{drawing ? 'Рисуй пальцем или мышью. Кадр прикрепится к сообщению.' : 'Продолжай смотреть или отметь другой кадр.'}</T>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 20 }}>
+              <Press onPress={() => { save(); setDrawing(false); player.play(); }} accessibilityLabel="Продолжить видео"><T>Продолжить</T></Press>
+              <Press onPress={annotate} accessibilityLabel="Новая правка на текущем кадре"><T>Рисовать</T></Press>
+              <Press disabled={!drawing || !strokes.length} onPress={() => { update(strokeRef.current.slice(0, -1)); save(); }} accessibilityLabel="Отменить последний штрих"><T>Отменить штрих</T></Press>
+              <Press onPress={() => { save(); player.pause(); setOpen(false); setDrawing(false); }} accessibilityLabel="Вернуться к сообщению и добавить текст или диктовку"><T>Текст / голос</T></Press>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Animated.View>
   );
 }
@@ -311,7 +376,7 @@ const styles = StyleSheet.create({
 });
 
 /** Компактное видео в отправленном сообщении; просмотр по нажатию. */
-export function LocalVideo({ uri, size = 104 }: { uri: string; size?: number }) {
+export function LocalVideo({ uri, size = 104, path, scope }: { uri: string; size?: number; path?: string; scope?: FileScope }) {
   const [open, setOpen] = useState(false);
   return <>
     <Press onPress={() => setOpen(true)} accessibilityLabel="Открыть прикреплённое видео" style={[styles.thumb, { width: size, height: size }]}>
@@ -320,7 +385,7 @@ export function LocalVideo({ uri, size = 104 }: { uri: string; size?: number }) 
     </Press>
     <Modal visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
       <View style={{ flex: 1, backgroundColor: '#000', paddingTop: 60, paddingBottom: 40 }}>
-        <View style={{ flex: 1 }}><VideoPlayerView uri={uri} /></View>
+        <View style={{ flex: 1 }}><VideoPlayerView uri={uri} path={path} scope={scope} /></View>
         <Press onPress={() => setOpen(false)} accessibilityLabel="Закрыть видео" style={{ padding: 20, alignItems: 'center' }}><T>Закрыть</T></Press>
       </View>
     </Modal>

@@ -1,8 +1,7 @@
-import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import { FlatList, Platform, StyleSheet, View, type ListRenderItem } from 'react-native';
-import { KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import { KeyboardGestureArea, KeyboardStickyView, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Animated, { useAnimatedStyle, useDerivedValue, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -36,6 +35,7 @@ type Props<T> = {
   overlay?: (bounds: { top: number; bottom: SharedValue<number> }) => ReactNode;
   /** Заголовок уже сам капсула (переключатель «Чат | Работа»): без второго стекла */
   bareTitle?: boolean;
+  overlaySpace?: number;
 };
 
 /** Какие ключи появились после первой загрузки — только они въезжают анимацией. */
@@ -54,11 +54,11 @@ export function useFreshKeys(keys: string[]) {
 }
 
 /**
- * Экран переписки как в Codex / ChatGPT на iPhone: стеклянная шапка сверху,
+ * Экран переписки: отдельные стеклянные капсулы сверху,
  * перевёрнутая лента (новое внизу, открывается на последнем сообщении),
  * поле ввода прилипает к клавиатуре, свайп от края — назад.
  */
-export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, composer, empty, back = true, left, headerTop = 0, overlay, bareTitle = false }: Props<T>) {
+export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, composer, empty, back = true, left, headerTop = 0, overlay, bareTitle = false, overlaySpace = 0 }: Props<T>) {
   const insets = useSafeAreaInsets();
   // Капсула названия стоит ровно по центру экрана: поля с обеих сторон
   // по самой широкой боковой кнопке, так что кнопки её не сдвигают и не перекрывают
@@ -72,7 +72,7 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
   const keyboardOpenOffset = Math.max(0, insets.bottom - 12);
 
   const spacer = useAnimatedStyle(() => ({
-    height: composerHeight.get() + Math.max(0, -keyboard.height.get() - keyboardOpenOffset) + 8,
+    height: composerHeight.get() + Math.max(0, -keyboard.height.get() - keyboardOpenOffset) + overlaySpace + 8,
   }));
 
   // Пустой экран поднимается вместе с клавиатурой и полем ввода, а не прячется под ними
@@ -85,7 +85,7 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
   const reversed = useMemo(() => [...data].reverse(), [data]);
 
   return (
-    <View style={styles.root}>
+    <KeyboardGestureArea style={styles.root} interpolator="ios" offset={100} textInputNativeID="chat-composer">
       <FlatList
         data={reversed}
         inverted
@@ -110,12 +110,6 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
         <Animated.View pointerEvents="box-none" style={[styles.empty, { paddingTop: headerHeight }, emptyLift]}>{empty}</Animated.View>
       ) : null}
 
-      {/* Только под статус-баром: сплошной фон без ступенек (полосатый градиент убран) */}
-      {/* the whole header stands on frosted dark glass: the messages blur away under it instead of showing through the title */}
-      <BlurView pointerEvents="none" intensity={55} tint="dark" style={[styles.fade, { height: headerHeight }]}>
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(10,10,12,0.74)' }]} />
-        <View style={styles.headerLine} />
-      </BlurView>
       <View
         style={[styles.header, { paddingTop: insets.top + 4 + headerTop }]}
         pointerEvents="box-none"
@@ -150,17 +144,12 @@ export function ChatLayout<T>({ title, right, below, data, keyOf, renderItem, co
       <KeyboardStickyView offset={{ closed: 0, opened: keyboardOpenOffset }} style={styles.composer}>
         {composer((h) => composerHeight.set(h))}
       </KeyboardStickyView>
-    </View>
+    </KeyboardGestureArea>
   );
 }
 
-/** Затемнение сверху: от почти сплошного к прозрачному */
-const FADE = [0.96, 0.94, 0.9, 0.85, 0.78, 0.7, 0.6, 0.48, 0.36, 0.24, 0.13, 0.05];
-
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.background },
-  fade: { position: 'absolute', top: 0, left: 0, right: 0, overflow: 'hidden' },
-  headerLine: { position: 'absolute', left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.10)' },
   header: { position: 'absolute', top: 0, left: 0, right: 0, paddingBottom: 6 },
   headerRow: {
     flexDirection: 'row',

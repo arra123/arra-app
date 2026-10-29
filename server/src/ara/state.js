@@ -27,11 +27,17 @@ export function recentKey(device, id) {
 
 /** Снимок от ara-link → проверенный и обрезанный вид. device — чей это снимок. */
 // subscription limits from ara-limits: only numbers and short strings go through
-function limitsOf(raw) {
+function limitsOf(raw, device) {
   if (!raw || typeof raw !== 'object') return null;
   const pick = (o) => {
     if (!o || typeof o !== 'object') return null;
-    const out = {};
+    const out = { stale: o.stale === true };
+    if (typeof o.at === 'number') out.at = o.at;
+    if (o.credits && typeof o.credits === 'object') out.credits = { balance: String(o.credits.balance ?? '0').slice(0, 40), unlimited: o.credits.unlimited === true };
+    if (o.resets && typeof o.resets === 'object') out.resets = {
+      left: typeof o.resets.left === 'number' && Number.isFinite(o.resets.left) ? o.resets.left : null,
+      usable: typeof o.resets.usable === 'number' && Number.isFinite(o.resets.usable) ? o.resets.usable : null,
+    };
     for (const k of ['session', 'sessionReset', 'week', 'weekReset']) if (typeof o[k] === 'number') out[k] = o[k];
     for (const k of ['email', 'plan']) if (typeof o[k] === 'string') out[k] = o[k].slice(0, 120);
     if (o.credit && typeof o.credit === 'object') {
@@ -39,7 +45,17 @@ function limitsOf(raw) {
     }
     return out;
   };
-  return { claude: pick(raw.claude), codex: { laptop: pick(raw.codex?.laptop), pc: pick(raw.codex?.pc) }, at: num(raw.at) };
+  const accounts = Array.isArray(raw.codex?.accounts) ? raw.codex.accounts.slice(0, 8).map((a) => {
+    const out = pick(a) || {};
+    if (typeof a.email === 'string') out.email = a.email.slice(0, 120);
+    if (typeof a.label === 'string') out.label = a.label.slice(0, 30);
+    out.ok = a.ok === true;
+    out.loginRequired = a.loginRequired === true;
+    return out;
+  }).filter(a => a.email) : [];
+  // Local ara-limits uses relative names: laptop = this host, pc = peer.
+  const here = pick(raw.codex?.laptop), peer = pick(raw.codex?.pc);
+  return { claude: pick(raw.claude), codex: { accounts, ...(device === 'pc' ? { pc: here, laptop: peer } : { laptop: here, pc: peer }) }, at: num(raw.at) };
 }
 
 export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
@@ -47,7 +63,7 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
   const live = [];
   for (const raw of Array.isArray(msg?.live) ? msg.live.slice(0, 60) : []) {
     const term = num(raw?.term);
-    if (term == null) continue;
+    if (term == null || /^\/(proc|sys|dev)(?:\/|$)/.test(raw?.cwd || "")) continue;
     const agentDevice = normalizeDevice(raw.device, device);
     const state = AGENT_STATES.includes(raw.state) ? raw.state : (raw.busy ? 'working' : 'waiting');
     live.push({
@@ -70,6 +86,14 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
       // what it said last and whether it asks: a finished agent is «done», not «a question»
       said: raw.busy ? '' : str(raw.said, 160),
       asking: !!(raw.ask || raw.asks),
+      // Terminal menus (permissions, model limits, confirmations) have no
+      // question tool entry in the transcript. Keep their actionable choices.
+      question: raw.ask && /^menu:[a-f0-9]{20}$/.test(raw.ask.id || '') && Array.isArray(raw.ask.options) && raw.ask.options.length
+        ? { id: raw.ask.id, answerVia: 'menu', questions: [{
+            question: [str(raw.ask.question, 1000), str(raw.ask.detail, 2000)].filter(Boolean).join('\n\n'), header: '', multi: false,
+            options: raw.ask.options.slice(0, 9).map((label, i) => ({ label: str(label, 400), description: str(raw.ask.descriptions?.[i], 1000) })),
+          }] }
+        : null,
       // its helpers at work (sub-agents, Codex without a terminal): it stands and waits for them
       helpers: Math.max(0, Math.min(99, Math.trunc(Number(raw.helpers) || 0))),
       transcript: str(raw.transcript, 600),
@@ -98,7 +122,16 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
       iconName: /^[\w.-]{1,80}\.png$/.test(String(raw.iconName || '')) ? raw.iconName : null,
     });
   }
-  return { device, live, recent, pcOnline: !!msg?.pcOnline, limits: limitsOf(msg?.limits) };
+  // Desktop displays whole project groups; publish that same order to every client.
+  // Interleaved dialogs must not create repeated project headers on the phone.
+  const groups = new Map();
+  for (const agent of live) {
+    const key = `${agent.device}:${agent.cwd}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(agent);
+  }
+  const grouped = [...groups.values()].flat().map((agent, seq) => ({ ...agent, seq }));
+  return { device, live: grouped, recent, pcOnline: !!msg?.pcOnline, limits: limitsOf(msg?.limits, device) };
 }
 
 /**
@@ -144,7 +177,32 @@ export function mergeHosts(hosts) {
   const recentList = [...recent.values()].map((v) => v.item)
     .sort((a, b) => (b.mtime || 0) - (a.mtime || 0))
     .slice(0, 40);
-  const limits = ordered.map((h) => h.snapshot.limits).find(Boolean) ?? null;
+  const sources = ordered.filter(h => h.snapshot.limits).sort((a, b) => (b.snapshot.limits.at || 0) - (a.snapshot.limits.at || 0));
+  const codexLimit = device => {
+    if (!devices[device].online) return null;
+    const native = sources.find(h => h.snapshot.device === device);
+    const value = native ? native.snapshot.limits.codex[device] : sources.map(h => h.snapshot.limits.codex[device]).find(Boolean);
+    return value && !value.stale ? value : null;
+  };
+  const accountMap = new Map();
+  for (const host of sources) {
+    const local = host.snapshot.limits.codex;
+    const observed = local.accounts?.length ? local.accounts : [local[host.snapshot.device]];
+    for (const account of observed) {
+      if (!account?.email) continue;
+      const prev = accountMap.get(account.email);
+      if (!prev || (account.at || 0) > (prev.at || 0)) accountMap.set(account.email, account);
+    }
+  }
+  const accounts = [...accountMap.values()].sort((a, b) => {
+    const ai = Number(String(a.label || '').match(/\d+/)?.[0] || 99);
+    const bi = Number(String(b.label || '').match(/\d+/)?.[0] || 99);
+    return ai - bi || a.email.localeCompare(b.email);
+  }).map((a, i) => ({ ...a, label: 'Codex ' + (i + 1) }));
+  const limits = sources.length ? {
+    claude: sources.map(h => h.snapshot.limits.claude).find(c => c && !c.stale) || null,
+    codex: { accounts, pc: codexLimit('pc'), laptop: codexLimit('laptop') }, at: sources[0].snapshot.limits.at,
+  } : null;
   return { agents: agentList, recent: recentList, devices, hostOf, limits };
 }
 

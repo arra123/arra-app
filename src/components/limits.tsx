@@ -160,6 +160,16 @@ function LimitRow({ title, limit }: { title: string; limit: Limit }) {
           <T v="headline" weight="600" numberOfLines={1}>{title}</T>
         <View style={{ gap: 6 }}>
           <Meters limit={limit} v="footnote" />
+          {limit.resets?.left != null ? (
+            <T v="tiny" color={Colors.textSecondary}>
+              {`Сбросов: ${limit.resets.left} · доступно сейчас ${limit.resets.usable ?? '—'}`}
+            </T>
+          ) : null}
+          {limit.resets?.left != null ? (
+            <T v="tiny" color={Colors.textSecondary}>
+              {`Сбросов: ${limit.resets.left} · доступно сейчас ${limit.resets.usable ?? '—'}`}
+            </T>
+          ) : null}
           {limit.credit?.limit ? (
             <T v="tiny" color={Colors.textTertiary}>облако ${Math.round(limit.credit.left)} из ${Math.round(limit.credit.limit)}</T>
           ) : null}
@@ -175,11 +185,11 @@ function LimitRow({ title, limit }: { title: string; limit: Limit }) {
 /** Секция «Подписки» внизу главного экрана. */
 export function LimitsSection({ limits, compact = false }: { limits: Limits | null; compact?: boolean }) {
   if (!limits) return null;
-  const rows: [string, Limit | null][] = [
-    ['Claude', limits.claude],
-    ['Codex ноутбук', limits.codex?.laptop],
-    ['Codex ПК', limits.codex?.pc],
-  ];
+  const accounts = limits.codex?.accounts || [];
+  const codexRows: [string, Limit | null][] = accounts.length
+    ? accounts.map((account, i) => [account.label || `Codex ${i + 1}`, account])
+    : [['Codex 1', limits.codex?.pc], ['Codex 2', limits.codex?.laptop]];
+  const rows: [string, Limit | null][] = [['Claude', limits.claude], ...codexRows];
   const shown = rows.filter((r): r is [string, Limit] => hasData(r[1]));
   if (!shown.length) return null;
   return (

@@ -40,7 +40,8 @@ case "$1" in
 esac
 """,
     ".config/quickshell/ii/modules/ii/notchIsland/scripts/island-agent-send": r"""#!/bin/sh
-echo "send $1 <$2>" >> "$HOME/calls.log"
+body="${2-$(cat)}"
+echo "send $1 <$body>" >> "$HOME/calls.log"
 echo '{"ok":true}'
 """,
     ".config/quickshell/ii/modules/ii/notchIsland/scripts/island-ask": r"""#!/usr/bin/env python3
@@ -131,6 +132,7 @@ class AraLinkTest(unittest.IsolatedAsyncioTestCase):
             "token": "secret",
             "device": "laptop",
             "snapshotInterval": 0.3,
+            "conversationSync": False,
             "watchInterval": 0.2,
             "scripts": dict(ara_link.SCRIPTS),
         }
@@ -200,6 +202,33 @@ class AraLinkTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second["data"]["messages"][0]["text"], "второй")
         self.assertEqual(sum(line.startswith("transcript ") for line in self.calls().splitlines()), 2)
 
+    async def test_plan_changes_without_transcript_write(self):
+        await self.expect("ara.snapshot")
+        sid = "01a111e6-b235-7ec0-a34e-027957d345cc"
+        path = self.home / ("rollout-2026-10-06T12-00-00-" + sid + ".jsonl")
+        path.write_text("план")
+        before = path.stat().st_mtime_ns
+        key = "live:laptop:111"
+        plan = self.home / ".local/share/notch-island/plans" / (sid + ".json")
+        original_fetch = self.link.fetch_transcript
+        async def fetch_with_plan(entry):
+            data = await original_fetch(entry)
+            data["plan"] = json.loads(plan.read_text())["items"] if plan.exists() else []
+            return data
+        self.link.fetch_transcript = fetch_with_plan
+        await self.command({"type": "ara.watch", "agents": [
+            {"key": key, "device": "laptop", "agent": "codex", "term": 111, "transcript": str(path)},
+        ]})
+        await self.expect("ara.transcript", lambda m: m["agentKey"] == key)
+        plan = self.home / ".local/share/notch-island/plans" / (sid + ".json")
+        plan.parent.mkdir(parents=True)
+        plan.write_text('{"items":[{"text":"шаг","status":"pending"}]}')
+        await self.expect("ara.transcript", lambda m: m["agentKey"] == key)
+        self.assertEqual(path.stat().st_mtime_ns, before)
+        plan.unlink()
+        await self.expect("ara.transcript", lambda m: m["agentKey"] == key)
+        self.assertEqual(path.stat().st_mtime_ns, before)
+
     async def test_commands(self):
         await self.expect("ara.snapshot")
         laptop_agent = {"key": "live:laptop:111", "device": "laptop", "term": 111}
@@ -251,7 +280,10 @@ class AraLinkTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_ask_stream(self):
         await self.expect("ara.snapshot")
-        await self.command({"type": "ara.ask", "reqId": "a1", "chatId": "c1", "prompt": "Вот видео /home/v.mp4", "history": [{"role": "user", "text": "ранее"}], "style": "talk", "model": "haiku"})
+        uploaded = await self.link.cmd_upload({"url": "/ara/blob/photo1?token=secret", "name": "test-photo.jpg", "chatId": "c1"})
+        self.assertTrue(self.link.path_allowed(uploaded["path"], None, "c1"))
+        self.assertFalse(self.link.path_allowed(uploaded["path"], None, "c2"))
+        await self.command({"type": "ara.ask", "reqId": "a1", "attachments": [uploaded["path"]], "chatId": "c1", "prompt": "Вот видео /home/v.mp4", "history": [{"role": "user", "text": "ранее"}], "style": "talk", "model": "haiku"})
         first = await self.expect("ara.ask.delta")
         action = await self.expect("ara.ask.action")
         second = await self.expect("ara.ask.delta")
@@ -261,12 +293,16 @@ class AraLinkTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action["action"]["text"], "Передала задачу")
         sent = json.loads((self.home / "ask.json").read_text())
         self.assertEqual(sent["name"], "Ара")
+        self.assertEqual(sent["files"], [uploaded["path"]])
         self.assertEqual(sent["model"], "haiku")
         self.assertEqual(sent["history"], [{"role": "user", "text": "ранее"}])
         # путь из ответа Ары можно запросить, из вопроса телефона — нет
         self.assertTrue(self.link.path_allowed("/home/answer.png", None, "c1"))
         self.assertFalse(self.link.path_allowed("/home/answer.png", None, "c2"))
         self.assertFalse(self.link.path_allowed("/home/v.mp4", None, "c1"))
+        await self.command({"type": "ara.ask", "reqId": "bad-file", "chatId": "c2", "attachments": [uploaded["path"]], "prompt": "read"})
+        rejected = await self.expect("ara.ask.error", lambda m: m["reqId"] == "bad-file")
+        self.assertIn("Вложение недоступно", rejected["error"])
 
     async def test_audio_files(self):
         await self.expect("ara.snapshot")

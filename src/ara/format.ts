@@ -6,7 +6,7 @@ import type { Agent, AgentKind, AgentState, DeviceId, Limit, Limits, SubAgent, T
 
 export const STATE_META: Record<AgentState, { label: string; color: string }> = {
   working: { label: 'работает', color: Colors.working },
-  waiting: { label: 'закончил', color: Colors.done },
+  waiting: { label: 'ждёт сообщения', color: Colors.done },
   error: { label: 'прервался', color: Colors.error },
   old: { label: 'давно', color: Colors.old },
 };
@@ -219,7 +219,7 @@ export function currentActivity(agent: Agent | null, transcript: Transcript | nu
  * помощник жив — значит, агент ждёт помощника. Возвращает этого помощника.
  */
 export function awaitedHelper(agent: Agent | null, transcript: Transcript | null, now = Date.now()): SubAgent | null {
-  if (agent?.state !== 'working') return null;
+  if (!agent || agent.state === 'error') return null;
   const helper = transcript?.agents?.find((a) => a.active);
   if (!helper) return null;
   const last = transcript?.last ? transcript.last * 1000 : 0;
@@ -228,6 +228,7 @@ export function awaitedHelper(agent: Agent | null, transcript: Transcript | null
 
 /** Строка «Работает 4 мин · сейчас: …» / «Закончил 3 мин назад · ждёт ответа». */
 export function statusLine(agent: Agent | null, transcript: Transcript | null, now = Date.now()): string {
+  if (agent?.asking || transcript?.question) return 'Нужен твой ответ';
   if (agent?.compacting) return 'Сжатие контекста…';
   if (!agent) {
     const last = transcript?.last ? transcript.last * 1000 : null;
@@ -235,6 +236,8 @@ export function statusLine(agent: Agent | null, transcript: Transcript | null, n
   }
   const lastUser = transcript?.lastUser ? transcript.lastUser * 1000 : null;
   const last = transcript?.last ? transcript.last * 1000 : null;
+  const activeHelpers = transcript?.agents?.filter(helper => helper.active) || [];
+  if (agent.state !== 'error' && (activeHelpers.length || agent.helpers)) return `Работает помощник · ${activeHelpers[0]?.description || `${agent.helpers} активных`}`;
   switch (agent.state) {
     case 'working': {
       const from = lastUser || agent.since;
@@ -246,7 +249,7 @@ export function statusLine(agent: Agent | null, transcript: Transcript | null, n
     }
     case 'waiting': {
       const at = last || agent.since;
-      return at ? `Закончил ${ago(at, now) === 'сейчас' ? 'только что' : `${ago(at, now)} назад`} · ждёт ответа` : 'Ждёт ответа';
+      return at ? `Ждёт сообщения · последняя активность ${ago(at, now)}` : 'Ждёт сообщения';
     }
     case 'error':
       return 'Прервался · напиши, что делать дальше';

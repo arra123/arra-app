@@ -5,13 +5,12 @@ import * as MediaLibrary from 'expo-media-library/legacy';
 import * as DocumentPicker from 'expo-document-picker';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from 'react';
-import { ActivityIndicator, Alert, AppState, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Keyboard, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
 import Animated, {
   Easing,
   FadeIn,
   FadeInDown,
   FadeOut,
-  LinearTransition,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -27,11 +26,14 @@ import { Glass, Press, T } from '@/components/ui';
 import { Colors, Radius, Type } from '@/constants/theme';
 import { useDictation } from '@/lib/dictation';
 import { haptic } from '@/lib/haptics';
+import type { FileScope } from '@/ara/types';
+import { useVideoReviews, clearVideoReviews, videoReviewText } from '@/ara/video-reviews';
 
 type Props = {
   placeholder: string;
   /** Бросает ошибку — текст и фото остаются в поле. */
   onSend: (text: string, photos: LocalPhoto[]) => Promise<void>;
+  reviewScope?: FileScope;
   disabled?: boolean;
   onHeight?: (height: number) => void;
   autoFocus?: boolean;
@@ -45,15 +47,20 @@ let photoSeq = 0;
 function toPhoto(asset: ImagePicker.ImagePickerAsset): LocalPhoto {
   const mime = asset.mimeType || (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
   const ext = mime.startsWith('video/') ? (mime.includes('quicktime') ? 'mov' : 'mp4') : mime.includes('png') ? 'png' : mime.includes('heic') ? 'heic' : 'jpg';
-  return rememberAttachment({ uri: asset.uri, name: asset.fileName || `attachment-${Date.now()}-${++photoSeq}.${ext}`, mime });
+  // the file's own extension wins: «IMG_1.HEIC» handed over as JPEG stays a .jpg
+  const real = asset.uri.match(/\.([a-z0-9]{2,5})(?:[?#]|$)/i)?.[1];
+  const name = asset.fileName ? (real ? asset.fileName.replace(/\.[^.]+$/, '') + '.' + real.toLowerCase() : asset.fileName) : `attachment-${Date.now()}-${++photoSeq}.${real?.toLowerCase() || ext}`;
+  return rememberAttachment({ uri: asset.uri, name, mime: real && /^jpe?g$/i.test(real) && mime.startsWith('image/') ? 'image/jpeg' : mime });
 }
 
-export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, voiceRequest, inputRef }: Props) {
+export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, voiceRequest, inputRef, reviewScope }: Props) {
+  const reviews = useVideoReviews(reviewScope);
   const insets = useSafeAreaInsets();
-  const [text, setText] = useState('');
+  const dictationKey = reviewScope && 'agentKey' in reviewScope ? `agent:${reviewScope.agentKey}` : reviewScope && 'chatId' in reviewScope ? `chat:${reviewScope.chatId}` : 'new-agent';
+  const dictation = useDictation(dictationKey);
+  const { text, setText } = dictation;
   const [photos, setPhotos] = useState<LocalPhoto[]>([]);
   const [sending, setSending] = useState(false);
-  const dictation = useDictation(text, setText);
   const voiceHandled = useRef('');
   const startRequestedVoice = useEffectEvent(() => { void dictation.start(); });
   useEffect(() => {
@@ -76,7 +83,7 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, v
   const input = inputRef ?? ownInput;
 
   const [focused, setFocused] = useState(false);
-  const hasContent = text.trim().length > 0 || photos.length > 0;
+  const hasContent = text.trim().length > 0 || photos.length > 0 || reviews.length > 0;
   // Как в ChatGPT: в фокусе (или когда текста много) поле — две строки:
   // текст во всю ширину сверху, «+» слева и микрофон с отправкой справа снизу
   const expanded = focused || text.includes('\n') || text.length > 26;
@@ -97,14 +104,15 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, v
 
   async function send(override?: string) {
     const body = override ?? text;
-    if (disabled || sending || (!body.trim() && !photos.length)) return;
+    if (disabled || sending || (!body.trim() && !photos.length && !reviews.length)) return;
     const attached = photos;
     setSending(true);
     haptic.press();
     setText('');
     setPhotos([]);
     try {
-      await onSend(body.trim(), attached);
+      await onSend([body.trim(), videoReviewText(reviews)].filter(Boolean).join('\n\n'), attached);
+      if (reviewScope) clearVideoReviews(reviewScope, reviews);
       haptic.success();
     } catch (error: any) {
       haptic.error();
@@ -128,9 +136,12 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, v
           return;
         }
       }
-      const options: ImagePicker.ImagePickerOptions = { mediaTypes: camera ? ['images'] : ['images', 'videos'], quality: 0.85, allowsMultipleSelection: !camera, selectionLimit: 6 };
+      // Compatible: iOS hands over JPEG instead of HEIC, which agents cannot read
+      const options: ImagePicker.ImagePickerOptions = { mediaTypes: camera ? ['images'] : ['images', 'videos'], quality: 0.85, allowsMultipleSelection: !camera, selectionLimit: 6,
+        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible };
       const result = camera ? await ImagePicker.launchCameraAsync(options) : await ImagePicker.launchImageLibraryAsync(options);
       if (result.canceled) return;
+      Keyboard.dismiss();
       setPhotos((current) => [...current, ...result.assets.map(toPhoto)].slice(0, 6));
       haptic.tap();
     } catch (error: any) {
@@ -143,6 +154,7 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, v
       const result = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
       if (result.canceled) return;
       const files = result.assets.map((a) => ({ uri: a.uri, name: a.name || `file-${Date.now()}`, mime: a.mimeType || 'application/octet-stream' })).map(rememberAttachment);
+      Keyboard.dismiss();
       setPhotos((current) => [...current, ...files].slice(0, 6));
       haptic.tap();
     } catch (error: any) {
@@ -185,7 +197,8 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, v
         name = name.replace(/\.[^.]+$/, '') + '.jpg';
         mime = 'image/jpeg';
       }
-      const photo = { uri, name, mime };
+      Keyboard.dismiss();
+      const photo = rememberAttachment({ uri, name, mime });
       setPhotos((current) => (current.some((p) => p.uri === uri) ? current : [...current, photo].slice(0, 6)));
       haptic.tap();
     } catch (error: any) {
@@ -224,6 +237,7 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, v
   // Одно и то же поле в обеих раскладках — фокус и текст не теряются при переходе
   const input_el = (
     <TextInput
+      nativeID="chat-composer"
       ref={input}
       value={text}
       onChangeText={setText}
@@ -274,8 +288,13 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, v
         </Animated.View>
       ) : null}
       <Glass radius={28} backing style={styles.capsule}>
+        {reviews.length ? <View style={{ paddingHorizontal: 16, paddingTop: 12, gap: 4 }}>
+          {reviews.map(review => <T key={review.id} v="caption" color={Colors.textSecondary}>
+            Кадр с рисунком · {review.source.split('/').pop()} · {review.seconds.toFixed(2)} с
+          </T>)}
+        </View> : null}
         {photos.length ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photos} keyboardShouldPersistTaps="handled">
+          <ScrollView horizontal style={{ height: 72, flexGrow: 0 }} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.photos} keyboardShouldPersistTaps="handled">
             {photos.map((photo) => (
               <Animated.View key={photo.uri} entering={ZoomIn.duration(200)} exiting={ZoomOut.duration(150)} style={styles.photo}>
                 {photo.mime.startsWith('image/') ? (
@@ -337,7 +356,7 @@ export function Composer({ placeholder, onSend, disabled, onHeight, autoFocus, v
         ) : (
           // Поле ввода всегда на одном месте в дереве (иначе оно пересоздаётся и теряет фокус):
           // в строку кнопки лежат поверх по краям, в фокусе — отдельным рядом под текстом
-          <Animated.View layout={LinearTransition.duration(180).easing(Easing.out(Easing.cubic))}>
+          <Animated.View>
             {input_el}
             <View style={expanded ? styles.row : styles.inlineButtons} pointerEvents="box-none">
               <View ref={plusRef} collapsable={false}>

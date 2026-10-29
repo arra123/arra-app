@@ -22,6 +22,8 @@ export type Agent = {
   said?: string;
   /** агент задал вопрос и ждёт ответа */
   asking?: boolean;
+  /** Active terminal menu, including choices missing from the transcript. */
+  question?: AgentQuestion | null;
   /** сколько его помощников работает прямо сейчас */
   helpers?: number;
   transcript: string;
@@ -57,13 +59,19 @@ export type Limit = {
   weekReset?: number;
   email?: string;
   plan?: string;
+  stale?: boolean;
+  ok?: boolean;
+  loginRequired?: boolean;
+  at?: number;
+  resets?: { left?: number | null; usable?: number | null };
+  credits?: { balance: string; unlimited: boolean };
   /** Облачный кредит Claude в долларах */
   credit?: { left: number; limit: number; reset: number };
 };
 
 export type Limits = {
   claude: Limit | null;
-  codex: { laptop: Limit | null; pc: Limit | null };
+  codex: { accounts?: (Limit & { email: string; label: string })[]; laptop: Limit | null; pc: Limit | null };
   /** секунды unix: когда сняты */
   at: number;
 };
@@ -109,11 +117,12 @@ export type QuestionOption = { label: string; description: string };
  */
 export type AgentQuestion = {
   id: string;
-  answerVia?: 'message';
+  answerVia?: 'message' | 'menu';
   questions: { question: string; header: string; multi: boolean; options: QuestionOption[] }[];
 };
 
 export type Transcript = {
+  access?: { sandbox?: string; approval?: string } | null;
   effort?: string;
   messages: TranscriptMessage[];
   model?: string;

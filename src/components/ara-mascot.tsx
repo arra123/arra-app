@@ -133,6 +133,11 @@ export function AraMascot({
         withDelay(4200, withTiming(-0.25, soft)), withDelay(900, withTiming(0, soft)),
       ), -1));
     } else if (shown === 'thinking') {
+      hop.set(withRepeat(withSequence(
+        withTiming(-size * 0.12, { duration: 300, easing: Easing.out(Easing.quad) }),
+        withTiming(0, { duration: 300, easing: Easing.in(Easing.quad) }),
+        withDelay(350, withTiming(0, { duration: 1 })),
+      ), -1));
       // looks up, the eyes go slowly from side to side
       const slow = { duration: 1500, easing: Easing.inOut(Easing.sin) };
       pitch.set(withTiming(-0.45, soft));

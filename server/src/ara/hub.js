@@ -16,12 +16,8 @@ import {
 } from './state.js';
 
 const OPEN = 1;
-// «Claude закончил» only when it really did: it worked for a while and then
-// stayed waiting (the state flickers working <-> waiting between steps, every
-// flicker was a push); and not more often than once in 2 min per agent
-const PUSH_COOLDOWN_MS = 120_000;
-const PUSH_SETTLE_MS = 25_000;
-const PUSH_MIN_WORK_MS = 15_000;
+// Wait briefly for a stable finish; each completed turn and new question can notify.
+const PUSH_SETTLE_MS = 3_000;
 const PUSH_STALE_MS = 90_000;
 const CLIENT_ALIVE_MS = 40_000;
 
@@ -71,6 +67,7 @@ export function createHub(deps = {}) {
         transcripts: new Map(), // key -> последняя переписка (для нового подписчика)
         watchSent: new Map(), // tokenId -> json отправленного ara.watch
         lastPush: new Map(),
+        questions: new Map(),
         pendingPush: new Map(), // key -> { transition, at }: waits to see the agent really stopped
       };
       users.set(userId, u);
@@ -94,6 +91,17 @@ export function createHub(deps = {}) {
   }
 
   function broadcastState(u, force = false) {
+    // Companions use the existing socket for the other machine's live state.
+    // This replaces desktop HTTP polling and LAN scans on every refresh.
+    for (const host of hostList(u)) {
+      const peer = host.device === 'pc' ? 'laptop' : 'pc';
+      const source = hostList(u).find(h => h.device === peer && h.snapshot);
+      const sessions = (source?.rawLive || []).filter(a => (a.device || peer) === peer && !/^\/(proc|sys|dev)(?:\/|$)/.test(a.cwd || ''));
+      sendToHost(u, host.tokenId, { type: 'ara.peer-state', sessions,
+        recent: u.merged.recent.filter(a => a.device === peer),
+        devices: publicState(u.merged, u.since).devices,
+        offline: !source, at: now() });
+    }
     const body = JSON.stringify(publicState(u.merged, u.since));
     if (!force && body === u.lastState) return;
     u.lastState = body;
@@ -153,6 +161,20 @@ export function createHub(deps = {}) {
     }
     await u.statesLoaded;
 
+    const questions = new Map();
+    for (const agent of u.merged.agents) if (agent.asking) {
+      const owner = u.hosts.get(u.merged.hostOf.get(agent.key));
+      const raw = (owner?.rawLive || []).find(a => Number(a.term) === agent.term && (a.device || owner.device) === agent.device);
+      const id = raw?.ask?.id || raw?.ask?.question || agent.task || agent.key;
+      questions.set(agent.key, id);
+      if (u.questions.get(agent.key) !== id && (agent.idle || 0) * 1000 <= PUSH_STALE_MS) {
+        const number = u.merged.agents.filter(a => a.device === agent.device && a.cwd === agent.cwd).findIndex(a => a.key === agent.key) + 1;
+        Promise.resolve(deps.sendPush?.(userId, `${agent.project} · нужен ответ`,
+          (raw?.ask?.question || agent.said || agent.task || 'Агент ждёт твоего ответа').slice(0, 180),
+          { type: 'ara.agent', agentKey: agent.key, state: agent.state, mascotId: agent.mascotId || 0, project: agent.project, agentNumber: Math.max(1, number) })).catch(() => {});
+      }
+    }
+    u.questions = questions;
     const prev = u.since;
     const { next, transitions, removed } = trackStates(prev, u.merged.agents, now());
     const gone = [];
@@ -174,9 +196,7 @@ export function createHub(deps = {}) {
       // computer came back online): the agent has been idle for long — no push
       const stale = (transition.agent.idle ?? 0) * 1000 > PUSH_STALE_MS;
       if (stale) continue;
-      if (transition.to === 'error' || (transition.worked ?? Infinity) >= PUSH_MIN_WORK_MS) {
-        u.pendingPush.set(transition.agent.key, { transition, at: now() });
-      }
+      if (!transition.agent.asking) u.pendingPush.set(transition.agent.key, { transition, at: now() });
     }
     for (const [key, p] of u.pendingPush) {
       const cur = next.get(key);
@@ -193,11 +213,6 @@ export function createHub(deps = {}) {
 
   function maybePush(u, userId, transition) {
     const key = transition.agent.key;
-    // Экран этого агента открыт на телефоне, и телефон жив (пингует) — человек и так видит.
-    // Уснувший телефон с открытым экраном перестаёт пинговать, и push уходит.
-    for (const client of u.clients.values()) if (client.watch === key && now() - client.at < CLIENT_ALIVE_MS) return;
-    const last = u.lastPush.get(key) || 0;
-    if (now() - last < PUSH_COOLDOWN_MS) return;
     u.lastPush.set(key, now());
     const { title, body } = pushText(transition);
     const agent = transition.agent;
@@ -295,6 +310,7 @@ export function createHub(deps = {}) {
         return;
       case 'ara.snapshot':
         host.snapshot = normalizeSnapshot(msg, host.device || 'laptop');
+        host.rawLive = (Array.isArray(msg.live) ? msg.live.slice(0, 60) : []).filter(a => !/^\/(proc|sys|dev)(?:\/|$)/.test(a?.cwd || ""));
         host.device = host.snapshot.device;
         host.at = now();
         await refresh(userId);
@@ -379,13 +395,29 @@ export function createHub(deps = {}) {
         return;
       case 'ara.subscribe':
         client.watch = key || null;
-        if (key && u.transcripts.has(key)) emit(socket, { type: 'ara.transcript', agentKey: key, data: u.transcripts.get(key) });
+        // A returning viewer needs a fresh transcript, not the previous watch's cache.
+        if (key) {
+          u.transcripts.delete(key);
+          const tokenId = u.merged.hostOf.get(key);
+          const otherKeys = new Set([...u.clients.values()].map(c => c.watch).filter(k => k && k !== key));
+          const agents = [...otherKeys].map(k => findItem(u, k)).filter(a => a && u.merged.hostOf.get(a.key) === tokenId).map(watchEntry);
+          // Reset this watch on existing companions too: they then read the file immediately.
+          sendToHost(u, tokenId, { type: 'ara.watch', agents });
+          u.watchSent.delete(tokenId);
+        }
         syncWatches(u);
         return;
       case 'ara.unsubscribe':
         client.watch = null;
         syncWatches(u);
         return;
+      case 'ara.rename': {
+        if (!item) { emit(socket, { type: 'ara.result', reqId: entry.reqId, ok: false, error: 'Диалог не найден' }); return; }
+        const title = text(msg.title, 201).trim();
+        if (!title || title.length > 200) { emit(socket, { type: 'ara.result', reqId: entry.reqId, ok: false, error: 'Название должно содержать от 1 до 200 символов' }); return; }
+        forward(u, userId, u.merged.hostOf.get(key), { type: 'ara.rename', agent: watchEntry(item), title }, entry);
+        return;
+      }
       case 'ara.send':
       case 'ara.stop':
       case 'ara.close':
@@ -399,7 +431,7 @@ export function createHub(deps = {}) {
         }
         const payload = { type: msg.type, agent: watchEntry(item) };
         if (msg.type === 'ara.send') {
-          payload.text = text(msg.text, 20_000);
+          payload.text = text(msg.text, 1_000_000);
           payload.images = Array.isArray(msg.images) ? msg.images.filter((p) => typeof p === 'string').slice(0, 10) : [];
         }
         if (msg.type === 'ara.model') {
@@ -427,6 +459,7 @@ export function createHub(deps = {}) {
         }
         // a key press in the agent's terminal: a digit of an answer, then Enter
         if (msg.type === 'ara.key') {
+          if (typeof msg.menuId === 'string' && /^menu:[a-f0-9]{20}$/.test(msg.menuId) && Number.isInteger(msg.selection) && msg.selection >= 1 && msg.selection <= 9) { payload.menuId = msg.menuId; payload.selection = msg.selection; }
           payload.keys = (Array.isArray(msg.keys) ? msg.keys : [])
             .filter((k) => typeof k === 'string' && /^([0-9]|enter|escape|up|down|space|tab)$/.test(k)).slice(0, 8);
         }
@@ -449,8 +482,10 @@ export function createHub(deps = {}) {
         const history = Array.isArray(msg.history)
           ? msg.history.slice(-30).map((m) => ({ role: m?.role === 'assistant' ? 'assistant' : 'user', text: text(m?.text, 8000) }))
           : [];
-        forward(u, userId, pickAskHost(hostList(u)), {
+        forward(u, userId, msg.device ? pickHostForDevice(hostList(u), normalizeDevice(msg.device)) : pickAskHost(hostList(u)), {
           type: 'ara.ask',
+          device: msg.device ? normalizeDevice(msg.device) : null,
+          attachments: Array.isArray(msg.attachments) ? msg.attachments.filter(p => typeof p === 'string' && p.startsWith('/') && p.length <= 1000).slice(0, 12) : [],
           chatId: text(msg.chatId, 80),
           prompt: text(msg.prompt, 20_000),
           history,
@@ -512,7 +547,7 @@ export function createHub(deps = {}) {
   }
 
   /** Фото с телефона → на компьютер, где живёт агент (или на device). Вернёт путь там. */
-  function deliverUpload(userId, { agentKey, device }, blob) {
+  function deliverUpload(userId, { agentKey, device, chatId }, blob) {
     const u = user(userId);
     const item = agentKey ? findItem(u, agentKey) : null;
     const targetDevice = item?.device || normalizeDevice(device, 'laptop');
@@ -520,6 +555,7 @@ export function createHub(deps = {}) {
     return new Promise((resolve, reject) => {
       forward(u, userId, target, {
         type: 'ara.upload',
+        chatId: text(chatId, 80),
         url: `/ara/blob/${blob.id}`,
         name: blob.name,
         size: blob.size,
@@ -562,9 +598,38 @@ export function createHub(deps = {}) {
   }
 
   return {
+    request: (userId, message) => new Promise((resolve, reject) => {
+      let timer;
+      const socket = { readyState: OPEN, send: (raw) => {
+        const event = JSON.parse(raw);
+        if ((event.type === 'ara.result' && event.reqId === 'desktop') ||
+            (event.type === 'ara.transcript' && event.agentKey === message.agentKey)) {
+          clearTimeout(timer);
+          queueMicrotask(() => clientDisconnected(userId, socket));
+          resolve(event.type === 'ara.transcript' ? event.data : event);
+        }
+      } };
+      timer = setTimeout(() => { clientDisconnected(userId, socket); reject(new Error('Устройство не ответило')); }, 20_000);
+      clientConnected(userId, socket);
+      clientMessage(userId, socket, { ...message, reqId: 'desktop' });
+    }),
+    state: (userId) => {
+      const u = user(userId);
+      const native = {};
+      for (const host of hostList(u)) if (host.snapshot) {
+        native[host.snapshot.device] = (host.rawLive || []).filter(a => (a?.device || host.snapshot.device) === host.snapshot.device);
+      }
+      return { ...stateMessage(u), native };
+    },
     deviceConnected,
     deviceDisconnected,
     deviceMessage,
+    conversationsChanged(userId, data) {
+      const u = user(userId);
+      const event = { type: 'ara.conversations', ...data };
+      for (const socket of u.clients.keys()) emit(socket, event);
+      for (const tokenId of u.hosts.keys()) sendToHost(u, tokenId, event);
+    },
     clientConnected,
     clientDisconnected,
     clientMessage,

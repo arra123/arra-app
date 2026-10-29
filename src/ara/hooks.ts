@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 
 import { ara } from './client';
 import type { Agent, RecentSession, Transcript } from './types';
@@ -18,7 +18,7 @@ export function useAgentItem(key: string): { agent: Agent | null; recent: Recent
 
 /** Переписка агента; пока экран смонтирован, компьютер присылает изменения. */
 export function useTranscript(key: string): Transcript | null {
-  useEffect(() => ara.watch(key), [key]);
+  useLayoutEffect(() => ara.watch(key), [key]);
   const get = useCallback(() => ara.getTranscript(key), [key]);
   return useSyncExternalStore(ara.subscribeTranscripts, get);
 }

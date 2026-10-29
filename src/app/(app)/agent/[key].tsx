@@ -11,7 +11,7 @@ import { limitFor, modelLabel, shortAgo } from '@/ara/format';
 import { useAgentItem, useAra, useNow, useTranscript } from '@/ara/hooks';
 import { answerMessage, answersByMessage, answersOnTap, claudeKeys, type Selections } from '@/ara/questions';
 import type { TranscriptMessage } from '@/ara/types';
-import { uploadPhoto } from '@/ara/upload';
+import { outbox, useOutbox, type OutboxItem } from '@/ara/outbox';
 import { NeedsCard, QuestionCard, type AnswerStatus } from '@/components/agent-cards';
 import { useCurrentChatId } from '@/ara/chats';
 import { setOpenAgent } from '@/lib/push';
@@ -19,18 +19,19 @@ import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
 import { openChat, openNewChat } from '@/components/chat-list';
 import { ChatSidebar } from '@/components/chat-sidebar';
 import { Composer } from '@/components/composer';
+import { useVideoReviews, uploadVideoReviews } from '@/ara/video-reviews';
 import { FloatingAgent } from '@/components/floating-agent';
 import { WeekRing } from '@/components/limits';
 import { MenuTrigger, type MenuSection } from '@/components/glass-menu';
 import { PlanCard, TranscriptRow, UserBubble } from '@/components/transcript';
-import { ProjectMascot, stateLook } from '@/components/project-mascot';
 import { Glass, Press, ProjectIcon, StatusDot, T } from '@/components/ui';
 import { Colors, Radius } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
 type Row =
   | { kind: 'message'; key: string; message: TranscriptMessage }
-  | { kind: 'pending'; key: string; text: string; images: string[]; localImages: string[]; progress: number; total: number };
+  | { kind: 'pending'; key: string; text: string; images: string[]; localImages: string[]; progress: number; total: number }
+  | { kind: 'outbox'; key: string; item: OutboxItem };
 
 // the same choice as in tito on the computer: exact models, not just families
 const CLAUDE_MODELS = [
@@ -90,14 +91,15 @@ export default function AgentScreen() {
   }[]>([]);
   const [stopping, setStopping] = useState(false);
   const inputRef = useRef<TextInput>(null);
-  const { height: screenH } = useWindowDimensions();
+  const { width: screenW, height: screenH } = useWindowDimensions();
 
   const item = agent || recent;
+  const videoReviews = useVideoReviews({ agentKey: key });
   const messages = useMemo(() => transcript?.messages || [], [transcript]);
   const plan = transcript?.plan || [];
   const model = transcript?.model || agent?.model || '';
   const needs = useMemo(() => agent ? transcript?.needs || [] : [], [agent, transcript?.needs]);
-  const question = agent ? transcript?.question || null : null;
+  const question = agent ? agent.question || transcript?.question || null : null;
   const helpers = transcript?.agents || [];
 
   // «Нужно от тебя» свёрнуто в строку; новый список снова приходит свёрнутым
@@ -144,6 +146,15 @@ export default function AgentScreen() {
     });
   };
   const visiblePending = pending.filter((p) => !landed(p) && now - p.at < 90_000);
+  // the phone's own queue (photos, retries): it outlives this screen and the app
+  const queued = useOutbox(key);
+  // only what was really handed to the computer can be found in its log
+  const queuedLanded = queued.filter((q) => (q.state === 'sent' || (q.state === 'sending' && q.attempts > 0)) && landed(q)).map((q) => q.id);
+  const landedKey = queuedLanded.join(',');
+  useEffect(() => {
+    if (landedKey) landedKey.split(',').forEach((id) => outbox.landed(id));
+  }, [landedKey]);
+  const visibleQueued = queued.filter((q) => !queuedLanded.includes(q.id));
 
   useEffect(() => {
     if (agent?.state !== 'working') setStopping(false);
@@ -161,7 +172,8 @@ export default function AgentScreen() {
       progress: p.progress,
       total: p.total,
     })),
-  ], [messages, keys, visiblePending]);
+    ...visibleQueued.map((item) => ({ kind: 'outbox' as const, key: `outbox:${item.id}`, item })),
+  ], [messages, keys, visiblePending, visibleQueued]);
   const isFresh = useFreshKeys(keys);
 
   /** Оптимистичное сообщение, пока оно не появилось в переписке компьютера. */
@@ -211,22 +223,18 @@ export default function AgentScreen() {
     }
   }
 
-  /** Поле ввода. Пока открыт вопрос — это «свой ответ» на него. */
+  /** Поле ввода. Пока открыт вопрос — это «свой ответ» на него.
+   *  Сообщение сразу уходит в очередь телефона: фото грузятся и досылаются,
+   *  даже если уйти с экрана или свернуть приложение. */
   async function send(text: string, photos: { uri: string; name: string; mime: string }[]) {
     if (!agent) throw new Error('Агент уже закрыт');
     const outgoing = question && questionOpen ? answerMessage(question, current.picked, text) || text : text;
-    const pendingId = addPending(outgoing, photos);
-    const paths: string[] = [];
-    try {
-      for (const photo of photos) {
-        paths.push(await uploadPhoto(photo, { agentKey: agent.key }));
-        setPending((list) => list.map((p) => p.id === pendingId ? { ...p, images: [...paths], progress: paths.length } : p));
-      }
-    } catch (error) {
-      setPending((list) => list.filter((p) => p.id !== pendingId));
-      throw error;
+    const extra = await uploadVideoReviews({ agentKey: key }, videoReviews);
+    const index = userCount + visibleQueued.length + visiblePending.length;
+    if (!question || !questionOpen) {
+      outbox.enqueue(agent.key, outgoing, photos, extra, index);
+      return;
     }
-    if (!question || !questionOpen) return sendMessage(outgoing, paths, pendingId);
     if (answering.current) throw new Error('Ответ уже отправляется');
     answering.current = true;
     patchAnswer({ status: { state: 'sending' } });
@@ -237,13 +245,12 @@ export default function AgentScreen() {
         patchAnswer({ escaped: true });
         await wait(700);
       }
-      await sendMessage(outgoing, paths, pendingId);
+      await outbox.wait(outbox.enqueue(agent.key, outgoing, photos, extra, index));
       patchAnswer({ status: { state: 'sent', at: Date.now() } });
       haptic.success();
     } catch (error: any) {
-      setPending((list) => list.filter((p) => p.id !== pendingId));
+      // the message stays in the chat with «Повторить»: nothing to restore in the field
       patchAnswer({ status: { state: 'error', message: error?.message || 'Ответ не ушёл' } });
-      throw error;
     } finally {
       answering.current = false;
     }
@@ -255,7 +262,8 @@ export default function AgentScreen() {
     answering.current = true;
     patchAnswer({ picked, status: { state: 'sending' } });
     try {
-      if (answersByMessage(question)) await sendMessage(answerMessage(question, picked), []);
+      if (question.answerVia === 'menu') await ara.chooseOption(agent.key, question.id, (picked[0]?.[0] ?? -1) + 1);
+      else if (answersByMessage(question)) await sendMessage(answerMessage(question, picked), []);
       else await ara.pressKeys(agent.key, claudeKeys(question, picked));
       patchAnswer({ picked, status: { state: 'sent', at: Date.now() } });
       haptic.success();
@@ -321,6 +329,20 @@ export default function AgentScreen() {
       })),
     });
   }
+  if (agent?.agent === 'codex') menu.push({
+    title: 'Разрешения',
+    items: [{ label: transcript?.access?.sandbox === 'danger-full-access' ? 'Полный доступ'
+      : transcript?.access?.sandbox === 'workspace-write' ? 'В проекте'
+      : transcript?.access?.sandbox === 'read-only' ? 'Только чтение' : 'Доступ неизвестен',
+      subtitle: 'Изменить разрешения', icon: 'lock.shield', onPress: async () => {
+      if (agent.state === 'working' || questionOpen) {
+        Alert.alert('Дождись ответа агента', 'Перед изменением разрешений закрой текущий вопрос или меню.');
+        return;
+      }
+      try { await ara.sendText(agent.key, '/permissions'); }
+      catch (error: any) { Alert.alert('Разрешения не открылись', error?.message || 'Попробуй ещё раз'); }
+    } }],
+  });
   if (agent?.state === 'working' && !stopping) menu.push([{ label: 'Остановить', icon: 'stop.circle', onPress: stop }]);
   if (agent?.agent === 'codex') menu.push({
     title: 'Качество рассуждения', subtitle: transcript?.effort || 'Не определено', icon: 'brain', submenu: true,
@@ -336,16 +358,20 @@ export default function AgentScreen() {
   const doneAt = transcript?.last ? transcript.last * 1000 : agent?.since;
   const shortStatus = !agent ? null : stopping ? (
     <T v="caption" color={Colors.textSecondary}>останавливаю…</T>
+  ) : agent.asking || questionOpen ? (
+    <T v="caption" color={Colors.waiting} numberOfLines={1}>нужен твой ответ</T>
   ) : agent.compacting ? (
     <T v="caption" color={Colors.textSecondary} numberOfLines={1}>сжатие контекста…</T>
+  ) : agent.state !== 'error' && (agent.helpers || helpers.some(h => h.active)) ? (
+    <View style={styles.shortStatus}><StatusDot state="working" size={12} /><T v="caption" numberOfLines={1}>работает помощник</T></View>
   ) : agent.state === 'waiting' ? (
     <T v="caption" weight="600" color={Colors.done} numberOfLines={1}>
-      {doneAt ? `закончил · ${shortAgo(now - doneAt)}` : 'закончил'}
+      {doneAt ? `ждёт сообщения · ${shortAgo(now - doneAt)}` : 'ждёт сообщения'}
     </T>
   ) : agent.state === 'working' ? (
     <View style={styles.shortStatus}>
       <StatusDot state="working" size={8} />
-      <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{workFrom ? shortAgo(now - workFrom) : 'работает'}</T>
+      <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{workFrom ? `работает · ${shortAgo(now - workFrom)}` : 'работает'}</T>
     </View>
   ) : agent.state === 'error' ? (
     <T v="caption" weight="600" color={Colors.error} numberOfLines={2}>{agent.error || 'прервался'}</T>
@@ -355,9 +381,6 @@ export default function AgentScreen() {
 
   const title = (
     <View style={styles.title}>
-      {/* the project's ball, alive: it thinks while the agent works */}
-      {agent ? <ProjectMascot id={agent.mascotId} size={34} {...stateLook(agent.state)} still={false} />
-        : item ? <ProjectIcon iconName={item.iconName} agent={item.agent} size={32} /> : null}
       <View style={{ flexShrink: 1, minWidth: 0 }}>
         {/* what it is doing, like in the panel; the project is in the line below */}
         <T v="subhead" weight="700" numberOfLines={1}>{(item && 'title' in item && item.title) || item?.project || (recent ? recent.title : 'Агент')}</T>
@@ -378,20 +401,13 @@ export default function AgentScreen() {
     </View>
   );
 
-  // Справа отдельная капсула: кольцо остатка недельного лимита и «⋯» (системное меню)
-  // the week-limit ring (a number of tokens) is not shown in the header any more
-  const ring = null;
-  const right = ring || menu.length ? (
+  const right = menu.length ? (
     <Glass radius={22} backing style={styles.right}>
-      {ring}
-      {menu.length ? (
-        <MenuTrigger label="Модель и действия" sections={menu} native={false}>
-          <View style={styles.more}>
-            <SymbolView name="ellipsis" size={18} tintColor={Colors.text} weight="semibold" />
-            {transcript?.effort ? <T v="tiny" color={Colors.textSecondary}>{transcript.effort}</T> : null}
-          </View>
-        </MenuTrigger>
-      ) : null}
+      <MenuTrigger label="Модель и действия" sections={menu} native={false}>
+        <View style={styles.more}>
+          <SymbolView name="ellipsis" size={18} tintColor={Colors.text} weight="semibold" />
+        </View>
+      </MenuTrigger>
     </Glass>
   ) : null;
 
@@ -413,6 +429,7 @@ export default function AgentScreen() {
     <ChatSidebar
       open={sidebar}
       currentId={currentChatId}
+      currentAgentKey={key}
       mode="work"
       limits={limits}
       onOpen={() => setSidebar(true)}
@@ -434,6 +451,22 @@ export default function AgentScreen() {
       renderItem={({ item: row }) =>
         row.kind === 'message' ? (
           <TranscriptRow message={row.message} scope={scope} animate={isFresh(row.key)} />
+        ) : row.kind === 'outbox' ? (
+          <Animated.View entering={FadeInDown.duration(220)} exiting={FadeOut.duration(150)} style={styles.pendingRow}>
+            <UserBubble
+              text={row.item.text}
+              localImages={row.item.photos.map((p) => p.uri)}
+              scope={scope}
+              pending
+              outgoing={{
+                state: row.item.state,
+                progress: row.item.photos.map((p) => p.progress),
+                error: row.item.error,
+                onRetry: () => { haptic.tap(); outbox.retry(row.item.id); },
+                onDiscard: () => { haptic.tap(); outbox.remove(row.item.id); },
+              }}
+            />
+          </Animated.View>
         ) : (
           <Animated.View entering={FadeInDown.duration(220)} exiting={FadeOut.duration(150)} style={styles.pendingRow}>
             <UserBubble
@@ -485,6 +518,7 @@ export default function AgentScreen() {
               </ScrollView>
             ) : null}
             <Composer
+              reviewScope={{ agentKey: key }}
               inputRef={inputRef}
               placeholder={questionOpen ? 'Свой ответ на вопрос…' : agent.state === 'working' ? 'Увидит после шага…' : 'Написать агенту'}
               onSend={send}
@@ -523,10 +557,10 @@ const styles = StyleSheet.create({
   menuButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   title: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   subtitle: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 1, minWidth: 0 },
-  right: { flexDirection: 'row', alignItems: 'center', gap: 2, height: 44, paddingLeft: 9, flexShrink: 0 },
+  right: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   shortStatus: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1 },
   statusPart: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
-  more: { width: 42, height: 44, alignItems: 'center', justifyContent: 'center' },
+  more: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   pendingRow: { paddingHorizontal: 16, paddingVertical: 7 },
   empty: { alignItems: 'center' },
   // Непрозрачная подложка: лента не просвечивает между карточками

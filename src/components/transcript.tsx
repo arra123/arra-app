@@ -1,5 +1,5 @@
 import { SymbolView } from 'expo-symbols';
-import { memo, useState, type ReactNode } from 'react';
+import { memo, useEffect, useState, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, {
   Easing,
@@ -7,13 +7,18 @@ import Animated, {
   FadeInDown,
   FadeOut,
   LinearTransition,
+  cancelAnimation,
   useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
   withTiming,
 } from 'react-native-reanimated';
 
+import { reviewPresentation } from '@/ara/attachment-presentation';
 import { messageTime, stepIcon, tookLabel } from '@/ara/format';
+import type { OutboxState } from '@/ara/outbox';
 import type { FileScope, PlanItem, StepItem, TranscriptMessage } from '@/ara/types';
-import { isVideoAttachment, localPhotoUri } from '@/ara/upload';
+import { attachmentName, isImageAttachment, isVideoAttachment, localPhotoUri } from '@/ara/upload';
 import { Markdown } from '@/components/markdown';
 import { LocalImage, LocalVideo, RemoteImage, RemoteVideo } from '@/components/media';
 import { Chip, Press, T } from '@/components/ui';
@@ -160,7 +165,48 @@ function MediaRow({ children }: { children: ReactNode }) {
   return <View style={styles.media}>{children}</View>;
 }
 
-export function UserBubble({ text, images = [], videos = [], localImages = [], scope, pending, progress = 1, time }: {
+function FileTile({ path, size }: { path: string; size: number }) {
+  return <View style={{ width: size, height: size, padding: 8, gap: 8, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.card, borderRadius: 12 }}>
+    <SymbolView name="doc" size={24} tintColor={Colors.textSecondary} />
+    <T v="tiny" numberOfLines={2} style={{ textAlign: 'center' }}>{attachmentName(path)}</T>
+  </View>;
+}
+
+/** Как в Telegram: кольцо поверх миниатюры, пока фото грузится. */
+function UploadRing({ progress, failed }: { progress: number; failed?: boolean }) {
+  const spin = useSharedValue(0);
+  useEffect(() => {
+    if (failed) { cancelAnimation(spin); return; }
+    spin.value = withRepeat(withTiming(360, { duration: 1100, easing: Easing.linear }), -1, false);
+    return () => cancelAnimation(spin);
+  }, [failed, spin]);
+  const arc = useAnimatedStyle(() => ({ transform: [{ rotate: `${spin.value}deg` }] }));
+  return (
+    <View pointerEvents="none" style={styles.ringScrim}>
+      {failed ? (
+        <View style={styles.ringFailed}>
+          <SymbolView name="exclamationmark" size={16} tintColor="#fff" weight="bold" />
+        </View>
+      ) : (
+        <View style={styles.ring}>
+          <Animated.View style={[styles.ringArc, arc]} />
+          <T v="tiny" color="#fff" weight="600">{Math.round(progress * 100)}%</T>
+        </View>
+      )}
+    </View>
+  );
+}
+
+export type Outgoing = {
+  state: OutboxState;
+  /** 0..1 на каждое фото */
+  progress: number[];
+  error?: string;
+  onRetry: () => void;
+  onDiscard: () => void;
+};
+
+export function UserBubble({ text, images = [], videos = [], localImages = [], scope, pending, progress = 1, time, outgoing }: {
   text: string;
   images?: string[];
   localImages?: string[];
@@ -171,7 +217,10 @@ export function UserBubble({ text, images = [], videos = [], localImages = [], s
   progress?: number;
   /** «12:40» под пузырём */
   time?: string;
+  /** Сообщение из очереди телефона: кольца загрузки, «Не отправлено · Повторить» */
+  outgoing?: Outgoing;
 }) {
+  const presentation = reviewPresentation(text);
   const attachments = [...images, ...videos];
   const count = localImages.length || attachments.length;
   const tile = count === 1 ? 112 : count === 2 ? 104 : 82;
@@ -180,21 +229,53 @@ export function UserBubble({ text, images = [], videos = [], localImages = [], s
 
   return (
     <View style={styles.userWrap}>
-      {count || text ? (
+      {count || presentation.text || presentation.reviews.length ? (
         <View style={[styles.userBubble, count > 0 && styles.userBubbleWithMedia]}>
           {count ? (
             <View style={[styles.userMedia, { width: mediaWidth }]}>
-              {localImages.length ? localImages.map((uri) => isVideoAttachment(uri) ? <LocalVideo key={uri} uri={uri} size={tile} /> : <LocalImage key={uri} uri={uri} size={tile} />) : attachments.map((p) => {
+              {localImages.length ? localImages.map((uri, n) => {
+                const tileView = isVideoAttachment(uri) ? <LocalVideo uri={uri} size={tile} /> : isImageAttachment(uri) ? <LocalImage uri={uri} size={tile} /> : <FileTile path={uri} size={tile} />;
+                const done = (outgoing?.progress[n] ?? 1) >= 1;
+                if (!outgoing || (done && outgoing.state !== 'failed')) return <View key={uri}>{tileView}</View>;
+                return (
+                  <View key={uri}>
+                    {tileView}
+                    {outgoing.state === 'failed' ? (done ? null : <UploadRing progress={0} failed />) : <UploadRing progress={outgoing.progress[n] ?? 0} />}
+                  </View>
+                );
+              }) : attachments.map((p) => {
                 const local = localPhotoUri(p);
-                if (isVideoAttachment(p)) return local ? <LocalVideo key={p} uri={local} size={tile} /> : <RemoteVideo key={p} path={p} scope={scope} size={tile} />;
+                if (isVideoAttachment(p)) return local ? <LocalVideo key={p} uri={local} path={p} scope={scope} size={tile} /> : <RemoteVideo key={p} path={p} scope={scope} size={tile} />;
+                if (!isImageAttachment(p)) return <FileTile key={p} path={p} size={tile} />;
                 return local ? <LocalImage key={p} uri={local} size={tile} /> : <RemoteImage key={p} path={p} scope={scope} size={tile} square />;
               })}
             </View>
           ) : null}
-          {text ? <View style={count ? styles.userTextWithMedia : undefined}><T selectable>{text}</T></View> : null}
+          {presentation.reviews.length ? <View style={styles.reviewCaptions}>{presentation.reviews.map(review => (
+            <View key={`${review.source}:${review.seconds}`} style={styles.reviewCaption} accessibilityLabel={`Правка ${review.name} на ${review.label}`}>
+              <SymbolView name="pencil" size={12} tintColor={Colors.textSecondary} />
+              <T v="caption">Правка · {review.label}</T>
+            </View>
+          ))}</View> : null}
+          {presentation.text ? <View style={count ? styles.userTextWithMedia : undefined}><T selectable>{presentation.text}</T></View> : null}
         </View>
       ) : null}
-      {pending && (localImages.length > 0 || images.length > 0) && progress < 1 ? (
+      {outgoing?.state === 'failed' ? (
+        <View style={styles.failedRow}>
+          <SymbolView name="exclamationmark.circle.fill" size={14} tintColor={Colors.danger} />
+          <T v="caption" color={Colors.danger} numberOfLines={2} style={{ flexShrink: 1 }}>Не отправлено</T>
+          <Press onPress={outgoing.onRetry} style={styles.failedButton} accessibilityRole="button" accessibilityLabel={`Повторить отправку${outgoing.error ? `: ${outgoing.error}` : ''}`}>
+            <SymbolView name="arrow.clockwise" size={12} tintColor={Colors.text} weight="semibold" />
+            <T v="caption" weight="600">Повторить</T>
+          </Press>
+          <Press onPress={outgoing.onDiscard} style={styles.failedButton} accessibilityRole="button" accessibilityLabel="Удалить сообщение">
+            <SymbolView name="trash" size={12} tintColor={Colors.textSecondary} />
+          </Press>
+        </View>
+      ) : outgoing ? (
+        outgoing.state === 'sent' ? <SymbolView name="checkmark" size={11} tintColor={Colors.textTertiary} weight="semibold" />
+          : <SymbolView name="clock" size={11} tintColor={Colors.textTertiary} />
+      ) : pending && (localImages.length > 0 || images.length > 0) && progress < 1 ? (
         <View style={styles.uploadTrack}>
           <View style={[styles.uploadFill, { width: `${Math.max(8, Math.round(progress * 100))}%` }]} />
         </View>
@@ -294,7 +375,15 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
   },
   userBubbleWithMedia: { padding: 6, borderRadius: 20 },
+  reviewCaptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, padding: 6 },
+  reviewCaption: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: Colors.card },
   userTextWithMedia: { paddingHorizontal: 10, paddingTop: 8, paddingBottom: 5 },
+  ringScrim: { ...StyleSheet.absoluteFill, borderRadius: Radius.md, backgroundColor: 'rgba(0,0,0,0.42)', alignItems: 'center', justifyContent: 'center' },
+  ring: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  ringArc: { ...StyleSheet.absoluteFill, borderRadius: 22, borderWidth: 2.5, borderColor: 'rgba(255,255,255,0.25)', borderTopColor: '#fff', borderRightColor: '#fff' },
+  ringFailed: { width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.danger, alignItems: 'center', justifyContent: 'center' },
+  failedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' },
+  failedButton: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: Radius.pill, backgroundColor: Colors.card },
   uploadTrack: { width: 104, height: 2, borderRadius: 1, overflow: 'hidden', backgroundColor: Colors.separator },
   uploadFill: { height: 2, borderRadius: 1, backgroundColor: Colors.textSecondary },
   assistant: { gap: 10 },

@@ -235,15 +235,15 @@ export function FloatingAgent({ agent, transcript, plan, helpers, now, stopping,
     ],
   }));
 
-  const state = agent.state;
+  const state = agent.state !== 'error' && (helpers.some(h => h.active) || agent.helpers) ? 'working' : agent.state;
   const tint = state === 'waiting' ? Colors.done : state === 'error' ? Colors.error : Colors.textSecondary;
   // На агентике только план и помощники; статус и минуты — в шапке
   const done = plan.filter((p) => p.status === 'completed').length;
   const active = helpers.filter((h) => h.active);
   // in words, like the buddy on the computer
-  const waitsHelper = state === 'working' ? awaitedHelper(agent, transcript, now) : null;
+  const waitsHelper = state === 'working' ? (awaitedHelper(agent, transcript, now) || (agent.state !== 'working' ? active[0] : null)) : null;
   const saying = stopping ? 'останавливаю…'
-    : state === 'working' ? (waitsHelper ? 'ждёт помощника' : (currentActivity(agent, transcript) || 'работает'))
+    : state === 'working' ? (waitsHelper ? 'работает помощник' : (currentActivity(agent, transcript) || 'работает'))
     : state === 'waiting' ? 'ждёт тебя'
     : state === 'error' ? 'ошибка'
     : 'готов';
@@ -278,7 +278,7 @@ export function FloatingAgent({ agent, transcript, plan, helpers, now, stopping,
                 {active.length ? (
                   <View style={styles.helpers} accessibilityLabel={`Помощников: ${active.length}`}>
                     {active.slice(0, 4).map((h, i) => (
-                      <View key={h.id} style={[styles.helperDot, { backgroundColor: Colors.helpers[i % Colors.helpers.length] }]} />
+                      <ProjectMascot key={h.id} id={[3, 5, 4, 8][i % 4]} size={20} mood="thinking" />
                     ))}
                     {active.length > 4 ? <T v="tiny" color={Colors.textSecondary}>+{active.length - 4}</T> : null}
                   </View>
@@ -318,7 +318,7 @@ function AgentSheet({ agent, transcript, plan, helpers, now, onClose }: {
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
-  const helper = agent.state === 'working' ? awaitedHelper(agent, transcript, now) : null;
+  const helper = awaitedHelper(agent, transcript, now);
   const doing = agent.state === 'working' && !helper ? currentActivity(agent, transcript) : '';
   const activeHelpers = helpers.filter((h) => h.active);
   const color = agent.state === 'waiting' ? Colors.done : agent.state === 'error' ? Colors.error : Colors.text;
@@ -330,7 +330,7 @@ function AgentSheet({ agent, transcript, plan, helpers, now, onClose }: {
       <Appear from={14} duration={200} style={[styles.sheet, { paddingBottom: insets.bottom + 14 }]}>
         <View style={styles.grabber} />
         <View style={styles.sheetHead}>
-          <ProjectMascot id={agent.mascotId} size={40} {...stateLook(agent.state)} still={false} interactive />
+          <ProjectMascot id={agent.mascotId} size={40} {...stateLook(activeHelpers.length && agent.state !== 'error' ? 'working' : agent.state)} still={false} interactive />
           <View style={{ flex: 1, gap: 2 }}>
             <T v="headline" weight="700" numberOfLines={1}>{agent.project}</T>
             <T v="footnote" color={color} numberOfLines={2}>{statusLine(agent, transcript, now)}</T>

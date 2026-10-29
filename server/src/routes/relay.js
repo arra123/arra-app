@@ -1,5 +1,6 @@
 import { hub } from '../ara/instance.js';
 import { keepAlive } from '../ara/keepalive.js';
+import { one } from '../db.js';
 
 /**
  * WS-канал приложения (телефон). Авторизация: JWT в query (?token=<jwt>),
@@ -13,6 +14,15 @@ export default async function relayRoutes(app) {
       userId = app.jwt.verify(request.query?.token)?.id || null;
     } catch {
       /* invalid */
+    }
+    // a computer (its ara-link device key) sees the other computer the same
+    // way the phone does: tito on the laptop away from home reads the PC here
+    if (!userId && typeof request.query?.token === 'string' && request.query.token) {
+      try {
+        userId = (await one('SELECT user_id FROM pc_tokens WHERE token = $1', [request.query.token]))?.user_id || null;
+      } catch {
+        /* no such device */
+      }
     }
     if (!userId) {
       try { socket.send(JSON.stringify({ type: 'error', message: 'unauthorized' })); } catch {}

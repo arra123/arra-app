@@ -29,6 +29,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from conversation_sync import ConversationSync
 from pathlib import Path
 from typing import Any
 
@@ -127,6 +128,25 @@ def safe_name(name: str) -> str:
     return f"{time.strftime('%Y%m%d-%H%M%S')}-{base[-80:]}"
 
 
+# Pictures Claude Code and Codex cannot read (iPhone HEIC): a JPEG beside them,
+# otherwise the agent gets a bare path instead of a picture
+AGENT_UNREADABLE = {".heic", ".heif", ".avif", ".tif", ".tiff", ".bmp"}
+
+
+def agent_picture(path: Path) -> Path:
+    if path.suffix.lower() not in AGENT_UNREADABLE:
+        return path
+    target = path.with_suffix(".jpg")
+    try:
+        subprocess.run(["magick", str(path), "-auto-orient", "-resize", "2560x2560>", "-quality", "88", str(target)],
+                       check=True, capture_output=True, timeout=90)
+    except (OSError, subprocess.SubprocessError) as error:
+        log.warning("не перевёл %s в JPEG: %s", path.name, error)
+        return path
+    path.unlink(missing_ok=True)
+    return target
+
+
 def graphical_env() -> dict[str, str]:
     """Окружение для kitty, даже если systemd-юнит не получил переменные сессии."""
     env = dict(os.environ)
@@ -153,7 +173,7 @@ class AraLink:
         self.ws = None
         self.watch: dict[str, dict] = {}
         self.tx_seen: dict[str, str] = {}  # key -> отпечаток последней отправленной переписки
-        self.tx_mtime: dict[str, float] = {}
+        self.tx_mtime: dict[str, list[int]] = {}
         self.tx_polled: dict[str, float] = {}
         self.transcripts: dict[str, dict] = {}  # key -> последняя переписка (для проверки путей)
         self.ask_paths: dict[str, set[str]] = {}  # chatId -> пути к медиа из ответов Ары
@@ -178,7 +198,7 @@ class AraLink:
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
-        except (FileNotFoundError, PermissionError) as error:
+        except OSError as error:  # not found, no permission, E2BIG
             return 127, "", str(error)
         try:
             out, err = await asyncio.wait_for(proc.communicate(stdin.encode() if stdin is not None else None), timeout)
@@ -359,13 +379,22 @@ class AraLink:
             if not force and now - self.tx_polled.get(key, 0) < max(3.0, self.cfg["watchInterval"]):
                 return
         else:
-            try:
-                mtime = os.stat(path).st_mtime
-            except OSError:
-                mtime = -1
-            if not force and self.tx_mtime.get(key) == mtime:
+            # A plan can change while the conversation log stays untouched.
+            stem = Path(path).stem
+            uuid = re.search(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$", stem)
+            plans = Path.home() / ".local/share/notch-island/plans"
+            paths = [Path(path), plans / (stem + ".json"), Path.home() / ".cache/notch-island/codex-version.json"]
+            if uuid:
+                paths.append(plans / (uuid.group(0) + ".json"))
+            stamp = []
+            for watched in paths:
+                try:
+                    stamp.append(watched.stat().st_mtime_ns)
+                except OSError:
+                    stamp.append(-1)
+            if not force and self.tx_mtime.get(key) == stamp:
                 return
-            self.tx_mtime[key] = mtime
+            self.tx_mtime[key] = stamp
         self.tx_polled[key] = now
         data = await self.fetch_transcript(entry)
         if not isinstance(data, dict) or data.get("same"):
@@ -421,7 +450,8 @@ class AraLink:
         if self.remote(agent.get("device")):
             result = await self.run_json([self.script("pc"), "send", term], stdin=text, timeout=30)
         else:
-            result = await self.run_json([self.script("send"), term, text], timeout=30)
+            # stdin, not argv: a prompt over 128 KB (MAX_ARG_STRLEN) fails exec with E2BIG
+            result = await self.run_json([self.script("send"), term], stdin=text, timeout=30)
         if isinstance(result, dict) and result.get("ok") is False:
             raise RuntimeError(result.get("error") or "Терминал не принял текст")
         return result if isinstance(result, dict) else {}
@@ -597,6 +627,16 @@ class AraLink:
         """Нажать клавиши в терминале агента: ответ на вопрос с вариантами."""
         agent = msg.get("agent") or {}
         term = str(agent.get("term") or "")
+        if msg.get("menuId") and type(msg.get("selection")) is int:
+            if self.remote(agent.get("device")):
+                argv = [self.script("pc"), "choose", term, str(msg["selection"]), msg["menuId"]]
+            else:
+                argv = [self.script("send"), "--choose", term, str(msg["selection"]), msg["menuId"]]
+            code, out, err = await self.run(argv, timeout=25, env=graphical_env())
+            if code != 0:
+                raise RuntimeError((err or out).strip()[-300:] or "Меню изменилось, обнови варианты")
+            self.wake.set()
+            return {}
         keys = [k for k in (msg.get("keys") or []) if isinstance(k, str)][:8]
         if not term.isdigit() or not keys:
             raise RuntimeError("Нечего нажимать")
@@ -616,6 +656,23 @@ class AraLink:
             await self.cmd_model({**msg, "_ready": True})
         except Exception as error:
             log.warning("queued model: %s", error)
+
+    async def version_loop(self):
+        while True:
+            try:
+                helper = Path.home() / ".config/quickshell/ara/scripts/ara-codex-version"
+                if helper.is_file(): await self.run(["python3", str(helper)], timeout=12)
+            except Exception as error:
+                log.warning("Version check: %s", error)
+            await asyncio.sleep(60)
+
+    async def cmd_rename(self, msg: dict) -> dict:
+        agent = msg.get("agent") or {}
+        helper = Path.home() / ".config/quickshell/ara/scripts/ara-title"
+        code, out, err = await self.run(["python3", str(helper), agent.get("transcript") or "", str(msg.get("title") or "")], timeout=5)
+        if code: raise RuntimeError(err or "Не удалось переименовать диалог")
+        await self.send_fresh_snapshot()
+        return json.loads(out)
 
     async def cmd_model(self, msg: dict) -> dict:
         model = str(msg.get("model") or "")
@@ -678,7 +735,7 @@ class AraLink:
         # its own systemd scope: restarting ara-link must not close the agents
         argv = [
             "systemd-run", "--user", "--scope", "--collect", "-q", "--",
-            "kitty", "-o", "allow_remote_control=socket-only", "--listen-on", listen,
+            "kitty", "--start-as=minimized", "-o", "allow_remote_control=socket-only", "--listen-on", listen,
             "--directory", str(directory), "fish", "-lc", command,
         ]
         try:
@@ -710,8 +767,21 @@ class AraLink:
         req = msg.get("reqId")
         chat = str(msg.get("chatId") or "")
         prompt = msg.get("prompt") or ""
+        # Only actual uploads/assistant media in this chat can become readable attachments.
+        requested = msg.get("attachments") or []
+        approved = self.ask_paths.get(chat, set())
+        files = []
+        for path in requested:
+            if path not in approved or not os.path.isfile(path):
+                await self.send({"type": "ara.ask.error", "reqId": req, "error": "Вложение недоступно в этом чате. Прикрепи его ещё раз."})
+                return
+            if path not in files: files.append(path)
+        history_text = "\n".join(str(m.get("text") or "") for m in msg.get("history") or [])
+        for path in approved:
+            if path not in files and path in history_text and os.path.isfile(path) and len(files) < 12: files.append(path)
         payload = {
             "prompt": prompt,
+            "files": files,
             "history": msg.get("history") or [],
             "model": msg.get("model") or "sonnet",
             "style": "talk" if msg.get("style") == "talk" else "brief",
@@ -879,6 +949,10 @@ class AraLink:
             with tempfile.TemporaryDirectory(prefix="ara-") as tmp:
                 local = Path(tmp) / name
                 await asyncio.to_thread(self.download_blob, url, local)
+                if name.endswith('.ara-review.json'):
+                    self.validate_video_review(local)
+                local = await asyncio.to_thread(agent_picture, local)
+                name = local.name
                 inbox = self.cfg["pcInboxDir"].replace("~", "$HOME", 1) if self.cfg["pcInboxDir"].startswith("~") else self.cfg["pcInboxDir"]
                 remote_cmd = f'mkdir -p "{inbox}" && cat > "{inbox}/{name}" && realpath "{inbox}/{name}"'
                 code, out, err = await self.run(
@@ -887,10 +961,40 @@ class AraLink:
                 )
                 if code != 0 or not out.strip():
                     raise RuntimeError(err.strip()[-300:] or "ПК не принял фото")
-                return {"path": out.strip().splitlines()[-1]}
+                target_path = out.strip().splitlines()[-1]
+                if name.endswith('.ara-review.json'):
+                    code, out, err = await self.run(['ssh', '-o', 'BatchMode=yes', host,
+                        'python3 ~/.config/quickshell/ara/scripts/ara-video-review < ' + shlex.quote(target_path)], timeout=45)
+                    result = json.loads(out or '{}')
+                    if code or not result.get('path'):
+                        raise RuntimeError(result.get('error') or err[-300:] or 'Не удалось сохранить кадр')
+                    if msg.get("chatId"): self.ask_paths.setdefault(str(msg["chatId"]), set()).add(result["path"])
+                    return result
+                if msg.get("chatId"): self.ask_paths.setdefault(str(msg["chatId"]), set()).add(target_path)
+                return {"path": target_path}
         target = Path(self.cfg["inboxDir"]).expanduser() / name
         await asyncio.to_thread(self.download_blob, url, target)
+        target = await asyncio.to_thread(agent_picture, target)
+        if name.endswith('.ara-review.json'):
+            self.validate_video_review(target)
+            helper = str(Path.home() / '.config/quickshell/ara/scripts/ara-video-review')
+            code, out, err = await self.run(['sh', '-c', 'python3 ' + shlex.quote(helper) + ' < ' + shlex.quote(str(target))], timeout=45)
+            result = json.loads(out or '{}')
+            if code or not result.get('path'):
+                raise RuntimeError(result.get('error') or err[-300:] or 'Не удалось сохранить кадр')
+            if msg.get("chatId"): self.ask_paths.setdefault(str(msg["chatId"]), set()).add(result["path"])
+            return result
+        if msg.get("chatId"): self.ask_paths.setdefault(str(msg["chatId"]), set()).add(str(target))
         return {"path": str(target)}
+
+    def validate_video_review(self, path: Path) -> None:
+        if path.stat().st_size > 2_000_000:
+            raise RuntimeError('Слишком большой рисунок')
+        review = json.loads(path.read_text())
+        source = str(review.get('source') or '')
+        if not (any(self.path_allowed(source, key, None) for key in self.transcripts)
+                or any(self.path_allowed(source, None, chat) for chat in self.ask_paths)):
+            raise RuntimeError('Видео не упоминается в переписке')
 
     # ---------- приём сообщений ----------
 
@@ -906,7 +1010,25 @@ class AraLink:
 
     async def handle(self, msg: dict) -> None:
         kind = msg.get("type")
-        if kind == "ara.watch":
+        if kind == "ara.conversations":
+            if getattr(self, "conversation_sync", None): self.conversation_sync.incoming = msg
+        elif kind == "ara.peer-state":
+            cache = Path.home() / ".cache/notch-island/pc-status.json"
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            data = {k: msg.get(k) for k in ("sessions", "recent", "devices", "offline")}
+            for position, agent in enumerate(data.get("sessions") or []):
+                agent["place"] = position
+            data["relay"] = True
+            with tempfile.NamedTemporaryFile(mode="w", dir=cache.parent, delete=False) as file:
+                json.dump(data, file, ensure_ascii=False)
+                temporary = file.name
+            os.replace(temporary, cache)
+        elif kind == "ara.watch":
+            for entry in msg.get("agents") or []:
+                if entry.get("device") == self.device and entry.get("transcript"):
+                    marker = Path.home() / ".config/quickshell/ara/scripts/ara-touch"
+                    if marker.is_file():
+                        self.spawn(self.run([str(marker), entry["transcript"]], timeout=5))
             self.on_watch(msg.get("agents") or [])
         elif kind == "ara.refresh":
             if time.monotonic() - getattr(self, "refresh_at", -1e9) >= 1:
@@ -916,6 +1038,8 @@ class AraLink:
             self.spawn(self.reply(msg, self.cmd_send))
         elif kind == "ara.stop":
             self.spawn(self.reply(msg, self.cmd_stop))
+        elif kind == "ara.rename":
+            self.spawn(self.reply(msg, self.cmd_rename))
         elif kind == "ara.model":
             self.spawn(self.reply(msg, self.cmd_model))
         elif kind == "ara.mascot":
@@ -949,7 +1073,8 @@ class AraLink:
             self.watch = {}
             log.info("на связи с %s как %s", self.api, self.device)
             await self.send({"type": "ara.hello", "device": self.device, "version": VERSION})
-            loops = [asyncio.create_task(self.snapshot_loop()), asyncio.create_task(self.watch_loop())]
+            self.conversation_sync = ConversationSync(self.api, self.cfg["token"], self.device)
+            loops = [asyncio.create_task(self.version_loop()), asyncio.create_task(self.snapshot_loop()), asyncio.create_task(self.watch_loop()), *([asyncio.create_task(self.conversation_sync.run())] if self.cfg.get("conversationSync", True) else [])]
             try:
                 async for raw in ws:
                     try:

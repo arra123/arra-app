@@ -4,6 +4,7 @@ import { basename, join } from 'node:path';
 import { TooLarge, mimeFor, sendBlob } from '../ara/blobs.js';
 import { blobs, hub } from '../ara/instance.js';
 import { one } from '../db.js';
+import { initConversations, readConversations, saveConversations } from '../ara/conversations.js';
 
 async function deviceByToken(token) {
   if (!token || typeof token !== 'string') return null;
@@ -11,10 +12,45 @@ async function deviceByToken(token) {
 }
 
 export default async function araRoutes(app) {
+  await initConversations();
+  async function conversationUser(request) {
+    if (request.headers['x-device-token']) return (await deviceByToken(request.headers['x-device-token']))?.user_id;
+    try { return app.jwt.verify(String(request.headers.authorization || '').replace(/^Bearer /i, '')).id; }
+    catch { return null; }
+  }
+  app.get('/ara/conversations', async (request, reply) => {
+    const userId = await conversationUser(request);
+    if (!userId) return reply.code(401).send({ error: 'Нужна авторизация' });
+    return reply.header('cache-control', 'no-store').send(await readConversations(userId));
+  });
+  app.post('/ara/conversations', async (request, reply) => {
+    const userId = await conversationUser(request);
+    if (!userId) return reply.code(401).send({ error: 'Нужна авторизация' });
+    const data = await saveConversations(userId, request.body);
+    hub.conversationsChanged(userId, data);
+    return data;
+  });
   await blobs.init();
   const sweep = setInterval(() => blobs.sweep().catch(() => {}), 3600_000);
   sweep.unref();
   app.addHook('onClose', async () => clearInterval(sweep));
+
+  // Trusted companions use the same server state across different networks.
+  app.get('/ara/state', async (request, reply) => {
+    const device = await deviceByToken(request.headers['x-device-token']);
+    if (!device) return reply.code(401).send({ error: 'Нужен ключ устройства' });
+    return reply.header('cache-control', 'no-store').send(hub.state(device.user_id));
+  });
+
+  app.post('/ara/request', async (request, reply) => {
+    const device = await deviceByToken(request.headers['x-device-token']);
+    if (!device) return reply.code(401).send({ error: 'Нужен ключ устройства' });
+    if (!['ara.subscribe', 'ara.rename', 'ara.send', 'ara.stop', 'ara.close', 'ara.key', 'ara.model', 'ara.mascot', 'ara.move', 'ara.launch'].includes(request.body?.type)) {
+      return reply.code(400).send({ error: 'Неизвестная команда' });
+    }
+    try { return await hub.request(device.user_id, request.body); }
+    catch (error) { return reply.code(504).send({ error: error.message }); }
+  });
 
   // Иконки проектов: компьютер кладёт PNG (ключ устройства), телефон показывает
   const iconDir = join(process.env.UPLOAD_DIR || join(process.cwd(), 'uploads'), 'project-icons');
@@ -43,7 +79,13 @@ export default async function araRoutes(app) {
 
   // Фото с телефона → файл на компьютере агента. Отвечает путём на компьютере.
   // query: agentKey (агент, которому пишем) или device (laptop | pc, для чата с Arra и запуска).
-  app.post('/ara/upload', { preHandler: app.auth }, async (request, reply) => {
+  // Телефон входит по JWT; компьютер (tito вне дома) — по ключу устройства.
+  const uploadAuth = async (request, reply) => {
+    const device = request.headers['x-device-token'] ? await deviceByToken(request.headers['x-device-token']) : null;
+    if (device) { request.user = { id: device.user_id }; return; }
+    return app.auth(request, reply);
+  };
+  app.post('/ara/upload', { preHandler: uploadAuth }, async (request, reply) => {
     const file = await request.file();
     if (!file) return reply.code(400).send({ error: 'Нужен файл' });
     let blob;
@@ -59,6 +101,7 @@ export default async function araRoutes(app) {
       const result = await hub.deliverUpload(request.user.id, {
         agentKey: request.query?.agentKey || null,
         device: request.query?.device || null,
+        chatId: request.query?.chatId || null,
       }, blob);
       return { ok: true, path: result.path, name: blob.name };
     } catch (error) {

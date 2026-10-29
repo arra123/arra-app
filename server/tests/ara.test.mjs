@@ -143,8 +143,8 @@ test('хаб: снимок → состояние телефону, push при 
   assert.equal(phone.last('ara.state').agents[0].since, 1_060_000);
 });
 
-test('хаб: нет push, если экран агента открыт; подписка шлёт ara.watch и переписку', async () => {
-  const { hub, pushes } = setup();
+test('хаб: свежая переписка и push даже при открытом экране агента', async () => {
+  const { hub, pushes, advance } = setup();
   const laptop = fakeSocket();
   const phone = fakeSocket();
   hub.deviceConnected('u1', 'L', { role: 'laptop' }, laptop);
@@ -159,16 +159,22 @@ test('хаб: нет push, если экран агента открыт; под
   await hub.deviceMessage('u1', 'L', { type: 'ara.transcript', agentKey: 'live:pc:700', data });
   assert.deepEqual(phone.last('ara.transcript'), { type: 'ara.transcript', agentKey: 'live:pc:700', data });
 
-  // второй телефон подписывается — сразу получает кеш
+  // A second viewer waits for a fresh response instead of receiving stale cache.
   const phone2 = fakeSocket();
   hub.clientConnected('u1', phone2);
   hub.clientMessage('u1', phone2, { type: 'ara.subscribe', agentKey: 'live:pc:700' });
+  assert.equal(phone2.last('ara.transcript'), undefined);
+  assert.deepEqual(laptop.last('ara.watch').agents, watch.agents);
+  await hub.deviceMessage('u1', 'L', { type: 'ara.transcript', agentKey: 'live:pc:700', data });
   assert.deepEqual(phone2.last('ara.transcript').data, data);
 
+  advance(20_000);
   const finished = laptopSnapshot();
   finished.live[1].state = 'waiting';
   await hub.deviceMessage('u1', 'L', finished);
-  assert.equal(pushes.length, 0);
+  advance(4_000);
+  await hub.deviceMessage('u1', 'L', finished);
+  assert.equal(pushes.length, 1);
 
   hub.clientDisconnected('u1', phone);
   hub.clientDisconnected('u1', phone2);
@@ -310,7 +316,7 @@ test('хаб: состояние офлайн-компьютера не забы
   assert.match(pushes[0][1], /прервался/);
 });
 
-test('хаб: мигание «работает ↔ ждёт» и короткие шаги не шлют push', async () => {
+test('хаб: мигание не шлёт push, короткая завершённая работа уведомляет', async () => {
   const { hub, pushes, advance } = setup();
   const laptop = fakeSocket();
   hub.deviceConnected('u1', 'L', { role: 'laptop' }, laptop);
@@ -322,10 +328,10 @@ test('хаб: мигание «работает ↔ ждёт» и коротки
   advance(5_000);
   await hub.deviceMessage('u1', 'L', laptopSnapshot()); // снова работает: не закончил
   advance(5_000);
-  await hub.deviceMessage('u1', 'L', waiting); // поработал 5 с — это шаг, не работа
+  await hub.deviceMessage('u1', 'L', waiting); // короткая работа тоже должна уведомить
   advance(30_000);
   await hub.deviceMessage('u1', 'L', waiting);
-  assert.equal(pushes.length, 0);
+  assert.equal(pushes.length, 1);
 });
 
 test('хаб: ara.file и ara.upload', async () => {
@@ -369,9 +375,10 @@ test('хаб: ara.file и ara.upload', async () => {
   assert.deepEqual(phone.last('ara.result'), { type: 'ara.result', ok: false, error: 'обрыв', reqId: 'f3' });
 
   const photo = await blobs.save('u1', Readable.from([Buffer.from('jpg')]), { name: 'IMG 1.jpg' });
-  const delivered = hub.deliverUpload('u1', { agentKey: 'live:pc:700' }, photo);
+  const delivered = hub.deliverUpload('u1', { agentKey: 'live:pc:700', chatId: 'my-chat' }, photo);
   const up = laptop.last('ara.upload');
   assert.equal(up.device, 'pc');
+  assert.equal(up.chatId, 'my-chat');
   assert.equal(up.url, `/ara/blob/${photo.id}`);
   await hub.deviceMessage('u1', 'L', { type: 'ara.result', reqId: up.reqId, ok: true, path: '/home/tima/Pictures/ara-inbox/IMG 1.jpg' });
   assert.equal((await delivered).path, '/home/tima/Pictures/ara-inbox/IMG 1.jpg');
@@ -461,4 +468,49 @@ test('хаб: старое завершение, увиденное поздно
   advance(30_000);
   await hub.deviceMessage('u1', 'L', late);
   assert.equal(pushes.length, 0);
+});
+
+
+test('ask with attachments runs on their device, even when another computer is available', async () => {
+  const { hub } = setup();
+  const laptop = fakeSocket(), pc = fakeSocket(), phone = fakeSocket();
+  hub.deviceConnected('u1', 'L', {role:'laptop'}, laptop);
+  hub.deviceConnected('u1', 'P', {role:'pc'}, pc);
+  await hub.deviceMessage('u1', 'L', laptopSnapshot());
+  await hub.deviceMessage('u1', 'P', {type:'ara.snapshot',device:'pc',live:[],recent:[]});
+  hub.clientConnected('u1', phone);
+  hub.clientMessage('u1', phone, {type:'ara.ask',reqId:'ask-file',chatId:'chat',device:'pc',attachments:['/inbox/photo.jpg',123],prompt:'describe'});
+  assert.deepEqual(pc.last('ara.ask').attachments,['/inbox/photo.jpg']);
+  assert.equal(laptop.last('ara.ask'),undefined);
+  await hub.deviceMessage('u1','P',{type:'ara.ask.done',reqId:pc.last('ara.ask').reqId});
+  assert.equal(phone.last('ara.ask.done').reqId,'ask-file');
+});
+
+
+test('usage follows native device and carries credits and resets', () => {
+  const own = {week: 98, email: 'pc@example.test', resets: {left:1, usable:1}, credits: {balance:'0', unlimited:false}};
+  const pc = {tokenId:'P', snapshot:normalizeSnapshot({device:'pc', limits:{at:20,codex:{laptop:own, pc:{week:12}}}})};
+  const laptop = {tokenId:'L', snapshot:normalizeSnapshot({device:'laptop',limits:{at:10,codex:{laptop:{week:50}, pc:{week:90}}}})};
+  assert.equal(pc.snapshot.limits.codex.pc.week,98);
+  const merged = mergeHosts([laptop,pc]);
+  assert.equal(merged.limits.codex.pc.week,98);
+  assert.equal(merged.limits.codex.laptop.week,50);
+  assert.equal(merged.limits.codex.pc.resets.left,1);
+  assert.equal(merged.limits.codex.pc.credits.balance,'0');
+  assert.equal(mergeHosts([pc]).limits.codex.laptop,null);
+});
+
+
+test('Codex usage merges by account email across devices', () => {
+  const pc = normalizeSnapshot({device:'pc', limits:{at:20,codex:{accounts:[
+    {email:'first@test',label:'Codex 1',week:91,resets:{left:3,usable:0},ok:true,at:20},
+    {email:'second@test',label:'Codex 2',week:100,resets:{left:1,usable:0},ok:true,at:20},
+  ]}}});
+  const laptop = normalizeSnapshot({device:'laptop',limits:{at:30,codex:{accounts:[
+    {email:'first@test',label:'Codex 1',week:92,resets:{left:3,usable:0},ok:true,at:30},
+  ]}}});
+  const merged = mergeHosts([{tokenId:'P',snapshot:pc},{tokenId:'L',snapshot:laptop}]);
+  assert.deepEqual(merged.limits.codex.accounts.map(a=>[a.label,a.email,a.week,a.resets.left]),[
+    ['Codex 1','first@test',92,3],['Codex 2','second@test',100,1],
+  ]);
 });

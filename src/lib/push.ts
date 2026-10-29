@@ -9,15 +9,26 @@ import { api } from '@/lib/api';
 let openAgentKey: string | null = null;
 export function setOpenAgent(key: string | null) { openAgentKey = key; }
 
-// While the app is open a notification still shows as a banner, except for
-// the agent whose chat is open: that one is on the screen already (it came
-// as «Claude закончил» while you were reading its answer)
+export type ForegroundNotice = { title: string; body: string; agentKey?: string; mascotId?: number };
+const foregroundListeners = new Set<(notice: ForegroundNotice) => void>();
+export function onForegroundNotice(listener: (notice: ForegroundNotice) => void) {
+  foregroundListeners.add(listener);
+  return () => { foregroundListeners.delete(listener); };
+}
+// In-app: a compact strip and sound; background: the normal system notification.
 if (Platform.OS !== 'web') {
   Notifications.setNotificationHandler({
     handleNotification: async (notification) => {
       const data = notification.request.content.data as { agentKey?: string } | undefined;
-      const here = !!openAgentKey && data?.agentKey === openAgentKey;
-      return { shouldShowBanner: !here, shouldShowList: !here, shouldPlaySound: !here, shouldSetBadge: false };
+      const foreground = AppState.currentState === 'active';
+      if (foreground) {
+        const content = notification.request.content;
+        for (const listener of foregroundListeners) listener({
+          title: content.title || 'Агент', body: content.body || '',
+          agentKey: data?.agentKey, mascotId: Number(content.data?.mascotId) || 0,
+        });
+      }
+      return { shouldShowBanner: !foreground, shouldShowList: !foreground, shouldPlaySound: true, shouldSetBadge: false };
     },
   });
 }

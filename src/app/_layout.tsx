@@ -9,6 +9,9 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { SplashOverlay, type SplashVariant } from '@/components/splash-overlay';
 import { Colors } from '@/constants/theme';
+import { ForegroundNoticeStrip } from '@/components/foreground-notice';
+import { startOutbox } from '@/ara/outbox';
+import { DictationProvider } from '@/lib/dictation';
 import { AuthProvider, useAuth } from '@/lib/auth';
 
 const theme = {
@@ -34,6 +37,8 @@ function Splash() {
 
 function Gate() {
   const { user, loading } = useAuth();
+  // photos and messages left unsent last time go on by themselves
+  useEffect(() => { if (!loading && user) startOutbox(); }, [loading, user]);
   return (
     <Stack screenOptions={{ headerShown: false, animation: 'fade', contentStyle: { backgroundColor: Colors.background } }}>
       <Stack.Protected guard={loading}>
@@ -73,8 +78,9 @@ export default function RootLayout() {
           <ThemeProvider value={theme}>
             <AuthProvider>
               <StatusBar style="light" />
-              <Gate />
+              <DictationProvider><Gate /></DictationProvider>
               <Splash />
+              <ForegroundNoticeStrip />
             </AuthProvider>
           </ThemeProvider>
         </SafeAreaProvider>
