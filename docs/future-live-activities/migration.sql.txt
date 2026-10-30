@@ -1,0 +1,9 @@
+SET search_path TO apple;
+
+CREATE TABLE IF NOT EXISTS ara_live_activities (
+  token text PRIMARY KEY,
+  user_id uuid NOT NULL,
+  agent_key text NOT NULL,
+  expires_at timestamptz NOT NULL DEFAULT now() + interval '8 hours'
+);
+CREATE INDEX IF NOT EXISTS ara_live_activities_user ON ara_live_activities(user_id);

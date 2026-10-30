@@ -1,0 +1,330 @@
+import { router } from 'expo-router';
+import { SymbolView } from 'expo-symbols';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Alert, Keyboard, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from 'react-native';
+import ReanimatedDrawerLayout, { DrawerKeyboardDismissMode, DrawerType, type DrawerLayoutMethods } from 'react-native-gesture-handler/ReanimatedDrawerLayout';
+import Animated, { interpolate, useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { chats, useChats, type Chat } from '@/ara/chats';
+import { agentNumber, ago, DEVICE_META, STATE_META } from '@/ara/format';
+import { useAra, useNow } from '@/ara/hooks';
+import { ara } from '@/ara/client';
+import type { Agent, AgentState, DeviceId } from '@/ara/types';
+import { openAgentScreen } from '@/components/chat-list';
+import { Segmented } from '@/components/segmented';
+import type { Limits } from '@/ara/types';
+import { AraMascot } from '@/components/ara-mascot';
+import { AgentNumber, ProjectMascot, stateLook } from '@/components/project-mascot';
+import { AgentIcon, Press, StatusDot, T } from '@/components/ui';
+import { Colors } from '@/constants/theme';
+import { haptic } from '@/lib/haptics';
+
+type Props = {
+  children: ReactNode; open: boolean; currentId: string; currentAgentKey?: string; mode: 'work' | 'chat'; limits?: Limits | null;
+  onOpen: () => void; onClose: () => void; onSelect: (id: string) => void; onNew: () => void;
+  onWork?: () => void; onTalk?: () => void;
+};
+
+function DrawerSurface({ progress, children }: { progress: SharedValue<number>; children: ReactNode }) {
+  const style = useAnimatedStyle(() => ({
+    borderTopLeftRadius: interpolate(progress.get(), [0, 1], [0, 32]),
+    borderBottomLeftRadius: interpolate(progress.get(), [0, 1], [0, 32]),
+  }));
+  // the shadow of a full-screen view was recomputed every frame of the swipe:
+  // that made it jerk; a fixed soft shadow looks the same and costs nothing
+  return <Animated.View style={[styles.surface, style]}>{children}</Animated.View>;
+}
+
+/** The state of a talk with Arra, in the dots of «Работа»: grey jumping dots while
+ * Arra answers, green for an answer not seen yet, red if it broke, yellow while a
+ * question waits, grey for the rest. */
+type ChatStatus = 'answering' | 'answered' | 'error' | 'unanswered' | 'old';
+const CHAT_STATUS: Record<ChatStatus, { dot: AgentState; label: string }> = {
+  answering: { dot: 'working', label: 'Arra отвечает' },
+  answered: { dot: 'waiting', label: 'новый ответ' },
+  error: { dot: 'error', label: 'ответ прервался' },
+  unanswered: { dot: 'waiting', label: 'без ответа' },
+  old: { dot: 'old', label: 'прочитано' },
+};
+function chatStatus(chat: Chat, open: boolean): ChatStatus {
+  const last = chat.messages[chat.messages.length - 1];
+  if (!last) return 'old';
+  if (chat.messages.some((m) => m.streaming)) return 'answering';
+  if (last.role === 'assistant' && last.error) return 'error';
+  if (last.role === 'user') return 'unanswered';
+  return !open && last.at > (chat.lastOpenedAt || 0) ? 'answered' : 'old';
+}
+/** One line of the last words, without Markdown marks. */
+function chatPreview(chat: Chat) {
+  const last = chat.messages[chat.messages.length - 1];
+  if (!last) return '';
+  if (last.streaming && !last.text) return 'печатает…';
+  const line = last.text.split('\n').map((l) => l.replace(/^[\s#>*+\-\d.)|`]+/, '').replace(/[*_`~]/g, '').trim()).find(Boolean) || '';
+  return (last.role === 'user' ? 'Вы: ' : '') + (line || (last.images?.length || last.localImages?.length ? 'Фото' : last.error || ''));
+}
+
+export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, limits, onOpen, onClose, onSelect, onNew, onWork, onTalk }: Props) {
+  const insets = useSafeAreaInsets();
+  const { width: screenW } = useWindowDimensions();
+  const width = Math.min(420, screenW - 56);
+  const drawer = useRef<DrawerLayoutMethods>(null);
+  const pendingNavigation = useRef<(() => void) | null>(null);
+  const list = useChats();
+  const state = useAra();
+  const now = useNow(30_000);
+  // «Работа | Чат» lives here: the panel shows the agents or the dialogs;
+  // it opens on the side of the screen it was opened from
+  const [tab, setTab] = useState<'work' | 'chat'>(mode);
+  const [search, setSearch] = useState('');
+  const query = search.trim().toLocaleLowerCase();
+  useEffect(() => { if (open) setTab(mode); }, [open, mode]);
+
+  useEffect(() => {
+    if (open) { Keyboard.dismiss(); drawer.current?.openDrawer({ animationSpeed: 1 }); }
+    else drawer.current?.closeDrawer({ animationSpeed: 1 });
+  }, [open]);
+
+  const items = useMemo(() => list
+    .filter((chat) => chat.messages.length || chat.id === currentId)
+    .sort((a, b) => b.updatedAt - a.updatedAt), [list, currentId]);
+
+  const closePanel = () => { Keyboard.dismiss(); onClose(); drawer.current?.closeDrawer({ animationSpeed: 1 }); };
+  const go = (action: () => void) => () => {
+    if (pendingNavigation.current) return;
+    haptic.select();
+    pendingNavigation.current = action;
+    closePanel();
+    // the drawer reports its close; if it never does, the tap still goes through
+    // instead of locking every later tap in the panel
+    setTimeout(() => { if (pendingNavigation.current === action) finishClose(); }, 600);
+  };
+  // «Новый диалог» in «Работа» starts an agent (as in tito), in «Чат» a talk with Arra
+  const current = state.agents.find((a) => a.key === currentAgentKey);
+  const newAgent = (params: { device?: DeviceId; dir?: string; agent?: string } = {}) => () =>
+    router.push({ pathname: '/new', params: {
+      device: params.device || current?.device || (state.devices.pc.online || !state.devices.laptop.online ? 'pc' : 'laptop'),
+      ...(params.dir || (!params.device && current?.cwd) ? { dir: params.dir || current?.cwd } : {}),
+      ...(params.agent || current?.agent ? { agent: params.agent || current?.agent } : {}),
+    } });
+  const [recentOpen, setRecentOpen] = useState(false);
+  const groups = (device: DeviceId) => {
+    const byProject = new Map<string, Agent[]>();
+    for (const a of state.agents) {
+      if (a.device !== device || (query && !`${a.title} ${a.task} ${a.project}`.toLocaleLowerCase().includes(query))) continue;
+      byProject.set(a.cwd, [...(byProject.get(a.cwd) || []), a]);
+    }
+    return [...byProject.values()];
+  };
+  const finishClose = () => {
+    onClose();
+    const action = pendingNavigation.current;
+    pendingNavigation.current = null;
+    action?.();
+  };
+  const remove = (chat: Chat) => {
+    haptic.press();
+    Alert.alert('Удалить диалог?', chat.title, [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: () => chats.remove(chat.id) },
+    ]);
+  };
+
+  const navigation = (
+    <View style={[styles.panel, { width, paddingTop: insets.top + 8 }]} accessibilityLabel="Панель Arra">
+      <View style={styles.head}>
+        <View style={styles.brand}><AraMascot size={26} still /><T v="title" weight="800" style={styles.brandTitle}>{tab === 'work' ? 'Агенты' : 'Чаты'}</T></View>
+        <View style={styles.headActions}>
+          <Press onPress={go(tab === 'work' ? newAgent() : onNew)} feedback="tap" style={styles.headButton} accessibilityLabel={tab === 'work' ? 'Новый агент' : 'Новый диалог'}>
+            <SymbolView name="square.and.pencil" size={18} tintColor={Colors.text} weight="semibold" />
+          </Press>
+          <Press onPress={go(() => router.push('/settings'))} feedback="tap" style={styles.headButton} accessibilityLabel="Настройки">
+            <SymbolView name="gearshape" size={18} tintColor={Colors.text} />
+          </Press>
+        </View>
+      </View>
+
+      <Segmented
+        options={[{ value: 'work', label: 'Работа', icon: 'terminal' }, { value: 'chat', label: 'Чат', icon: 'bubble.left' }]}
+        value={tab}
+        onChange={setTab}
+        glass={false}
+        size="large"
+        style={styles.tabs}
+      />
+
+      {tab === 'work' ? <View style={styles.workBar}>
+        <View style={styles.search}>
+          <SymbolView name="magnifyingglass" size={16} tintColor={Colors.textSecondary} />
+          <TextInput value={search} onChangeText={setSearch} placeholder="Поиск" placeholderTextColor={Colors.textSecondary}
+            accessibilityLabel="Поиск агента или проекта" autoCorrect={false} returnKeyType="search" onSubmitEditing={Keyboard.dismiss} style={styles.searchInput} />
+          {search ? <Press onPress={() => setSearch('')} style={styles.clearSearch} accessibilityLabel="Очистить поиск">
+            <SymbolView name="xmark.circle.fill" size={18} tintColor={Colors.textSecondary} />
+          </Press> : null}
+        </View>
+        <Press onPress={go(newAgent())} feedback="tap" style={styles.newPill} accessibilityLabel="Новый диалог">
+          <SymbolView name="plus" size={13} tintColor={Colors.text} weight="bold" />
+          <T v="subhead" weight="600" numberOfLines={1}>Новый диалог</T>
+        </Press>
+      </View> : null}
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" indicatorStyle="white">
+        {tab === 'chat' ? (
+          <>
+            {items.length ? (
+              <View style={styles.device}>
+                {items.map((chat, i) => {
+                  const active = chat.id === currentId && mode === 'chat';
+                  const status = chatStatus(chat, chat.id === currentId);
+                  const when = chat.messages.length ? ago(chat.messages[chat.messages.length - 1].at, now) : '';
+                  return (
+                    <Pressable key={chat.id} onPress={active ? closePanel : go(() => onSelect(chat.id))}
+                      onLongPress={chat.messages.length ? () => remove(chat) : undefined} delayLongPress={350}
+                      accessibilityRole="button" accessibilityState={{ selected: active }}
+                      accessibilityLabel={`${chat.messages.length ? chat.title : 'Новый диалог'}${active ? ', открыт' : ''}, ${CHAT_STATUS[status].label}`}
+                      accessibilityHint={chat.messages.length ? 'Долгое нажатие — удалить' : undefined}
+                      style={({ pressed }) => [styles.agent, i > 0 && styles.chatBorder, active && styles.chatActive, pressed && !active && styles.chatPressed]}>
+                      <AgentIcon agent="ara" size={36} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <T v="body" weight="600" numberOfLines={2} style={styles.agentTitle}>{chat.messages.length ? chat.title : 'Новый диалог'}</T>
+                        <T v="caption" color={Colors.textSecondary} numberOfLines={1}>
+                          {[chatPreview(chat), when].filter(Boolean).join(' · ')}
+                        </T>
+                      </View>
+                      {status === 'unanswered'
+                        ? <View style={[styles.stateDot, { backgroundColor: Colors.waiting }]} />
+                        : <StatusDot state={CHAT_STATUS[status].dot} size={12} />}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : <T v="subhead" color={Colors.textSecondary} style={styles.empty}>Диалогов пока нет</T>}
+          </>
+        ) : (
+          <>
+            {/* one card per computer, as in tito: the PC on top, the laptop below */}
+            {(['pc', 'laptop'] as DeviceId[]).map((device) => {
+              const projects = groups(device);
+              if (!projects.length && query) return null;
+              const online = state.devices[device].online;
+              return (
+                <View key={device} style={styles.device}>
+                  <View style={styles.deviceHead}>
+                    <SymbolView name={DEVICE_META[device].icon} size={17} tintColor={Colors.textSecondary} />
+                    <T v="callout" weight="700" style={{ flex: 1 }}>{DEVICE_META[device].label}</T>
+                    <View style={[styles.onlineDot, { backgroundColor: online ? Colors.done : Colors.textTertiary }]}
+                      accessibilityLabel={online ? 'в сети' : 'не в сети'} />
+                  </View>
+                  {projects.map((agents) => (
+                    <View key={agents[0].cwd} style={styles.project}>
+                      <View style={styles.projectHead}>
+                        <ProjectMascot id={agents[0].mascotId} size={24} still />
+                        <T v="callout" weight="700" numberOfLines={1} style={{ flex: 1 }}>{agents[0].project}</T>
+                        <Press onPress={go(newAgent({ device, dir: agents[0].cwd, agent: agents[0].agent }))} feedback="tap" style={styles.projectAdd}
+                          accessibilityLabel={`Новый диалог в ${agents[0].project}`}>
+                          <SymbolView name="plus" size={15} tintColor={Colors.textSecondary} weight="semibold" />
+                        </Press>
+                      </View>
+                      {agents.map((agent) => (
+                    <Pressable key={agent.key} onPress={agent.key === currentAgentKey ? closePanel : go(() => openAgentScreen(agent.key))}
+                      onLongPress={() => Alert.alert('Цвет маскота', agent.project, [
+                        ...[[0,'Белый'],[3,'Жёлтый'],[4,'Фиолетовый'],[5,'Голубой'],[6,'Розовый'],[8,'Зелёный'],[11,'Красный'],[12,'Оранжевый'],[13,'Бирюзовый'],[14,'Синий']].map(([id, name]) => ({
+                          text: String(name), onPress: () => { ara.request({ type: 'ara.mascot', agentKey: agent.key, mascotId: id }).catch((e) => Alert.alert('Не удалось сменить цвет', String(e.message))); },
+                        })), { text: 'Отмена', style: 'cancel' },
+                      ])}
+                      accessibilityRole="button" accessibilityLabel={`${agentNumber(agent, state.agents)}, ${agent.title || agent.project}, ${STATE_META[agent.state].label}`} accessibilityState={{ selected: agent.key === currentAgentKey }}
+                      style={({ pressed }) => [styles.agent, agent.key === currentAgentKey && styles.chatActive, pressed && styles.chatPressed]}>
+                      <View style={styles.agentPortrait}>
+                        <ProjectMascot id={agent.mascotId} size={34} {...stateLook(agent.asking ? 'waiting' : agent.helpers && agent.state !== 'error' ? 'working' : agent.state)} />
+                        <View style={styles.numberBadge}><AgentNumber number={agentNumber(agent, state.agents)} mascotId={agent.mascotId} /></View>
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <T v="body" numberOfLines={2} style={styles.agentTitle}>{agent.title || agent.task || agent.project}</T>
+                        <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{agent.asking ? 'нужен твой ответ' : agent.helpers ? `работает помощник · ${agent.helpers}` : STATE_META[agent.state].label}</T>
+                      </View>
+                      {agent.asking ? <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: Colors.waiting }} /> : <StatusDot state={agent.state} helpers={agent.helpers} size={12} />}
+                    </Pressable>
+                      ))}
+                    </View>
+                  ))}
+                  {!projects.length ? <T v="subhead" color={Colors.textSecondary} style={styles.deviceEmpty}>{online ? 'Агентов нет' : 'Не в сети'}</T> : null}
+                </View>
+              );
+            })}
+            {query && !state.agents.some(a => `${a.title} ${a.task} ${a.project}`.toLocaleLowerCase().includes(query)) ? <T color={Colors.textSecondary} style={styles.empty}>Агенты не найдены</T> : null}
+            {state.recent.length && !query ? (
+              <>
+                <Press onPress={() => setRecentOpen((v) => !v)} feedback="select" style={styles.recentHead}
+                  accessibilityRole="button" accessibilityState={{ expanded: recentOpen }} accessibilityLabel="Недавние">
+                  <T v="headline" weight="700" style={{ flex: 1 }}>Недавние</T>
+                  <T v="subhead" color={Colors.textTertiary}>{Math.min(10, state.recent.length)}</T>
+                  <SymbolView name={recentOpen ? 'chevron.down' : 'chevron.right'} size={13} tintColor={Colors.textTertiary} weight="semibold" />
+                </Press>
+                {recentOpen ? state.recent.slice(0, 10).map((item) => (
+                  <Pressable key={item.key} onPress={go(() => openAgentScreen(item.key))}
+                    accessibilityRole="button" accessibilityLabel={item.title || item.project}
+                    style={({ pressed }) => [styles.agent, pressed && styles.chatPressed]}>
+                    <ProjectMascot id={item.mascotId} size={26} still />
+                    <T v="subhead" numberOfLines={1} style={{ flex: 1 }}>{item.title || item.project}</T>
+                    {item.mtime ? <T v="caption" color={Colors.textTertiary}>{ago(item.mtime * 1000, now)}</T> : null}
+                  </Pressable>
+                )) : null}
+              </>
+            ) : null}
+          </>
+        )}
+      </ScrollView>
+
+      <View style={{ height: Math.max(insets.bottom, 8) }} />
+    </View>
+  );
+
+  return (
+    <ReanimatedDrawerLayout ref={drawer} drawerWidth={width} drawerType={DrawerType.BACK}
+      keyboardDismissMode={DrawerKeyboardDismissMode.ON_DRAG} drawerBackgroundColor={Colors.background}
+      overlayColor="rgba(0,0,0,0.12)" edgeWidth={40} minSwipeDistance={12} animationSpeed={1}
+      onDrawerOpen={() => { Keyboard.dismiss(); haptic.select(); onOpen(); }}
+      onDrawerClose={finishClose}
+      renderNavigationView={() => navigation}>
+      {(progress) => <DrawerSurface progress={progress!}>{children}</DrawerSurface>}
+    </ReanimatedDrawerLayout>
+  );
+}
+
+const styles = StyleSheet.create({
+  surface: { flex: 1, overflow: 'hidden', backgroundColor: Colors.background, borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: Colors.hairline, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 24, shadowOffset: { width: -8, height: 0 } },
+  panel: { flex: 1, backgroundColor: Colors.background },
+  head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, minHeight: 60 },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  brandTitle: { fontSize: 24 },
+  headActions: { flexDirection: 'row', gap: 4 },
+  headButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.card },
+  section: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 8 },
+  tabs: { marginHorizontal: 16, marginTop: 6 },
+  workBar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginTop: 12 },
+  search: { flex: 1, minWidth: 0, paddingLeft: 12, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, backgroundColor: Colors.card },
+  newPill: { height: 44, paddingHorizontal: 14, borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: Colors.cardPressed, borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.hairline },
+  device: { marginHorizontal: 8, marginTop: 12, paddingBottom: 6, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.hairline, backgroundColor: Colors.card, overflow: 'hidden' },
+  deviceHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 8, paddingHorizontal: 8, height: 46, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.separator },
+  onlineDot: { width: 8, height: 8, borderRadius: 4 },
+  deviceEmpty: { paddingHorizontal: 16, paddingVertical: 14 },
+  project: { marginTop: 6 },
+  projectHead: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 16, paddingRight: 6, height: 40 },
+  projectAdd: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  recentHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 8, marginTop: 14, paddingHorizontal: 12, minHeight: 48, borderRadius: 14 },
+  searchInput: { flex: 1, height: 44, color: Colors.text, fontSize: 15, minWidth: 0 },
+  clearSearch: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  agent: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 8, paddingHorizontal: 12, minHeight: 70, paddingVertical: 10, borderRadius: 14 },
+  agentPortrait: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  numberBadge: { position: 'absolute', bottom: -2, right: -2, paddingHorizontal: 3, borderRadius: 8, backgroundColor: Colors.background },
+  agentTitle: { fontSize: 16 },
+  chatBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.separator },
+  stateDot: { width: 12, height: 12, borderRadius: 6 },
+  chatActive: { backgroundColor: Colors.cardPressed },
+  chatPressed: { backgroundColor: Colors.card },
+  empty: { paddingHorizontal: 20, paddingTop: 6 },
+  subscriptions: { margin: 16, padding: 16, borderRadius: 16, backgroundColor: Colors.card, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  bottom: { marginHorizontal: 14, marginBottom: 8, flexDirection: 'row', gap: 8, paddingHorizontal: 5, paddingTop: 5, borderRadius: 29, backgroundColor: Colors.card },
+  modeButton: { flex: 1, height: 48, borderRadius: 24, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  modeActive: { backgroundColor: Colors.text },
+});

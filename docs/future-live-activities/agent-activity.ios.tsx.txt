@@ -1,0 +1,77 @@
+import { HStack, Image, Link, Text, VStack } from '@expo/ui/swift-ui';
+import { font, foregroundStyle, padding, widgetURL } from '@expo/ui/swift-ui/modifiers';
+import { createLiveActivity, createWidget, type LiveActivity } from 'expo-widgets';
+import { AppState } from 'react-native';
+import { api } from '@/lib/api';
+import type { Agent } from '@/ara/types';
+
+type Props = { key: string; project: string; status: string; since: number; running: boolean };
+const ActivityView = (props: Props) => {
+  'widget';
+  const url = 'arra://agent/' + encodeURIComponent(props.key);
+  const color = props.running ? '#FFFFFF' : '#FFD15C';
+  const timer = props.running
+    ? <Text date={new Date(props.since)} dateStyle="timer" modifiers={[font({ size: 15, weight: 'semibold' })]} />
+    : <Text modifiers={[font({ size: 13 })]}>{props.status}</Text>;
+  return {
+    banner: <HStack modifiers={[padding({ all: 16 }), widgetURL(url)]}>
+      <Image systemName="terminal.fill" color={color} />
+      <VStack alignment="leading">
+        <Text modifiers={[font({ size: 17, weight: 'bold' })]}>{props.project}</Text>
+        <Text modifiers={[font({ size: 13 }), foregroundStyle('#BFBFC7')]}>{props.status}</Text>
+      </VStack>
+      {timer}
+    </HStack>,
+    compactLeading: <Image systemName="terminal.fill" color={color} />,
+    compactTrailing: timer,
+    minimal: <Image systemName={props.running ? 'terminal.fill' : 'checkmark'} color={color} />,
+    expandedLeading: <Text modifiers={[font({ weight: 'bold' })]}>{props.project}</Text>,
+    expandedTrailing: timer,
+    expandedBottom: <Text>{props.status}</Text>,
+  };
+};
+const activity = createLiveActivity('ArraAgentActivity', ActivityView);
+const AskView = () => {
+  'widget';
+  return <Link destination="arra://ask?voice=1"><VStack modifiers={[padding({ all: 12 })]}>
+    <Image systemName="mic.fill" />
+    <Text modifiers={[font({ size: 18, weight: 'bold' })]}>Arra</Text>
+    <Text modifiers={[font({ size: 12 })]}>Спросить голосом</Text>
+  </VStack></Link>;
+};
+const askWidget = createWidget('ArraAsk', AskView);
+let current: LiveActivity<Props> | undefined;
+let currentKey = '';
+let last = '';
+let serial = Promise.resolve();
+let initialized = false;
+const propsOf = (agent: Agent): Props => ({ key: agent.key, project: agent.project, since: agent.since || Date.now(),
+  running: agent.state === 'working', status: agent.state === 'working' ? 'Агент работает' : agent.state === 'error' ? 'Нужна помощь' : 'Ждет тебя' });
+
+export function syncAgentActivity(agents: Agent[]) {
+  if (AppState.currentState !== 'active') return;
+  const candidate = agents.find(a => a.key === currentKey) || agents.find(a => a.state === 'working');
+  serial = serial.then(async () => {
+    if (!initialized) {
+      initialized = true;
+      askWidget.updateSnapshot({});
+      for (const instance of activity.getInstances()) await instance.end('immediate');
+    }
+    if (!candidate || candidate.state === 'old') {
+      if (current) await current.end('default');
+      current = undefined; currentKey = ''; last = ''; return;
+    }
+    const props = propsOf(candidate);
+    const encoded = JSON.stringify(props);
+    if (encoded === last) return;
+    if (!current) {
+      current = activity.start(props, `arra://agent/${encodeURIComponent(candidate.key)}`);
+      currentKey = candidate.key;
+      const register = (token: string) => api('/push/activity', { body: { token, agentKey: candidate.key } }).catch(() => {});
+      current.addPushTokenListener(event => { void register(event.pushToken); });
+      const token = await current.getPushToken();
+      if (token) await register(token);
+    } else await current.update(props);
+    last = encoded;
+  }).catch(error => { console.warn('Arra Live Activity:', String(error)); });
+}
