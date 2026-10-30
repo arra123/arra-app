@@ -107,8 +107,8 @@
           "widgets": [
             {
               "name": "ArraAgents",
-              "displayName": "Arra · новый разговор",
-              "description": "Одна кнопка — сразу новый чат с Arra",
+              "displayName": "Новый чат",
+              "description": "Одно нажатие — пустой чат с Arra",
               "supportedFamilies": [
                 "systemSmall",
                 "systemMedium",
@@ -121,7 +121,18 @@
             {
               "name": "ArraClip",
               "displayName": "Буфер на ПК",
-              "description": "Одно нажатие — скопированное уходит на компьютер",
+              "description": "Скопированное на iPhone уходит в буфер компьютера",
+              "supportedFamilies": [
+                "systemSmall",
+                "accessoryCircular",
+                "accessoryRectangular"
+              ],
+              "contentMarginsDisabled": true
+            },
+            {
+              "name": "ArraPhoto",
+              "displayName": "Фото на ПК",
+              "description": "Последнее фото уходит в буфер компьютера",
               "supportedFamilies": [
                 "systemSmall",
                 "accessoryCircular",

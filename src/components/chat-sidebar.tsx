@@ -10,13 +10,13 @@ import { chats, useChats, type Chat } from '@/ara/chats';
 import { agentNumber, ago, DEVICE_META, STATE_META } from '@/ara/format';
 import { useAra, useNow } from '@/ara/hooks';
 import { ara } from '@/ara/client';
-import type { Agent, DeviceId } from '@/ara/types';
+import type { Agent, AgentState, DeviceId } from '@/ara/types';
 import { openAgentScreen } from '@/components/chat-list';
 import { Segmented } from '@/components/segmented';
 import type { Limits } from '@/ara/types';
 import { AraMascot } from '@/components/ara-mascot';
 import { AgentNumber, ProjectMascot, stateLook } from '@/components/project-mascot';
-import { Press, StatusDot, T } from '@/components/ui';
+import { AgentIcon, Press, StatusDot, T } from '@/components/ui';
 import { Colors } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
@@ -34,6 +34,34 @@ function DrawerSurface({ progress, children }: { progress: SharedValue<number>; 
   // the shadow of a full-screen view was recomputed every frame of the swipe:
   // that made it jerk; a fixed soft shadow looks the same and costs nothing
   return <Animated.View style={[styles.surface, style]}>{children}</Animated.View>;
+}
+
+/** The state of a talk with Arra, in the dots of «Работа»: grey jumping dots while
+ * Arra answers, green for an answer not seen yet, red if it broke, yellow while a
+ * question waits, grey for the rest. */
+type ChatStatus = 'answering' | 'answered' | 'error' | 'unanswered' | 'old';
+const CHAT_STATUS: Record<ChatStatus, { dot: AgentState; label: string }> = {
+  answering: { dot: 'working', label: 'Arra отвечает' },
+  answered: { dot: 'waiting', label: 'новый ответ' },
+  error: { dot: 'error', label: 'ответ прервался' },
+  unanswered: { dot: 'waiting', label: 'без ответа' },
+  old: { dot: 'old', label: 'прочитано' },
+};
+function chatStatus(chat: Chat, open: boolean): ChatStatus {
+  const last = chat.messages[chat.messages.length - 1];
+  if (!last) return 'old';
+  if (chat.messages.some((m) => m.streaming)) return 'answering';
+  if (last.role === 'assistant' && last.error) return 'error';
+  if (last.role === 'user') return 'unanswered';
+  return !open && last.at > (chat.lastOpenedAt || 0) ? 'answered' : 'old';
+}
+/** One line of the last words, without Markdown marks. */
+function chatPreview(chat: Chat) {
+  const last = chat.messages[chat.messages.length - 1];
+  if (!last) return '';
+  if (last.streaming && !last.text) return 'печатает…';
+  const line = last.text.split('\n').map((l) => l.replace(/^[\s#>*+\-\d.)|`]+/, '').replace(/[*_`~]/g, '').trim()).find(Boolean) || '';
+  return (last.role === 'user' ? 'Вы: ' : '') + (line || (last.images?.length || last.localImages?.length ? 'Фото' : last.error || ''));
 }
 
 export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, limits, onOpen, onClose, onSelect, onNew, onWork, onTalk }: Props) {
@@ -143,22 +171,34 @@ export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" indicatorStyle="white">
         {tab === 'chat' ? (
           <>
-            <T v="headline" weight="700" style={styles.section}>Диалоги</T>
-            {items.length ? items.map((chat) => {
-              const active = chat.id === currentId && mode === 'chat';
-              const streaming = chat.messages.some((message) => message.streaming);
-              return (
-                <Pressable key={chat.id} onPress={active ? closePanel : go(() => onSelect(chat.id))}
-                  onLongPress={chat.messages.length ? () => remove(chat) : undefined} delayLongPress={350}
-                  accessibilityRole="button" accessibilityState={{ selected: active }}
-                  accessibilityLabel={`${chat.messages.length ? chat.title : 'Новый диалог'}${active ? ', открыт' : ''}${streaming ? ', Arra отвечает' : ''}`}
-                  accessibilityHint={chat.messages.length ? 'Долгое нажатие — удалить' : undefined}
-                  style={({ pressed }) => [styles.chat, active && styles.chatActive, pressed && !active && styles.chatPressed]}>
-                  <T v="body" numberOfLines={1} style={styles.chatTitle}>{chat.messages.length ? chat.title : 'Новый диалог'}</T>
-                  {streaming ? <View style={styles.dot} /> : null}
-                </Pressable>
-              );
-            }) : <T v="subhead" color={Colors.textSecondary} style={styles.empty}>Диалогов пока нет</T>}
+            {items.length ? (
+              <View style={styles.device}>
+                {items.map((chat, i) => {
+                  const active = chat.id === currentId && mode === 'chat';
+                  const status = chatStatus(chat, chat.id === currentId);
+                  const when = chat.messages.length ? ago(chat.messages[chat.messages.length - 1].at, now) : '';
+                  return (
+                    <Pressable key={chat.id} onPress={active ? closePanel : go(() => onSelect(chat.id))}
+                      onLongPress={chat.messages.length ? () => remove(chat) : undefined} delayLongPress={350}
+                      accessibilityRole="button" accessibilityState={{ selected: active }}
+                      accessibilityLabel={`${chat.messages.length ? chat.title : 'Новый диалог'}${active ? ', открыт' : ''}, ${CHAT_STATUS[status].label}`}
+                      accessibilityHint={chat.messages.length ? 'Долгое нажатие — удалить' : undefined}
+                      style={({ pressed }) => [styles.agent, i > 0 && styles.chatBorder, active && styles.chatActive, pressed && !active && styles.chatPressed]}>
+                      <AgentIcon agent="ara" size={36} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <T v="body" weight="600" numberOfLines={2} style={styles.agentTitle}>{chat.messages.length ? chat.title : 'Новый диалог'}</T>
+                        <T v="caption" color={Colors.textSecondary} numberOfLines={1}>
+                          {[chatPreview(chat), when].filter(Boolean).join(' · ')}
+                        </T>
+                      </View>
+                      {status === 'unanswered'
+                        ? <View style={[styles.stateDot, { backgroundColor: Colors.waiting }]} />
+                        : <StatusDot state={CHAT_STATUS[status].dot} size={12} />}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : <T v="subhead" color={Colors.textSecondary} style={styles.empty}>Диалогов пока нет</T>}
           </>
         ) : (
           <>
@@ -278,11 +318,10 @@ const styles = StyleSheet.create({
   agentPortrait: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   numberBadge: { position: 'absolute', bottom: -2, right: -2, paddingHorizontal: 3, borderRadius: 8, backgroundColor: Colors.background },
   agentTitle: { fontSize: 16 },
-  chat: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 8, paddingHorizontal: 12, minHeight: 48, borderRadius: 14 },
-  chatTitle: { flex: 1, fontSize: 17 },
+  chatBorder: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.separator },
+  stateDot: { width: 12, height: 12, borderRadius: 6 },
   chatActive: { backgroundColor: Colors.cardPressed },
   chatPressed: { backgroundColor: Colors.card },
-  dot: { width: 7, height: 7, borderRadius: 4, backgroundColor: Colors.link },
   empty: { paddingHorizontal: 20, paddingTop: 6 },
   subscriptions: { margin: 16, padding: 16, borderRadius: 16, backgroundColor: Colors.card, flexDirection: 'row', alignItems: 'center', gap: 12 },
   bottom: { marginHorizontal: 14, marginBottom: 8, flexDirection: 'row', gap: 8, paddingHorizontal: 5, paddingTop: 5, borderRadius: 29, backgroundColor: Colors.card },

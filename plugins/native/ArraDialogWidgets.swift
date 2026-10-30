@@ -228,78 +228,136 @@ public struct ArraDialogCard: View {
 }
 
 public struct ArraWidgetEntryView: View {
-  @Environment(\.widgetFamily) private var family
-  private let destination = URL(string: "arra://ask?fresh=1")!
   public init(props: [String: Any]) {}
+  public var body: some View { ArraActionWidgetView.newChat }
+}
+
+/// One action in one small square: «Буфер на ПК», «Фото на ПК», «Новый чат».
+/// Widgets cannot read the clipboard or the photos, so the tap opens the app
+/// on a link (arra://clip, arra://photo, arra://ask?fresh=1) for a moment.
+public struct ArraActionWidgetView: View {
+  @Environment(\.widgetFamily) private var family
+  private let symbol: String
+  private let title: String
+  private let subtitle: String
+  private let tint: Color
+  private let toPC: Bool
+  private let destination: URL
+  private let spoken: String
+  public init(symbol: String, title: String, subtitle: String, tint: Color, toPC: Bool, url: String, spoken: String) {
+    self.symbol = symbol; self.title = title; self.subtitle = subtitle; self.tint = tint; self.toPC = toPC
+    destination = URL(string: url)!; self.spoken = spoken
+  }
+  public static var clip: ArraActionWidgetView { ArraActionWidgetView(symbol: "doc.on.clipboard", title: "Буфер", subtitle: "на ПК",
+    tint: Color(red: 0.36, green: 0.55, blue: 1), toPC: true, url: "arra://clip", spoken: "Отправить буфер на компьютер") }
+  public static var photo: ArraActionWidgetView { ArraActionWidgetView(symbol: "photo", title: "Фото", subtitle: "на ПК",
+    tint: Color(red: 0.2, green: 0.78, blue: 0.47), toPC: true, url: "arra://photo", spoken: "Отправить последнее фото на компьютер") }
+  public static var newChat: ArraActionWidgetView { ArraActionWidgetView(symbol: "square.and.pencil", title: "Новый", subtitle: "чат",
+    tint: Color(red: 0.69, green: 0.45, blue: 1), toPC: false, url: "arra://ask?fresh=1", spoken: "Новый чат с Arra") }
+
   public var body: some View {
     if #available(iOS 17.0, *) {
-      content.containerBackground(Color(red: 0.039, green: 0.039, blue: 0.047), for: .widget)
+      content.containerBackground(for: .widget) { background }
         .widgetURL(destination)
-    } else { content.background(Color.black).widgetURL(destination) }
+    } else { content.background(background).widgetURL(destination) }
+  }
+  @ViewBuilder private var background: some View {
+    if family == .systemSmall {
+      ZStack {
+        Color(red: 0.067, green: 0.067, blue: 0.078)
+        RadialGradient(colors: [tint.opacity(0.32), tint.opacity(0)], center: .top, startRadius: 0, endRadius: 150)
+      }
+    } else { Color.clear }
   }
   @ViewBuilder private var content: some View {
     switch family {
-    case .accessoryInline:
-      Label("Новый разговор", systemImage: "square.and.pencil")
     case .accessoryCircular:
-      Image(systemName: "square.and.pencil").font(.title2)
-        .accessibilityLabel("Новый разговор с Arra")
+      ZStack {
+        AccessoryWidgetBackground()
+        glyph(size: 22, badge: 10)
+      }.accessibilityLabel(spoken)
     case .accessoryRectangular:
-      Label("Новый разговор", systemImage: "square.and.pencil")
-        .font(.headline).lineLimit(1).minimumScaleFactor(0.75)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      HStack(spacing: 8) {
+        glyph(size: 22, badge: 10)
+        Text("\(title) \(subtitle)").font(.headline).lineLimit(1).minimumScaleFactor(0.75)
+        Spacer(minLength: 0)
+      }.accessibilityLabel(spoken)
+    case .accessoryInline:
+      Label("\(title) \(subtitle)", systemImage: symbol)
     default:
-      Link(destination: destination) {
-        VStack(alignment: .leading, spacing: 14) {
-          Text("Arra").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.white.opacity(0.5))
-          HStack(spacing: 10) {
-            Image(systemName: "square.and.pencil").font(.system(size: 21, weight: .medium))
-            Text("Новый разговор").font(.system(size: family == .systemSmall ? 13 : 17, weight: .semibold))
-              .lineLimit(1).minimumScaleFactor(0.7)
-            if family == .systemMedium { Spacer(minLength: 0) }
-          }
-          .foregroundStyle(Color.white)
-          .padding(.vertical, 14).padding(.horizontal, 10)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.1)))
-        }.padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-      }.accessibilityLabel("Начать новый разговор с Arra")
+      // a round button in the middle and two short words under it: reads as an action, not an app icon
+      VStack(spacing: 10) {
+        ZStack {
+          Circle().fill(tint.opacity(0.22))
+          Circle().strokeBorder(tint.opacity(0.55), lineWidth: 1.5)
+          glyph(size: 34, badge: 15)
+        }
+        .frame(width: 84, height: 84)
+        HStack(spacing: 5) {
+          Text(title).font(.system(size: 16, weight: .bold)).foregroundStyle(Color.white)
+          Text(subtitle).font(.system(size: 16, weight: .semibold)).foregroundStyle(Color.white.opacity(0.55))
+        }.lineLimit(1).minimumScaleFactor(0.7)
+      }
+      .padding(12).frame(maxWidth: .infinity, maxHeight: .infinity)
+      .accessibilityElement(children: .ignore).accessibilityLabel(spoken)
     }
+  }
+  /// The symbol, and for «… на ПК» a small computer at its lower right.
+  private func glyph(size: CGFloat, badge: CGFloat) -> some View {
+    Image(systemName: symbol).font(.system(size: size, weight: .semibold))
+      .foregroundStyle(family == .systemSmall ? tint : Color.primary)
+      .overlay(alignment: .bottomTrailing) {
+        if toPC {
+          Image(systemName: "arrow.right.circle.fill").font(.system(size: badge, weight: .bold))
+            .foregroundStyle(family == .systemSmall ? Color.white : Color.primary)
+            .offset(x: badge * 0.55, y: badge * 0.35)
+        }
+      }
   }
 }
 
-/// «Буфер на ПК»: widgets cannot read the clipboard, so the tap opens arra://clip
-/// and the app sends what is copied to the computer.
 public struct ArraClipWidgetView: View {
-  @Environment(\.widgetFamily) private var family
-  private let destination = URL(string: "arra://clip")!
   public init() {}
-  public var body: some View {
-    if #available(iOS 17.0, *) {
-      content.containerBackground(Color(red: 0.039, green: 0.039, blue: 0.047), for: .widget)
-        .widgetURL(destination)
-    } else { content.background(Color.black).widgetURL(destination) }
+  public var body: some View { ArraActionWidgetView.clip }
+}
+public struct ArraPhotoWidgetView: View {
+  public init() {}
+  public var body: some View { ArraActionWidgetView.photo }
+}
+
+/// Controls (iOS 18): one-cell buttons for Control Center, the Lock Screen
+/// corners and the Action button. Each opens the same link as its widget.
+@available(iOS 18.0, *)
+struct ArraClipControl: ControlWidget {
+  var body: some ControlWidgetConfiguration {
+    StaticControlConfiguration(kind: "com.arratima.aura.control.clip") {
+      ControlWidgetButton(action: ArraOpenLinkIntent(link: .clip)) { Label("Буфер на ПК", systemImage: "doc.on.clipboard") }
+    }.displayName("Буфер на ПК").description("Скопированное уходит в буфер компьютера")
   }
-  @ViewBuilder private var content: some View {
-    switch family {
-    case .accessoryCircular:
-      Image(systemName: "doc.on.clipboard").font(.title2)
-        .accessibilityLabel("Отправить буфер на компьютер")
-    case .accessoryRectangular:
-      Label("Буфер на ПК", systemImage: "doc.on.clipboard")
-        .font(.headline).lineLimit(1).minimumScaleFactor(0.75)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    default:
-      VStack(alignment: .leading, spacing: 0) {
-        Image(systemName: "doc.on.clipboard").font(.system(size: 26, weight: .medium))
-        Spacer(minLength: 0)
-        Text("Буфер").font(.system(size: 17, weight: .semibold))
-        Text("на компьютер").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.white.opacity(0.5))
-      }
-      .foregroundStyle(Color.white)
-      .padding(16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-      .accessibilityLabel("Отправить буфер на компьютер")
-    }
+}
+@available(iOS 18.0, *)
+struct ArraPhotoControl: ControlWidget {
+  var body: some ControlWidgetConfiguration {
+    StaticControlConfiguration(kind: "com.arratima.aura.control.photo") {
+      ControlWidgetButton(action: ArraOpenLinkIntent(link: .photo)) { Label("Фото на ПК", systemImage: "photo") }
+    }.displayName("Фото на ПК").description("Последнее фото уходит в буфер компьютера")
+  }
+}
+@available(iOS 18.0, *)
+struct ArraNewChatControl: ControlWidget {
+  var body: some ControlWidgetConfiguration {
+    StaticControlConfiguration(kind: "com.arratima.aura.control.new-chat") {
+      ControlWidgetButton(action: ArraOpenLinkIntent(link: .newChat)) { Label("Новый чат", systemImage: "square.and.pencil") }
+    }.displayName("Новый чат Arra").description("Сразу пустой чат с Arra")
+  }
+}
+@available(iOS 18.0, *)
+public struct ArraControls: WidgetBundle {
+  public init() {}
+  public var body: some Widget {
+    ArraClipControl()
+    ArraPhotoControl()
+    ArraNewChatControl()
   }
 }
 

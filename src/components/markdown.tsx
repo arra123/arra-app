@@ -159,7 +159,15 @@ function Blocks({ blocks, depth = 0 }: { blocks: Block[]; depth?: number }) {
 
 /** Ответ агента / Arra в Markdown. */
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
-  const blocks = useMemo(() => parseMarkdown(text), [text]);
+  // a rule at the very start or end only adds an empty band around the answer
+  const blocks = useMemo(() => {
+    const all = parseMarkdown(text.trim());
+    let a = 0;
+    let b = all.length;
+    while (a < b && all[a].t === 'hr') a++;
+    while (b > a && all[b - 1].t === 'hr') b--;
+    return all.slice(a, b);
+  }, [text]);
   return <View>{<Blocks blocks={blocks} />}</View>;
 });
 

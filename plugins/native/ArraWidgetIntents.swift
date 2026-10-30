@@ -67,3 +67,32 @@ public struct ArraCycleDialog: LiveActivityIntent {
     return .result()
   }
 }
+
+/// What a control (and the Shortcuts app) opens: a link into the app.
+@available(iOS 18.0, *)
+public enum ArraLink: String, AppEnum {
+  case clip, photo, newChat
+  public static var typeDisplayRepresentation: TypeDisplayRepresentation = "Действие Arra"
+  public static var caseDisplayRepresentations: [ArraLink: DisplayRepresentation] = [
+    .clip: "Буфер на ПК", .photo: "Фото на ПК", .newChat: "Новый чат",
+  ]
+  var url: URL {
+    switch self {
+    case .clip: return URL(string: "arra://clip")!
+    case .photo: return URL(string: "arra://photo")!
+    case .newChat: return URL(string: "arra://ask?fresh=1")!
+    }
+  }
+}
+
+@available(iOS 18.0, *)
+public struct ArraOpenLinkIntent: AppIntent {
+  public static var title: LocalizedStringResource = "Arra: отправить на ПК или новый чат"
+  public static var openAppWhenRun = true
+  @Parameter(title: "Действие") public var link: ArraLink
+  public init() { link = .clip }
+  public init(link: ArraLink) { self.link = link }
+  public func perform() async throws -> some IntentResult & OpensIntent {
+    .result(opensIntent: OpenURLIntent(link.url))
+  }
+}

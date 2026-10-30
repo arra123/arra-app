@@ -113,6 +113,11 @@ export async function uploadPhoto(photo: LocalPhoto, target: { agentKey: string 
   return res.path;
 }
 
+/** A picture into the computer's «С телефона» (tito-kb pull): with the title «Буфер iPhone» it lands in the PC clipboard. */
+export async function shareFile(file: LocalPhoto, title: string) {
+  return upload<{ ok: boolean }>(`/kb/share?title=${encodeURIComponent(title)}`, file.uri, file.name, file.mime, 180_000);
+}
+
 /** Голос → текст (Whisper на сервере). */
 export async function transcribe(uri: string) {
   const res = await upload<{ text: string }>('/ai/transcribe', uri, 'voice.m4a', 'audio/m4a', 90_000);

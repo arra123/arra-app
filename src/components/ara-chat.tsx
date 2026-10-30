@@ -26,9 +26,25 @@ const MODELS: { value: AskModel; label: string; hint: string }[] = [
 
 function AraAnswer({ message, chatId, onRetry }: { message: ChatMessage; chatId: string; onRetry?: () => void }) {
   const media = useMemo(() => mediaPaths(message.text), [message.text]);
+  // a line that is only the path of a picture shown below would repeat it as text
+  const text = useMemo(() => {
+    const shown = new Set([...media.images, ...media.videos]);
+    if (!shown.size) return message.text;
+    return message.text.split('\n')
+      .filter((line) => !shown.has(line.trim().replace(/^[-*•]\s+/, '').replace(/^`|`$/g, '').replace(/[.,;:]$/, '')))
+      .join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }, [message.text, media]);
+  if (message.streaming && !text) {
+    return (
+      <View style={styles.typing} accessibilityLabel="Arra печатает">
+        <AraMascot size={26} mood="thinking" />
+        <T v="subhead" color={Colors.textSecondary}>печатает…</T>
+      </View>
+    );
+  }
   return (
     <AssistantMessage
-      text={message.text}
+      text={text}
       images={media.images}
       videos={media.videos}
       scope={{ chatId }}
@@ -194,8 +210,10 @@ export function AraChat({ id, autoFocus = false, voiceRequest }: { id: string; a
         // written at the bottom left, next to a small Arra, like in tito
         title={null}
         bareTitle
-        overlaySpace={status ? 42 : 0}
-        overlay={({ bottom }) => <AraStatus text={status} busy={busy} bottom={bottom} />}
+        // «печатает…» lives in the answer itself: a band over the input that
+        // came and went with every answer pushed the whole talk up and down
+        overlaySpace={online ? 0 : 42}
+        overlay={({ bottom }) => <AraStatus text={online ? null : status} busy={false} bottom={bottom} />}
         left={left}
         right={right}
         data={messages}
@@ -244,6 +262,7 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   error: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   empty: { alignItems: 'center' },
+  typing: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 30 },
 });
 
 /** Bottom left, over the input: a small Arra and what it is doing (types,

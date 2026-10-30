@@ -93,7 +93,8 @@ export default async function kbRoutes(app) {
             await rm(path, { force: true });
             return reply.code(500).send({ error: error.message });
           }
-          await add({ kind: 'file', fileName: name, filePath: path, fileMime: mime || null });
+          // a title sent before the file (e.g. «Буфер iPhone») stays with it
+          await add({ kind: 'file', title: String(fields.title || request.query?.title || '').trim().slice(0, 300), fileName: name, filePath: path, fileMime: mime || null });
           realFiles += 1;
         } else {
           fields[part.fieldname] = [fields[part.fieldname], part.value].filter(Boolean).join('\n');

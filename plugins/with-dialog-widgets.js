@@ -38,6 +38,8 @@ module.exports = function withDialogWidgets(config) {
     fs.writeFileSync(factoryPath, factory);
     const indexPath = path.join(c.modRequest.platformProjectRoot, 'ExpoWidgetsTarget/index.swift');
     let index = replaceRequired(fs.readFileSync(indexPath, 'utf8'), 'WidgetLiveActivity()', 'ArraLiveActivity()', 'native activity');
+    // one-cell controls (Control Center, Lock Screen, Action button), iOS 18
+    index = replaceRequired(index, 'ArraLiveActivity()\n', 'ArraLiveActivity()\n    if #available(iOS 18.0, *) {\n      ArraControls().body\n    }\n', 'native controls');
     // Remove only our previous generated supplemental package.
     index = index.replace(/\nimport AppIntents\n@available\(iOS 17\.0, \*\)\nstruct ArraExtensionIntentsPackage: AppIntentsPackage \{\n  static var includedPackages: \[any AppIntentsPackage.Type\] \{ \[ArraWidgetsIntentsPackage.self\] \}\n\}\n?/g, '\n');
     fs.writeFileSync(indexPath, index);
@@ -48,6 +50,10 @@ module.exports = function withDialogWidgets(config) {
     const clipPath = path.join(c.modRequest.platformProjectRoot, 'ExpoWidgetsTarget/ArraClip.swift');
     const clip = replaceRequired(fs.readFileSync(clipPath, 'utf8'), 'WidgetsEntryView(entry: entry)', 'ArraClipWidgetView()', 'native clipboard widget');
     fs.writeFileSync(clipPath, clip);
+    // «Фото на ПК»: arra://photo, the app sends the newest photo
+    const photoPath = path.join(c.modRequest.platformProjectRoot, 'ExpoWidgetsTarget/ArraPhoto.swift');
+    const photo = replaceRequired(fs.readFileSync(photoPath, 'utf8'), 'WidgetsEntryView(entry: entry)', 'ArraPhotoWidgetView()', 'native photo widget');
+    fs.writeFileSync(photoPath, photo);
     return c;
   }]);
   return withXcodeProject(config, c => {
