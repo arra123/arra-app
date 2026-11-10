@@ -227,102 +227,100 @@ public struct ArraDialogCard: View {
   }
 }
 
+/// Kept for the generated ArraAgents.swift (Expo still owns its snapshot for the app);
+/// that widget is no longer in the gallery, the wide «Arra» below replaced it.
 public struct ArraWidgetEntryView: View {
   public init(props: [String: Any]) {}
-  public var body: some View { ArraActionWidgetView.newChat }
+  public var body: some View { ArraActionsView() }
 }
 
-/// One action in one small square: «Буфер на ПК», «Фото на ПК», «Новый чат».
-/// Widgets cannot read the clipboard or the photos, so the tap opens the app
-/// on a link (arra://clip, arra://photo, arra://ask?fresh=1) for a moment.
-public struct ArraActionWidgetView: View {
-  @Environment(\.widgetFamily) private var family
-  private let symbol: String
-  private let title: String
-  private let subtitle: String
-  private let tint: Color
-  private let toPC: Bool
-  private let destination: URL
-  private let spoken: String
-  public init(symbol: String, title: String, subtitle: String, tint: Color, toPC: Bool, url: String, spoken: String) {
-    self.symbol = symbol; self.title = title; self.subtitle = subtitle; self.tint = tint; self.toPC = toPC
-    destination = URL(string: url)!; self.spoken = spoken
+/// The wide widget has no data, so its timeline is one fixed entry. Expo's provider
+/// returns an empty timeline until the app writes one, and WidgetKit then keeps
+/// showing the redacted placeholder (grey bars instead of the words).
+public struct ArraActionsEntry: TimelineEntry {
+  public let date: Date
+}
+public struct ArraActionsProvider: TimelineProvider {
+  public init() {}
+  public func placeholder(in context: Context) -> ArraActionsEntry { ArraActionsEntry(date: Date()) }
+  public func getSnapshot(in context: Context, completion: @escaping @Sendable (ArraActionsEntry) -> Void) {
+    completion(ArraActionsEntry(date: Date()))
   }
-  public static var clip: ArraActionWidgetView { ArraActionWidgetView(symbol: "doc.on.clipboard", title: "Буфер", subtitle: "на ПК",
-    tint: Color(red: 0.36, green: 0.55, blue: 1), toPC: true, url: "arra://clip", spoken: "Отправить буфер на компьютер") }
-  public static var photo: ArraActionWidgetView { ArraActionWidgetView(symbol: "photo", title: "Фото", subtitle: "на ПК",
-    tint: Color(red: 0.2, green: 0.78, blue: 0.47), toPC: true, url: "arra://photo", spoken: "Отправить последнее фото на компьютер") }
-  public static var newChat: ArraActionWidgetView { ArraActionWidgetView(symbol: "square.and.pencil", title: "Новый", subtitle: "чат",
-    tint: Color(red: 0.69, green: 0.45, blue: 1), toPC: false, url: "arra://ask?fresh=1", spoken: "Новый чат с Arra") }
+  public func getTimeline(in context: Context, completion: @escaping @Sendable (Timeline<ArraActionsEntry>) -> Void) {
+    completion(Timeline(entries: [ArraActionsEntry(date: Date())], policy: .never))
+  }
+}
+
+/// One row across the Home Screen: «Буфер на ПК», «Фото на ПК», «Новый чат».
+/// Widgets cannot read the clipboard or the photos, so each tap opens the app
+/// on its link (arra://clip, arra://photo, arra://ask?fresh=1) for a moment,
+/// the same links as the Control Center buttons.
+public struct ArraActionsWidget: Widget {
+  public init() {}
+  public var body: some WidgetConfiguration {
+    StaticConfiguration(kind: "ArraActions", provider: ArraActionsProvider()) { _ in
+      ArraActionsView()
+    }
+    .configurationDisplayName("Arra")
+    .description("Буфер на ПК, фото на ПК, новый чат")
+    .supportedFamilies([.systemMedium])
+  }
+}
+
+struct ArraAction {
+  let symbol: String
+  let title: String
+  let tint: Color
+  let url: URL
+  let spoken: String
+  static let all = [
+    ArraAction(symbol: "doc.on.clipboard", title: "Буфер на ПК", tint: Color(red: 0.36, green: 0.55, blue: 1),
+      url: URL(string: "arra://clip")!, spoken: "Отправить буфер на компьютер"),
+    ArraAction(symbol: "photo", title: "Фото на ПК", tint: Color(red: 0.2, green: 0.78, blue: 0.47),
+      url: URL(string: "arra://photo")!, spoken: "Отправить последнее фото на компьютер"),
+    ArraAction(symbol: "square.and.pencil", title: "Новый чат", tint: Color(red: 0.69, green: 0.45, blue: 1),
+      url: URL(string: "arra://ask?fresh=1")!, spoken: "Новый чат с Arra"),
+  ]
+}
+
+public struct ArraActionsView: View {
+  public init() {}
+  private static let base = Color(red: 0.067, green: 0.067, blue: 0.078)
 
   public var body: some View {
+    let row = HStack(spacing: 8) {
+      ForEach(ArraAction.all, id: \.title) { action in
+        Link(destination: action.url) { tile(action) }
+          .buttonStyle(.plain)
+          .accessibilityLabel(action.spoken)
+      }
+    }
+    .unredacted()
+    .environment(\.colorScheme, .dark)
     if #available(iOS 17.0, *) {
-      content.containerBackground(for: .widget) { background }
-        .widgetURL(destination)
-    } else { content.background(background).widgetURL(destination) }
-  }
-  @ViewBuilder private var background: some View {
-    if family == .systemSmall {
-      ZStack {
-        Color(red: 0.067, green: 0.067, blue: 0.078)
-        RadialGradient(colors: [tint.opacity(0.32), tint.opacity(0)], center: .top, startRadius: 0, endRadius: 150)
-      }
-    } else { Color.clear }
-  }
-  @ViewBuilder private var content: some View {
-    switch family {
-    case .accessoryCircular:
-      ZStack {
-        AccessoryWidgetBackground()
-        glyph(size: 22, badge: 10)
-      }.accessibilityLabel(spoken)
-    case .accessoryRectangular:
-      HStack(spacing: 8) {
-        glyph(size: 22, badge: 10)
-        Text("\(title) \(subtitle)").font(.headline).lineLimit(1).minimumScaleFactor(0.75)
-        Spacer(minLength: 0)
-      }.accessibilityLabel(spoken)
-    case .accessoryInline:
-      Label("\(title) \(subtitle)", systemImage: symbol)
-    default:
-      // a round button in the middle and two short words under it: reads as an action, not an app icon
-      VStack(spacing: 10) {
-        ZStack {
-          Circle().fill(tint.opacity(0.22))
-          Circle().strokeBorder(tint.opacity(0.55), lineWidth: 1.5)
-          glyph(size: 34, badge: 15)
-        }
-        .frame(width: 84, height: 84)
-        HStack(spacing: 5) {
-          Text(title).font(.system(size: 16, weight: .bold)).foregroundStyle(Color.white)
-          Text(subtitle).font(.system(size: 16, weight: .semibold)).foregroundStyle(Color.white.opacity(0.55))
-        }.lineLimit(1).minimumScaleFactor(0.7)
-      }
-      .padding(12).frame(maxWidth: .infinity, maxHeight: .infinity)
-      .accessibilityElement(children: .ignore).accessibilityLabel(spoken)
+      row.containerBackground(for: .widget) { ArraActionsView.base }
+    } else {
+      row.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity).background(ArraActionsView.base)
     }
   }
-  /// The symbol, and for «… на ПК» a small computer at its lower right.
-  private func glyph(size: CGFloat, badge: CGFloat) -> some View {
-    Image(systemName: symbol).font(.system(size: size, weight: .semibold))
-      .foregroundStyle(family == .systemSmall ? tint : Color.primary)
-      .overlay(alignment: .bottomTrailing) {
-        if toPC {
-          Image(systemName: "arrow.right.circle.fill").font(.system(size: badge, weight: .bold))
-            .foregroundStyle(family == .systemSmall ? Color.white : Color.primary)
-            .offset(x: badge * 0.55, y: badge * 0.35)
-        }
-      }
-  }
-}
 
-public struct ArraClipWidgetView: View {
-  public init() {}
-  public var body: some View { ArraActionWidgetView.clip }
-}
-public struct ArraPhotoWidgetView: View {
-  public init() {}
-  public var body: some View { ArraActionWidgetView.photo }
+  private func tile(_ action: ArraAction) -> some View {
+    VStack(spacing: 10) {
+      Image(systemName: action.symbol)
+        .font(.system(size: 22, weight: .semibold))
+        .foregroundStyle(action.tint)
+        .frame(width: 44, height: 44)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(action.tint.opacity(0.16)))
+      Text(action.title)
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(Color.white)
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.07)))
+    .contentShape(Rectangle())
+  }
 }
 
 /// Controls (iOS 18): one-cell buttons for Control Center, the Lock Screen

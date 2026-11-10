@@ -40,20 +40,15 @@ module.exports = function withDialogWidgets(config) {
     let index = replaceRequired(fs.readFileSync(indexPath, 'utf8'), 'WidgetLiveActivity()', 'ArraLiveActivity()', 'native activity');
     // one-cell controls (Control Center, Lock Screen, Action button), iOS 18
     index = replaceRequired(index, 'ArraLiveActivity()\n', 'ArraLiveActivity()\n    if #available(iOS 18.0, *) {\n      ArraControls().body\n    }\n', 'native controls');
+    // The gallery shows one wide «Arra» row (native, its own provider) instead of
+    // Expo's ArraAgents: Expo's empty timeline left the widget redacted (grey bars).
+    index = replaceRequired(index, '    ArraAgents()\n', '    ArraActionsWidget()\n', 'native actions widget');
     // Remove only our previous generated supplemental package.
     index = index.replace(/\nimport AppIntents\n@available\(iOS 17\.0, \*\)\nstruct ArraExtensionIntentsPackage: AppIntentsPackage \{\n  static var includedPackages: \[any AppIntentsPackage.Type\] \{ \[ArraWidgetsIntentsPackage.self\] \}\n\}\n?/g, '\n');
     fs.writeFileSync(indexPath, index);
     const widgetPath = path.join(c.modRequest.platformProjectRoot, 'ExpoWidgetsTarget/ArraAgents.swift');
     const widget = replaceRequired(fs.readFileSync(widgetPath, 'utf8'), 'WidgetsEntryView(entry: entry)', 'ArraWidgetEntryView(props: entry.props ?? [:])', 'native home widget');
     fs.writeFileSync(widgetPath, widget);
-    // «Буфер на ПК»: a plain link to arra://clip, the app reads the clipboard
-    const clipPath = path.join(c.modRequest.platformProjectRoot, 'ExpoWidgetsTarget/ArraClip.swift');
-    const clip = replaceRequired(fs.readFileSync(clipPath, 'utf8'), 'WidgetsEntryView(entry: entry)', 'ArraClipWidgetView()', 'native clipboard widget');
-    fs.writeFileSync(clipPath, clip);
-    // «Фото на ПК»: arra://photo, the app sends the newest photo
-    const photoPath = path.join(c.modRequest.platformProjectRoot, 'ExpoWidgetsTarget/ArraPhoto.swift');
-    const photo = replaceRequired(fs.readFileSync(photoPath, 'utf8'), 'WidgetsEntryView(entry: entry)', 'ArraPhotoWidgetView()', 'native photo widget');
-    fs.writeFileSync(photoPath, photo);
     return c;
   }]);
   return withXcodeProject(config, c => {

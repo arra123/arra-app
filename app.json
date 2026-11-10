@@ -107,36 +107,10 @@
           "widgets": [
             {
               "name": "ArraAgents",
-              "displayName": "Новый чат",
-              "description": "Одно нажатие — пустой чат с Arra",
+              "displayName": "Arra",
+              "description": "Буфер на ПК, фото на ПК, новый чат",
               "supportedFamilies": [
-                "systemSmall",
-                "systemMedium",
-                "accessoryInline",
-                "accessoryCircular",
-                "accessoryRectangular"
-              ],
-              "contentMarginsDisabled": true
-            },
-            {
-              "name": "ArraClip",
-              "displayName": "Буфер на ПК",
-              "description": "Скопированное на iPhone уходит в буфер компьютера",
-              "supportedFamilies": [
-                "systemSmall",
-                "accessoryCircular",
-                "accessoryRectangular"
-              ],
-              "contentMarginsDisabled": true
-            },
-            {
-              "name": "ArraPhoto",
-              "displayName": "Фото на ПК",
-              "description": "Последнее фото уходит в буфер компьютера",
-              "supportedFamilies": [
-                "systemSmall",
-                "accessoryCircular",
-                "accessoryRectangular"
+                "systemMedium"
               ],
               "contentMarginsDisabled": true
             }
