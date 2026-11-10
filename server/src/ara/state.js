@@ -102,6 +102,10 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
       transcript: str(raw.transcript, 600),
       iconName: /^[\w.-]{1,80}\.png$/.test(String(raw.iconName || '')) ? raw.iconName : null,
       model: str(raw.model, 80),
+      // tito's block (folder of dialogs): its name, colour and whether it is folded on the computer
+      block: str(raw.block, 60),
+      blockColor: /^#[0-9a-f]{3,8}$/i.test(String(raw.blockColor || '')) ? raw.blockColor : '',
+      blockFolded: raw.blockFolded === true,
       // the place the computer gave it: tito's own order, the one its numbers follow
       seq: live.length,
     });

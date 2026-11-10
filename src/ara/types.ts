@@ -32,6 +32,10 @@ export type Agent = {
   since: number | null;
   /** Иконка проекта на сервере: `${API_URL}/ara/icon/${iconName}` */
   iconName?: string | null;
+  /** Блок (папка диалогов) из tito: имя, цвет, свёрнут ли на компьютере */
+  block?: string;
+  blockColor?: string;
+  blockFolded?: boolean;
 };
 
 export type RecentSession = {

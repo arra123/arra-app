@@ -5,6 +5,7 @@ import { memo, useMemo, type ReactNode } from 'react';
 import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { parseMarkdown, plain, type Block, type Inline } from '@/ara/markdown';
+import { isNeedBlock, NeedCard } from '@/components/need-card';
 import { Press, T } from '@/components/ui';
 import { Colors, Fonts, Radius, Type } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
@@ -112,7 +113,7 @@ function Blocks({ blocks, depth = 0 }: { blocks: Block[]; depth?: number }) {
               </T>
             );
           case 'code':
-            return <View key={i} style={!first && styles.gap}><CodeBlock lang={block.lang} value={block.v} /></View>;
+            return <View key={i} style={!first && styles.gap}>{isNeedBlock(block.lang) ? <NeedCard value={block.v} /> : <CodeBlock lang={block.lang} value={block.v} />}</View>;
           case 'hr':
             return <View key={i} style={styles.hr} />;
           case 'quote':
@@ -166,7 +167,10 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
     let b = all.length;
     while (a < b && all[a].t === 'hr') a++;
     while (b > a && all[b - 1].t === 'hr') b--;
-    return all.slice(a, b);
+    // «Нужно от тебя» always closes the answer, wherever the agent put the block
+    const need = (block: Block) => block.t === 'code' && isNeedBlock(block.lang);
+    const kept = all.slice(a, b);
+    return [...kept.filter((block) => !need(block)), ...kept.filter(need)];
   }, [text]);
   return <View>{<Blocks blocks={blocks} />}</View>;
 });

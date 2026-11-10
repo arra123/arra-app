@@ -87,7 +87,8 @@ export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, 
 
   const items = useMemo(() => list
     .filter((chat) => chat.messages.length || chat.id === currentId)
-    .sort((a, b) => b.updatedAt - a.updatedAt), [list, currentId]);
+    .filter((chat) => !query || `${chat.title} ${chatPreview(chat)}`.toLocaleLowerCase().includes(query))
+    .sort((a, b) => b.updatedAt - a.updatedAt), [list, currentId, query]);
 
   const closePanel = () => { Keyboard.dismiss(); onClose(); drawer.current?.closeDrawer({ animationSpeed: 1 }); };
   const go = (action: () => void) => () => {
@@ -108,6 +109,17 @@ export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, 
       ...(params.agent || current?.agent ? { agent: params.agent || current?.agent } : {}),
     } });
   const [recentOpen, setRecentOpen] = useState(false);
+  // folded blocks: the computer's choice until the caption is tapped here
+  const [folds, setFolds] = useState<Record<string, boolean>>({});
+  const blockRuns = (agents: Agent[]) => {
+    const runs: { block: string; color: string; folded: boolean; agents: Agent[] }[] = [];
+    for (const a of agents) {
+      const run = a.block ? runs.find((r) => r.block === a.block) : undefined;
+      if (run) run.agents.push(a);
+      else runs.push({ block: a.block || '', color: a.blockColor || Colors.textSecondary, folded: !!a.blockFolded, agents: [a] });
+    }
+    return runs;
+  };
   const groups = (device: DeviceId) => {
     const byProject = new Map<string, Agent[]>();
     for (const a of state.agents) {
@@ -129,6 +141,27 @@ export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, 
       { text: 'Удалить', style: 'destructive', onPress: () => chats.remove(chat.id) },
     ]);
   };
+
+  const renderAgent = (agent: Agent) => (
+    <Pressable key={agent.key} onPress={agent.key === currentAgentKey ? closePanel : go(() => openAgentScreen(agent.key))}
+      onLongPress={() => Alert.alert('Цвет маскота', agent.project, [
+        ...[[0,'Белый'],[3,'Жёлтый'],[4,'Фиолетовый'],[5,'Голубой'],[6,'Розовый'],[8,'Зелёный'],[11,'Красный'],[12,'Оранжевый'],[13,'Бирюзовый'],[14,'Синий']].map(([id, name]) => ({
+          text: String(name), onPress: () => { ara.request({ type: 'ara.mascot', agentKey: agent.key, mascotId: id }).catch((e) => Alert.alert('Не удалось сменить цвет', String(e.message))); },
+        })), { text: 'Отмена', style: 'cancel' },
+      ])}
+      accessibilityRole="button" accessibilityLabel={`${agentNumber(agent, state.agents)}, ${agent.title || agent.project}, ${STATE_META[agent.state].label}`} accessibilityState={{ selected: agent.key === currentAgentKey }}
+      style={({ pressed }) => [styles.agent, agent.key === currentAgentKey && styles.chatActive, pressed && styles.chatPressed]}>
+      <View style={styles.agentPortrait}>
+        <ProjectMascot id={agent.mascotId} size={34} {...stateLook(agent.asking ? 'waiting' : agent.helpers && agent.state !== 'error' ? 'working' : agent.state)} />
+        <View style={styles.numberBadge}><AgentNumber number={agentNumber(agent, state.agents)} mascotId={agent.mascotId} /></View>
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <T v="body" numberOfLines={2} style={styles.agentTitle}>{agent.title || agent.task || agent.project}</T>
+        <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{agent.asking ? 'нужен твой ответ' : agent.helpers ? `работает помощник · ${agent.helpers}` : STATE_META[agent.state].label}</T>
+      </View>
+      {agent.asking ? <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: Colors.waiting }} /> : <StatusDot state={agent.state} helpers={agent.helpers} size={12} />}
+    </Pressable>
+  );
 
   const navigation = (
     <View style={[styles.panel, { width, paddingTop: insets.top + 8 }]} accessibilityLabel="Панель Arra">
@@ -153,20 +186,20 @@ export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, 
         style={styles.tabs}
       />
 
-      {tab === 'work' ? <View style={styles.workBar}>
+      <View style={styles.workBar}>
         <View style={styles.search}>
           <SymbolView name="magnifyingglass" size={16} tintColor={Colors.textSecondary} />
           <TextInput value={search} onChangeText={setSearch} placeholder="Поиск" placeholderTextColor={Colors.textSecondary}
-            accessibilityLabel="Поиск агента или проекта" autoCorrect={false} returnKeyType="search" onSubmitEditing={Keyboard.dismiss} style={styles.searchInput} />
+            accessibilityLabel={tab === 'work' ? 'Поиск агента или проекта' : 'Поиск диалога'} autoCorrect={false} returnKeyType="search" onSubmitEditing={Keyboard.dismiss} style={styles.searchInput} />
           {search ? <Press onPress={() => setSearch('')} style={styles.clearSearch} accessibilityLabel="Очистить поиск">
             <SymbolView name="xmark.circle.fill" size={18} tintColor={Colors.textSecondary} />
           </Press> : null}
         </View>
-        <Press onPress={go(newAgent())} feedback="tap" style={styles.newPill} accessibilityLabel="Новый диалог">
+        <Press onPress={go(tab === 'work' ? newAgent() : onNew)} feedback="tap" style={styles.newPill} accessibilityLabel="Новый диалог">
           <SymbolView name="plus" size={13} tintColor={Colors.text} weight="bold" />
           <T v="subhead" weight="600" numberOfLines={1}>Новый диалог</T>
         </Press>
-      </View> : null}
+      </View>
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" indicatorStyle="white">
         {tab === 'chat' ? (
@@ -198,7 +231,7 @@ export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, 
                   );
                 })}
               </View>
-            ) : <T v="subhead" color={Colors.textSecondary} style={styles.empty}>Диалогов пока нет</T>}
+            ) : <T v="subhead" color={Colors.textSecondary} style={styles.empty}>{query ? 'Диалоги не найдены' : 'Диалогов пока нет'}</T>}
           </>
         ) : (
           <>
@@ -225,26 +258,24 @@ export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, 
                           <SymbolView name="plus" size={15} tintColor={Colors.textSecondary} weight="semibold" />
                         </Press>
                       </View>
-                      {agents.map((agent) => (
-                    <Pressable key={agent.key} onPress={agent.key === currentAgentKey ? closePanel : go(() => openAgentScreen(agent.key))}
-                      onLongPress={() => Alert.alert('Цвет маскота', agent.project, [
-                        ...[[0,'Белый'],[3,'Жёлтый'],[4,'Фиолетовый'],[5,'Голубой'],[6,'Розовый'],[8,'Зелёный'],[11,'Красный'],[12,'Оранжевый'],[13,'Бирюзовый'],[14,'Синий']].map(([id, name]) => ({
-                          text: String(name), onPress: () => { ara.request({ type: 'ara.mascot', agentKey: agent.key, mascotId: id }).catch((e) => Alert.alert('Не удалось сменить цвет', String(e.message))); },
-                        })), { text: 'Отмена', style: 'cancel' },
-                      ])}
-                      accessibilityRole="button" accessibilityLabel={`${agentNumber(agent, state.agents)}, ${agent.title || agent.project}, ${STATE_META[agent.state].label}`} accessibilityState={{ selected: agent.key === currentAgentKey }}
-                      style={({ pressed }) => [styles.agent, agent.key === currentAgentKey && styles.chatActive, pressed && styles.chatPressed]}>
-                      <View style={styles.agentPortrait}>
-                        <ProjectMascot id={agent.mascotId} size={34} {...stateLook(agent.asking ? 'waiting' : agent.helpers && agent.state !== 'error' ? 'working' : agent.state)} />
-                        <View style={styles.numberBadge}><AgentNumber number={agentNumber(agent, state.agents)} mascotId={agent.mascotId} /></View>
-                      </View>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <T v="body" numberOfLines={2} style={styles.agentTitle}>{agent.title || agent.task || agent.project}</T>
-                        <T v="caption" color={Colors.textSecondary} numberOfLines={1}>{agent.asking ? 'нужен твой ответ' : agent.helpers ? `работает помощник · ${agent.helpers}` : STATE_META[agent.state].label}</T>
-                      </View>
-                      {agent.asking ? <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: Colors.waiting }} /> : <StatusDot state={agent.state} helpers={agent.helpers} size={12} />}
-                    </Pressable>
-                      ))}
+                      {blockRuns(agents).map((run) => {
+                        if (!run.block) return run.agents.map(renderAgent);
+                        const id = `${device}|${agents[0].cwd}|${run.block}`;
+                        const folded = folds[id] ?? run.folded;
+                        const busy = run.agents.some((a) => a.state === 'working');
+                        return (
+                          <View key={id} style={styles.block}>
+                            <View style={[styles.blockStripe, { backgroundColor: run.color }]} />
+                            <Press onPress={() => setFolds((f) => ({ ...f, [id]: !folded }))} feedback="select" style={styles.blockHead}
+                              accessibilityRole="button" accessibilityState={{ expanded: !folded }} accessibilityLabel={`Блок ${run.block}, ${run.agents.length}`}>
+                              <SymbolView name="chevron.down" size={12} tintColor={run.color} weight="semibold" style={{ transform: [{ rotate: folded ? '-90deg' : '0deg' }] }} />
+                              <T v="subhead" weight="700" numberOfLines={1} color={run.color} style={{ flex: 1 }}>{run.block}</T>
+                              <T v="caption" weight="600" color={run.color}>{run.agents.length}{folded && busy ? ' · работает' : ''}</T>
+                            </Press>
+                            {folded ? null : run.agents.map(renderAgent)}
+                          </View>
+                        );
+                      })}
                     </View>
                   ))}
                   {!projects.length ? <T v="subhead" color={Colors.textSecondary} style={styles.deviceEmpty}>{online ? 'Агентов нет' : 'Не в сети'}</T> : null}
@@ -310,6 +341,9 @@ const styles = StyleSheet.create({
   deviceEmpty: { paddingHorizontal: 16, paddingVertical: 14 },
   project: { marginTop: 6 },
   projectHead: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 16, paddingRight: 6, height: 40 },
+  block: { marginLeft: 8, marginRight: 4, marginVertical: 4, paddingLeft: 3, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.03)', overflow: 'hidden' },
+  blockStripe: { position: 'absolute', left: 0, top: 6, bottom: 6, width: 3, borderRadius: 1.5, opacity: 0.85 },
+  blockHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 14, paddingRight: 12, minHeight: 40 },
   projectAdd: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   recentHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 8, marginTop: 14, paddingHorizontal: 12, minHeight: 48, borderRadius: 14 },
   searchInput: { flex: 1, height: 44, color: Colors.text, fontSize: 15, minWidth: 0 },

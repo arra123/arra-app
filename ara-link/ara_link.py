@@ -89,6 +89,46 @@ def media_paths(text: str) -> set[str]:
     return set(PATH_RE.findall(text or ""))
 
 
+BLOCK_TINTS = ["#6fb6ff", "#3ccf7a", "#ff9f45", "#c08cff", "#ff7ac6", "#4fd1c5", "#f5c542"]
+
+
+def annotate_blocks(live: list[dict], path: Path | None = None) -> None:
+    """tito's blocks (folders of dialogs) on the phone: name, colour, folded.
+
+    ara-blocks.json keeps {blocks: {"<device>:<agent>:<transcript>": name},
+    folded: ["cwd|name"], colors: {name: "#hex"}} with the device names of
+    ara-sessions (before the PC swap). Colours follow tito's blockTint()."""
+    try:
+        data = json.loads((path or Path.home() / ".local/share/notch-island/ara-blocks.json").read_text())
+    except (OSError, ValueError):
+        data = {}
+    blocks = data.get("blocks") if isinstance(data.get("blocks"), dict) else {}
+    folded = set(data.get("folded") or []) if isinstance(data.get("folded"), list) else set()
+    colors = data.get("colors") if isinstance(data.get("colors"), dict) else {}
+    names: list[str] = []
+    for item in live:
+        device = item.get("device") or "laptop"
+        key = f"{device}:{item.get('agent')}:{item.get('transcript') or item.get('term')}"
+        legacy = "t:" + ("pc:" if device == "pc" else "") + str(item.get("term"))
+        name = blocks.get(key) or blocks.get(legacy) or ""
+        if not isinstance(name, str) or not name:
+            continue
+        item["block"] = name[:60]
+        if name not in names:
+            names.append(name)
+    free = [c for c in BLOCK_TINTS if c not in colors.values()] or BLOCK_TINTS
+    auto = [n for n in names if not colors.get(n)]
+    for item in live:
+        name = item.get("block")
+        if not name:
+            continue
+        color = colors.get(name)
+        if not (isinstance(color, str) and color.startswith("#")):
+            color = free[max(0, auto.index(name) if name in auto else 0) % len(free)]
+        item["blockColor"] = color[:9]
+        item["blockFolded"] = f"{item.get('cwd') or ''}|{name}" in folded
+
+
 def fit_transcript(data: dict) -> dict:
     """Огромная переписка (длинные выводы команд) не должна рвать соединение."""
     if len(json.dumps(data, ensure_ascii=False).encode()) <= MAX_TRANSCRIPT_BYTES:
@@ -251,6 +291,7 @@ class AraLink:
         for item in live + (data.get("recent") or []):
             cwd = item.get('cwd') or ''
             item["mascotId"] = mascots.get(cwd, mascots.get(f"laptop:{cwd}", mascots.get(f"pc:{cwd}", 0)))
+        annotate_blocks(live)
         # ara-sessions names machines from where it runs: its own agents
         # "laptop", the other computer's "pc". On the PC that is the other way
         # round, so the names are swapped (the server keeps each agent from
