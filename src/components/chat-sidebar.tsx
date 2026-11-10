@@ -20,6 +20,9 @@ import { AgentIcon, Press, StatusDot, T } from '@/components/ui';
 import { Colors } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
+// the list goes under the search header through a short fade, not a hard cut
+const LIST_FADE = [1, 0.8, 0.55, 0.32, 0.14, 0.04];
+
 type Props = {
   children: ReactNode; open: boolean; currentId: string; currentAgentKey?: string; mode: 'work' | 'chat'; limits?: Limits | null;
   onOpen: () => void; onClose: () => void; onSelect: (id: string) => void; onNew: () => void;
@@ -186,6 +189,7 @@ export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, 
         style={styles.tabs}
       />
 
+      {/* a fixed header on the screen's own colour: the list starts under it and slides beneath it */}
       <View style={styles.workBar}>
         <View style={styles.search}>
           <SymbolView name="magnifyingglass" size={16} tintColor={Colors.textSecondary} />
@@ -201,7 +205,8 @@ export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, 
         </Press>
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" indicatorStyle="white">
+      <View style={styles.listArea}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingTop: 6, paddingBottom: 20 }} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" indicatorStyle="white">
         {tab === 'chat' ? (
           <>
             {items.length ? (
@@ -305,6 +310,10 @@ export function ChatSidebar({ children, open, currentId, currentAgentKey, mode, 
           </>
         )}
       </ScrollView>
+        <View pointerEvents="none" style={styles.listFade}>
+          {LIST_FADE.map((opacity, i) => <View key={i} style={{ flex: 1, backgroundColor: Colors.background, opacity }} />)}
+        </View>
+      </View>
 
       <View style={{ height: Math.max(insets.bottom, 8) }} />
     </View>
@@ -332,7 +341,9 @@ const styles = StyleSheet.create({
   headButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.card },
   section: { paddingHorizontal: 20, paddingTop: 18, paddingBottom: 8 },
   tabs: { marginHorizontal: 16, marginTop: 6 },
-  workBar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginTop: 12 },
+  workBar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, backgroundColor: Colors.background, zIndex: 2 },
+  listArea: { flex: 1, overflow: 'hidden' },
+  listFade: { position: 'absolute', top: 0, left: 0, right: 0, height: 16 },
   search: { flex: 1, minWidth: 0, paddingLeft: 12, flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 14, backgroundColor: Colors.card },
   newPill: { height: 44, paddingHorizontal: 14, borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: Colors.cardPressed, borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.hairline },
   device: { marginHorizontal: 8, marginTop: 12, paddingBottom: 6, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.hairline, backgroundColor: Colors.card, overflow: 'hidden' },
