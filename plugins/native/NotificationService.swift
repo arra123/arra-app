@@ -23,7 +23,8 @@ final class NotificationService: UNNotificationServiceExtension {
     let avatar = picture.flatMap { try? Data(contentsOf: $0) }.map { INImage(imageData: $0) }
     let project = data["project"] as? String ?? "Arra"
     let number = NotificationService.number(data["agentNumber"])
-    let name = project + (number > 0 ? " · агент \(number)" : " · агент")
+    // просто «Агент 6»: проект видно по цвету шарика
+    let name = number > 0 ? "Агент \(number)" : project
     let person = INPerson(personHandle: INPersonHandle(value: key, type: .unknown), nameComponents: nil, displayName: name, image: avatar, contactIdentifier: nil, customIdentifier: key)
     let intent = INSendMessageIntent(recipients: nil, outgoingMessageType: .outgoingMessageText, content: request.content.body, speakableGroupName: nil, conversationIdentifier: key, serviceName: "Arra", sender: person, attachments: nil)
     let interaction = INInteraction(intent: intent, response: nil)

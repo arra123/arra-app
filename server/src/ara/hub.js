@@ -203,8 +203,12 @@ export function createHub(deps = {}) {
       // it went back to work (or is gone): not finished after all
       if (!cur || cur.state !== p.transition.to) u.pendingPush.delete(key);
       else if (now() - p.at >= PUSH_SETTLE_MS) {
+        const agent = u.merged.agents.find((a) => a.key === key) || p.transition.agent;
+        // not finished: a long command, or it waits for its helpers — keep waiting
+        if (p.transition.to === 'waiting' && (agent.done === false || agent.helpers > 0)) continue;
         u.pendingPush.delete(key);
-        maybePush(u, userId, p.transition);
+        // the answer as it is now, not the words caught at the moment it went quiet
+        maybePush(u, userId, { ...p.transition, agent });
       }
     }
     broadcastState(u);
@@ -214,9 +218,9 @@ export function createHub(deps = {}) {
   function maybePush(u, userId, transition) {
     const key = transition.agent.key;
     u.lastPush.set(key, now());
-    const { title, body } = pushText(transition);
     const agent = transition.agent;
     const number = u.merged.agents.filter(a => a.device === agent.device && a.cwd === agent.cwd).findIndex(a => a.key === key) + 1;
+    const { title, body } = pushText(transition, Math.max(1, number));
     Promise.resolve(deps.sendPush?.(userId, title, body, {
       type: 'ara.agent', agentKey: key, state: transition.to,
       mascotId: agent.mascotId || 0, project: agent.project, agentNumber: Math.max(1, number),

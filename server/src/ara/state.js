@@ -85,6 +85,9 @@ export function normalizeSnapshot(msg, fallbackDevice = 'laptop') {
       stage: raw.busy ? str(raw.said, 160) : '',
       // what it said last and whether it asks: a finished agent is «done», not «a question»
       said: raw.busy ? '' : str(raw.said, 160),
+      // Claude closed its turn (end_turn in the log). false = a long command or a wait for helpers
+      // looks idle on screen but it is still at work: no «finished» push with its in-between words
+      done: typeof raw.done === 'boolean' ? raw.done : null,
       asking: !!(raw.ask || raw.asks),
       // Terminal menus (permissions, model limits, confirmations) have no
       // question tool entry in the transcript. Keep their actionable choices.
@@ -260,13 +263,16 @@ export function publicState(merged, since) {
   };
 }
 
-export function pushText(transition) {
+export function pushText(transition, number = 0) {
   const { agent, to } = transition;
   const who = agent.agent === 'codex' ? 'Codex' : 'Claude';
   const where = agent.device === 'pc' ? 'ПК' : 'ноутбук';
-  const title = to === 'error' ? `${agent.project} · прервался` : `${agent.project} · ${agent.asking ? 'ждёт ответа' : 'завершил работу'}`;
+  // просто «Агент 6»: проект и помощник видны по цвету шарика
+  const name = number > 0 ? `Агент ${number}` : 'Агент';
+  const title = to === 'error' ? `${name} · прервался` : name;
   const lead = to === 'error' ? `${who} остановился с ошибкой (${where})` : `${who} закончил (${where})`;
-  const detail = to === 'error' ? (agent.error || agent.task) : agent.task;
-  const body = detail ? `${lead}: ${detail}`.slice(0, 180) : lead;
+  // суть ответа агента (said — заголовок итога или первая фраза), а не пересказ твоего вопроса (task)
+  const detail = to === 'error' ? (agent.error || agent.said) : agent.said;
+  const body = detail ? String(detail).slice(0, 180) : lead;
   return { title, body };
 }

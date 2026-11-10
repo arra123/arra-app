@@ -138,9 +138,28 @@ test('хаб: снимок → состояние телефону, push при 
   await hub.deviceMessage('u1', 'L', finished);
   assert.equal(pushes.length, 1);
   assert.equal(pushes[0][0], 'u1');
-  assert.match(pushes[0][1], /helper · завершил работу/);
+  assert.equal(pushes[0][1], 'Агент 1');
   assert.deepEqual(pushes[0][3], { type: 'ara.agent', agentKey: 'live:laptop:58872', state: 'waiting', mascotId: 0, project: 'helper', agentNumber: 1 });
   assert.equal(phone.last('ara.state').agents[0].since, 1_060_000);
+});
+
+test('хаб: пока ход не закончен (длинная команда, ждёт помощников) — push нет, потом текст итога', async () => {
+  const { hub, pushes, advance } = setup();
+  hub.deviceConnected('u1', 'L', { role: 'laptop' }, fakeSocket());
+  await hub.deviceMessage('u1', 'L', laptopSnapshot());
+  advance(60_000);
+  const quiet = laptopSnapshot();
+  Object.assign(quiet.live[0], { state: 'waiting', busy: false, done: false, said: 'Запускаю сборку' });
+  await hub.deviceMessage('u1', 'L', quiet);
+  advance(26_000);
+  await hub.deviceMessage('u1', 'L', quiet);
+  assert.equal(pushes.length, 0, 'промежуточные слова не уходят');
+  const done = laptopSnapshot();
+  Object.assign(done.live[0], { state: 'waiting', busy: false, done: true, said: 'Готово: сборка прошла' });
+  await hub.deviceMessage('u1', 'L', done);
+  assert.equal(pushes.length, 1);
+  assert.equal(pushes[0][1], 'Агент 1');
+  assert.equal(pushes[0][2], 'Готово: сборка прошла');
 });
 
 test('хаб: свежая переписка и push даже при открытом экране агента', async () => {
