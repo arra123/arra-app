@@ -160,7 +160,7 @@ const styles = StyleSheet.create({
   },
   backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   titleSlot: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, alignItems: 'center', justifyContent: 'center' },
-  titleCapsule: { maxWidth: '100%', minHeight: 44, justifyContent: 'center', paddingLeft: 5, paddingRight: 14, paddingVertical: 4 },
+  titleCapsule: { maxWidth: '100%', minHeight: 44, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 4 },
   below: { marginHorizontal: 12, marginTop: 8, paddingHorizontal: ScreenPadding - 4, paddingVertical: 8, gap: 8 },
   composer: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   empty: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, paddingHorizontal: 20, alignItems: 'center', justifyContent: 'center' },

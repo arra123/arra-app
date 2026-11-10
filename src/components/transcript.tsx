@@ -165,9 +165,25 @@ function MediaRow({ children }: { children: ReactNode }) {
   return <View style={styles.media}>{children}</View>;
 }
 
+/** The file's kind at a glance, like the file cards in tito. */
+function fileSymbol(path: string) {
+  const ext = (/\.([a-z0-9]{1,6})$/i.exec(path)?.[1] || '').toLowerCase();
+  if (ext === 'pdf') return 'doc.richtext';
+  if (['doc', 'docx', 'odt', 'rtf', 'txt', 'md'].includes(ext)) return 'doc.text';
+  if (['xls', 'xlsx', 'ods', 'csv', 'tsv'].includes(ext)) return 'tablecells';
+  if (['ppt', 'pptx', 'odp', 'key'].includes(ext)) return 'rectangle.on.rectangle';
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'xz', 'zst'].includes(ext)) return 'doc.zipper';
+  if (['mp3', 'wav', 'm4a', 'ogg', 'opus', 'flac', 'aac'].includes(ext)) return 'waveform';
+  if (['mp4', 'mov', 'webm', 'mkv', 'avi'].includes(ext)) return 'film';
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'heic', 'svg'].includes(ext)) return 'photo';
+  if (['html', 'htm'].includes(ext)) return 'globe';
+  if (['js', 'ts', 'tsx', 'jsx', 'py', 'sh', 'json', 'swift', 'qml', 'css', 'yml', 'yaml', 'toml'].includes(ext)) return 'chevron.left.forwardslash.chevron.right';
+  return 'doc';
+}
+
 function FileTile({ path, size }: { path: string; size: number }) {
   return <View style={{ width: size, height: size, padding: 8, gap: 8, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.card, borderRadius: 12 }}>
-    <SymbolView name="doc" size={24} tintColor={Colors.textSecondary} />
+    <SymbolView name={fileSymbol(path)} size={24} tintColor={Colors.textSecondary} />
     <T v="tiny" numberOfLines={2} style={{ textAlign: 'center' }}>{attachmentName(path)}</T>
   </View>;
 }

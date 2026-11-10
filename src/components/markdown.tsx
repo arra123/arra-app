@@ -1,7 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { SymbolView } from 'expo-symbols';
 import * as WebBrowser from 'expo-web-browser';
-import { memo, useMemo, type ReactNode } from 'react';
+import { memo, useMemo, useState, type ReactNode } from 'react';
 import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { parseMarkdown, plain, type Block, type Inline } from '@/ara/markdown';
@@ -49,7 +49,27 @@ function renderInline(nodes: Inline[], keyPrefix = ''): ReactNode[] {
   });
 }
 
+/** A block of Russian words (a message to forward, a text to paste): a card that
+ * wraps its lines, with «Скопировать текст», as in tito; code stays code. */
+const TEXT_LANGS = ['', 'text', 'txt', 'msg', 'md', 'markdown', 'текст'];
+const isTextBlock = (lang: string, value: string) => TEXT_LANGS.includes(lang.toLowerCase()) && /[а-яё]/i.test(value);
+
+function TextBlock({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => Clipboard.setStringAsync(value).then(() => { haptic.success(); setCopied(true); setTimeout(() => setCopied(false), 1500); });
+  return (
+    <View style={styles.textCard}>
+      <T selectable>{value}</T>
+      <Press onPress={copy} feedback="tap" style={styles.copyText} accessibilityLabel="Скопировать текст">
+        <SymbolView name={copied ? 'checkmark' : 'doc.on.doc'} size={14} tintColor={Colors.text} weight="semibold" />
+        <T v="footnote" weight="600">{copied ? 'Скопировано' : 'Скопировать текст'}</T>
+      </Press>
+    </View>
+  );
+}
+
 function CodeBlock({ lang, value }: { lang: string; value: string }) {
+  if (isTextBlock(lang, value)) return <TextBlock value={value} />;
   return (
     <View style={styles.code}>
       <View style={styles.codeHeader}>
@@ -70,12 +90,25 @@ function CodeBlock({ lang, value }: { lang: string; value: string }) {
 }
 
 function Table({ block }: { block: Extract<Block, { t: 'table' }> }) {
-  const widths = useMemo(() => block.head.map((cell, ci) => {
+  const [room, setRoom] = useState(0);
+  const natural = useMemo(() => block.head.map((cell, ci) => {
     const longest = Math.max(plain(cell).length, ...block.rows.map((row) => Math.min(plain(row[ci] || []).length, 60)));
     return Math.max(72, Math.min(260, longest * 7.4 + 20));
   }), [block]);
+  // the table takes the screen's width and its cells wrap; only a table that cannot
+  // fit even with narrow columns scrolls sideways (never a column cut at the edge)
+  const widths = useMemo(() => {
+    const total = natural.reduce((a, b) => a + b, 0);
+    if (!room || total <= room) return natural;
+    const scaled = natural.map((w) => Math.max(84, Math.floor((w / total) * room)));
+    const sum = scaled.reduce((a, b) => a + b, 0);
+    if (sum > room) return scaled;
+    scaled[scaled.length - 1] += room - sum;
+    return scaled;
+  }, [natural, room]);
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tableScroll}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tableScroll}
+      onLayout={(e) => setRoom(Math.floor(e.nativeEvent.layout.width) - 2)}>
       <View style={styles.table}>
         {[block.head, ...block.rows].map((row, ri) => (
           <View key={ri} style={[styles.tableRow, ri === 0 && styles.tableHead, ri > 0 && styles.tableRowBorder]}>
@@ -204,6 +237,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 8,
   },
+  textCard: { padding: 12, gap: 10, borderRadius: Radius.md, borderWidth: StyleSheet.hairlineWidth, borderColor: Colors.hairline, backgroundColor: Colors.card },
+  copyText: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, height: 34, paddingHorizontal: 12, borderRadius: 8, backgroundColor: Colors.cardPressed },
   codeScroll: { paddingHorizontal: 12, paddingVertical: 10 },
   codeText: { fontFamily: Fonts.mono, fontSize: 13, lineHeight: 19, color: '#d7d9e0' },
   hr: { height: StyleSheet.hairlineWidth, backgroundColor: Colors.hairline, marginVertical: 14 },

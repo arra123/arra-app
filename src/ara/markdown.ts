@@ -20,7 +20,8 @@ export type Block =
   | { t: 'hr' }
   | { t: 'table'; head: Inline[][]; rows: Inline[][][]; align: Align[] };
 
-const FENCE = /^\s{0,3}(`{3,}|~{3,})\s*([\p{L}\p{N}_+#.-]*)/u;
+// any language word, Cyrillic too (```нужно): up to the first space or backtick
+const FENCE = /^\s{0,3}(`{3,}|~{3,})[ \t]*([^\s`~]*)/;
 const HEADING = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
 const HR = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
 const QUOTE = /^\s{0,3}>\s?(.*)$/;

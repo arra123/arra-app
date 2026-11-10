@@ -12,7 +12,7 @@ import { useAgentItem, useAra, useNow, useTranscript } from '@/ara/hooks';
 import { answerMessage, answersByMessage, answersOnTap, claudeKeys, type Selections } from '@/ara/questions';
 import type { TranscriptMessage } from '@/ara/types';
 import { outbox, useOutbox, type OutboxItem } from '@/ara/outbox';
-import { NeedsCard, QuestionCard, type AnswerStatus } from '@/components/agent-cards';
+import { HelpersStrip, NeedsCard, QuestionCard, type AnswerStatus } from '@/components/agent-cards';
 import { useCurrentChatId } from '@/ara/chats';
 import { setOpenAgent } from '@/lib/push';
 import { ChatLayout, useFreshKeys } from '@/components/chat-layout';
@@ -381,7 +381,7 @@ export default function AgentScreen() {
 
   const title = (
     <View style={styles.title}>
-      <View style={{ flexShrink: 1, minWidth: 0 }}>
+      <View style={{ flexShrink: 1, minWidth: 0, alignItems: 'center' }}>
         {/* what it is doing, like in the panel; the project is in the line below */}
         <T v="subhead" weight="700" numberOfLines={1}>{(item && 'title' in item && item.title) || item?.project || (recent ? recent.title : 'Агент')}</T>
         {item ? (
@@ -392,7 +392,8 @@ export default function AgentScreen() {
                 {shortStatus}
               </Animated.View>
             ) : null}
-            <T v="caption" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>{shortStatus ? '· ' : ''}{item.project}</T>
+            {/* the project name («helper») is not the agent's: only the status stays under the title */}
+            {shortStatus ? null : <T v="caption" color={Colors.textSecondary} numberOfLines={1} style={{ flexShrink: 1 }}>{item.project}</T>}
           </View>
         ) : (
           <T v="caption" color={Colors.textSecondary} numberOfLines={1}>ищу агента…</T>
@@ -412,7 +413,9 @@ export default function AgentScreen() {
   ) : null;
 
   // План и помощники — у плавающего агентика (тап — подробности); у закрытой сессии план в шапке
-  const below = !agent && plan.length ? <PlanCard plan={plan} /> : null;
+  // like tito: a strip of the helpers at work over the feed
+  const below = !agent && plan.length ? <PlanCard plan={plan} />
+    : agent && helpers.some((h) => h.active) ? <HelpersStrip helpers={helpers} mascotId={agent.mascotId} /> : null;
 
   const scope = { agentKey: key };
   const loading = !transcript && !!item;
